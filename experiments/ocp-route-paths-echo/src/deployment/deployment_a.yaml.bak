@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-server-a
+  namespace: echo-oidc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo-server-a
+  template:
+    metadata:
+      labels:
+        app: echo-server-a
+    spec:
+      containers:
+      - name: echo-server
+        image: registry.tannerjc.net/echo-route-paths/echo-server:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: ROUTE_PREFIX
+          value: "/echo/a"
+        - name: APP_NAME
+          value: "echo-a"
+

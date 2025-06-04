@@ -1,0 +1,17 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: login-proxy
+  namespace: echo-oidc
+spec:
+  host: foo.bar.com
+  path: /login
+  to:
+    kind: Service
+    name: login-proxy
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+  wildcardPolicy: None

@@ -1,0 +1,9 @@
+                foo.bar.com
+    /                |            \ 
+/login            /echo/a        /echo/b
+(oauth2-proxy)
+
+Use openshift path based routes to point each service to a subpath on the same domain
+front the echo pods with a special auth checkign proxy to force redirect to /login
+
+

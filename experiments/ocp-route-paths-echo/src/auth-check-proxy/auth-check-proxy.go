@@ -1,0 +1,75 @@
+package main
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"strings"
+)
+
+func main() {
+	upstream := getEnv("UPSTREAM_URL", "http://localhost:5000")
+	pathPrefix := strings.TrimRight(getEnv("ROUTE_PREFIX", "/"), "/")
+	loginPath := getEnv("LOGIN_PATH", "/login")
+
+	upstreamURL, err := url.Parse(upstream)
+	if err != nil {
+		log.Fatalf("Invalid UPSTREAM_URL: %v", err)
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(upstreamURL)
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Log method and path
+		log.Printf("Incoming request: %s %s", r.Method, r.URL.Path)
+
+		// Dump all headers
+		log.Println("Headers:")
+		for name, values := range r.Header {
+			for _, value := range values {
+				fmt.Printf("  %s: %s\n", name, value)
+			}
+		}
+
+		auth := r.Header.Get("Authorization")
+		if !isValidBearer(auth) {
+			rd := r.URL.Path
+			if r.URL.RawQuery != "" {
+				rd += "?" + r.URL.RawQuery
+			}
+			redirectURL := loginPath + "?rd=" + url.QueryEscape(rd)
+			log.Printf("Missing or invalid token. Redirecting to: %s", redirectURL)
+			http.Redirect(w, r, redirectURL, http.StatusFound)
+			return
+		}
+
+		// Rewrite the path by stripping the prefix
+		if pathPrefix != "" && pathPrefix != "/" && strings.HasPrefix(r.URL.Path, pathPrefix) {
+			originalPath := r.URL.Path
+			r.URL.Path = "/" + strings.TrimPrefix(r.URL.Path[len(pathPrefix):], "/")
+			log.Printf("Rewriting path from %q to %q", originalPath, r.URL.Path)
+		}
+
+		r.Host = upstreamURL.Host
+		proxy.ServeHTTP(w, r)
+	})
+
+	addr := ":8080"
+	log.Printf("Starting auth-check-proxy on %s with upstream %s and prefix %q", addr, upstream, pathPrefix)
+	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+func isValidBearer(authHeader string) bool {
+	return strings.HasPrefix(authHeader, "Bearer ") && len(authHeader) > 7
+}
+
+func getEnv(key, defaultVal string) string {
+	val := os.Getenv(key)
+	if val == "" {
+		return defaultVal
+	}
+	return val
+}

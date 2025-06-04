@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: login-proxy
+  namespace: echo-oidc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: login-proxy
+  template:
+    metadata:
+      labels:
+        app: login-proxy
+    spec:
+      containers:
+      - name: oauth2-proxy
+        image: quay.io/oauth2-proxy/oauth2-proxy:latest
+        ports:
+        - containerPort: 4180
+        args:
+        - --provider=oidc
+        - --http-address=0.0.0.0:4180
+        - --upstream=static://202
+        - --cookie-secure=true
+        - --cookie-secret=abcdefghijklm12345678901
+        - --cookie-domain=foo.bar.com
+        - --cookie-path=/
+        - --email-domain=*
+        - --redirect-url=https://foo.bar.com/login/oauth2/callback
+        - --oidc-issuer-url=https://keycloak.tannerjc.net/realms/echo-realm
+        - --client-id=echo-login
+        - --client-secret=mDCFOqO20flpFzpmR1gS2bVTV2aMf45Y
+        - --scope=openid profile email
+        - --set-xauthrequest=true
+        - --skip-provider-button=true
+
+        - --set-authorization-header=true
+        - --pass-access-token=true
+
+        - --skip-auth-route=^/login.*
+
+        - --skip-auth-route=/login/oauth2/callback
+        - --skip-auth-route=/login
+        - --auth-logging=true
+        - --whitelist-domain=foo.bar.com
+        - --proxy-prefix=/login
+        - --cookie-samesite=lax

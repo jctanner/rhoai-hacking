@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-server-a
+  namespace: echo-oidc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo-server-a
+  template:
+    metadata:
+      labels:
+        app: echo-server-a
+    spec:
+      containers:
+      - name: echo-server
+        image: registry.tannerjc.net/echo-route-paths/echo-server:latest
+        ports:
+        - containerPort: 5000
+        env:
+        - name: FLASK_PORT
+          value: "5000"
+        - name: ROUTE_PREFIX
+          value: "/echo/a"
+        - name: APP_NAME
+          value: "echo-a"
+
+      - name: auth-check-proxy
+        image: registry.tannerjc.net/echo-route-paths/auth-check-proxy:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: UPSTREAM_URL
+          value: "http://localhost:5000"
+        - name: ROUTE_PREFIX
+          value: "/echo/a"
+        - name: LOGIN_PATH
+          value: "/login"
