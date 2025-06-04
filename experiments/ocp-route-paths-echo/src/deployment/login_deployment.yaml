@@ -21,20 +21,42 @@ spec:
         args:
         - --provider=oidc
         - --http-address=0.0.0.0:4180
-        - --upstream=static://202
+
+        # don't show the provider login page and instead just
+        # go straight into the login sequence
+        - --skip-provider-button=true
+
+        # puts all normal http paths under /login to conform
+        # with how this overall routing architecture works
+        # https://oauth2-proxy.github.io/oauth2-proxy/features/endpoints?_highlight=prefix
+        # - --proxy-prefix=/login/oauth2
+        - --proxy-prefix=/login
+
+        #  basic cookie and xss stuff ...
         - --cookie-secure=true
         - --cookie-secret=abcdefghijklm12345678901
         - --cookie-domain=foo.bar.com
         - --cookie-path=/
         - --email-domain=*
-        - --redirect-url=https://foo.bar.com/login/oauth2/callback
+        #- --cookie-samesite=lax
+
+        # basic oidc setup ...
         - --oidc-issuer-url=https://keycloak.tannerjc.net/realms/echo-realm
         - --client-id=echo-login
         - --client-secret=mDCFOqO20flpFzpmR1gS2bVTV2aMf45Y
         - --scope=openid profile email
-        - --set-xauthrequest=true
-        - --skip-provider-button=true
 
+        # this is going to be sent up to the IDP during login,
+        # so it has to be valid ...
+        #- --redirect-url=https://foo.bar.com/login/oauth2/callback
+        - --redirect-url=https://foo.bar.com/login/callback
+
+        # The upstream for a sidecar is normally localhost:XXXX
+        # because it's in the same pod / network namespace, but
+        # as a central service what is the correct "upstream" ?
+        #- --upstream=static://202
+
+        - --set-xauthrequest=true
         - --set-authorization-header=true
         - --pass-access-token=true
 
@@ -43,5 +65,3 @@ spec:
         #- --skip-auth-route=/login
         - --auth-logging=true
         #- --whitelist-domain=foo.bar.com
-        - --proxy-prefix=/login
-        #- --cookie-samesite=lax

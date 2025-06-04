@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -22,19 +23,34 @@ func main() {
 	proxy := httputil.NewSingleHostReverseProxy(upstreamURL)
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Log method and path
+		log.Printf("Incoming request: %s %s", r.Method, r.URL.Path)
+
+		// Dump all headers
+		log.Println("Headers:")
+		for name, values := range r.Header {
+			for _, value := range values {
+				fmt.Printf("  %s: %s\n", name, value)
+			}
+		}
+
 		auth := r.Header.Get("Authorization")
 		if !isValidBearer(auth) {
 			rd := r.URL.Path
 			if r.URL.RawQuery != "" {
 				rd += "?" + r.URL.RawQuery
 			}
-			http.Redirect(w, r, loginPath+"?rd="+url.QueryEscape(rd), http.StatusFound)
+			redirectURL := loginPath + "?rd=" + url.QueryEscape(rd)
+			log.Printf("Missing or invalid token. Redirecting to: %s", redirectURL)
+			http.Redirect(w, r, redirectURL, http.StatusFound)
 			return
 		}
 
 		// Rewrite the path by stripping the prefix
 		if pathPrefix != "" && pathPrefix != "/" && strings.HasPrefix(r.URL.Path, pathPrefix) {
+			originalPath := r.URL.Path
 			r.URL.Path = "/" + strings.TrimPrefix(r.URL.Path[len(pathPrefix):], "/")
+			log.Printf("Rewriting path from %q to %q", originalPath, r.URL.Path)
 		}
 
 		r.Host = upstreamURL.Host

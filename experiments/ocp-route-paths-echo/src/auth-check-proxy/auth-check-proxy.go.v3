@@ -22,32 +22,11 @@ func main() {
 
 	proxy := httputil.NewSingleHostReverseProxy(upstreamURL)
 
-	// Rewrite any Location headers from upstream that point to localhost
-	proxy.ModifyResponse = func(resp *http.Response) error {
-		location := resp.Header.Get("Location")
-		if location == "" {
-			return nil
-		}
-
-		locURL, err := url.Parse(location)
-		if err != nil {
-			return nil // ignore unparseable URLs
-		}
-
-		if locURL.Host == upstreamURL.Host {
-			// Convert absolute redirect to relative (preserves path/query)
-			locURL.Scheme = ""
-			locURL.Host = ""
-			newLocation := locURL.String()
-			resp.Header.Set("Location", newLocation)
-			log.Printf("Rewrote Location header to: %s", newLocation)
-		}
-		return nil
-	}
-
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Log method and path
 		log.Printf("Incoming request: %s %s", r.Method, r.URL.Path)
 
+		// Dump all headers
 		log.Println("Headers:")
 		for name, values := range r.Header {
 			for _, value := range values {
@@ -55,6 +34,7 @@ func main() {
 			}
 		}
 
+		// Check for valid Authorization or session cookie
 		auth := r.Header.Get("Authorization")
 		_, cookieErr := r.Cookie("_oauth2_proxy")
 
@@ -64,7 +44,7 @@ func main() {
 				rd += "?" + r.URL.RawQuery
 			}
 			redirectURL := loginPath + "?rd=" + url.QueryEscape(rd)
-			log.Printf("Unauthenticated request. Redirecting to: %s", redirectURL)
+			log.Printf("Missing or invalid token/cookie. Redirecting to: %s", redirectURL)
 			http.Redirect(w, r, redirectURL, http.StatusFound)
 			return
 		}
@@ -75,12 +55,13 @@ func main() {
 			log.Println("Valid bearer token found — user is authenticated.")
 		}
 
+		// Pass through request without altering path
 		r.Host = upstreamURL.Host
 		proxy.ServeHTTP(w, r)
 	})
 
 	addr := ":8080"
-	log.Printf("Starting auth-check-proxy on %s with upstream %s", addr, upstream)
+	log.Printf("Starting auth-check-proxy (v3) on %s with upstream %s", addr, upstream)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 

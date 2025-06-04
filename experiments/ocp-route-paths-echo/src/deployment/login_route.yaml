@@ -15,3 +15,21 @@ spec:
   tls:
     termination: edge
   wildcardPolicy: None
+
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: login-proxy-oauth2
+  namespace: echo-oidc
+spec:
+  host: foo.bar.com
+  path: /oauth2
+  to:
+    kind: Service
+    name: login-proxy
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+  wildcardPolicy: None

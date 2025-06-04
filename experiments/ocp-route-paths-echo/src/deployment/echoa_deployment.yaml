@@ -36,4 +36,4 @@ spec:
         - name: ROUTE_PREFIX
           value: "/echo/a"
         - name: LOGIN_PATH
-          value: "/login"
+          value: "/login/start"
