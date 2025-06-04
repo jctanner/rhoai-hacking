@@ -38,11 +38,10 @@ spec:
         - --set-authorization-header=true
         - --pass-access-token=true
 
-        - --skip-auth-route=^/login.*
-
+        #- --skip-auth-route=^/login.*
         - --skip-auth-route=/login/oauth2/callback
-        - --skip-auth-route=/login
+        #- --skip-auth-route=/login
         - --auth-logging=true
-        - --whitelist-domain=foo.bar.com
+        #- --whitelist-domain=foo.bar.com
         - --proxy-prefix=/login
-        - --cookie-samesite=lax
+        #- --cookie-samesite=lax
