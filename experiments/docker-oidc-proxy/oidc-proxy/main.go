@@ -1,0 +1,187 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"log"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	oauth2 "golang.org/x/oauth2"
+)
+
+var (
+	issuerURL    = os.Getenv("OIDC_ISSUER")
+	clientID     = os.Getenv("OIDC_CLIENT_ID")
+	clientSecret = os.Getenv("OIDC_CLIENT_SECRET")
+	redirectURL  = os.Getenv("OIDC_REDIRECT_URL")
+
+	redirectStateMap sync.Map // state -> original path
+)
+
+func main() {
+	ctx := context.Background()
+
+	provider, err := oidc.NewProvider(ctx, issuerURL)
+	if err != nil {
+		log.Fatalf("Failed to get provider: %v", err)
+	}
+
+	verifier := provider.Verifier(&oidc.Config{ClientID: clientID})
+	oauth2Config := &oauth2.Config{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		Endpoint:     provider.Endpoint(),
+		RedirectURL:  redirectURL,
+		Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
+	}
+
+	http.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		logRequest("CALLBACK", r)
+
+		code := r.URL.Query().Get("code")
+		state := r.URL.Query().Get("state")
+		if code == "" || state == "" {
+			log.Println("[callback] Missing code or state")
+			http.Error(w, "Missing code or state", http.StatusBadRequest)
+			return
+		}
+
+		token, err := oauth2Config.Exchange(r.Context(), code)
+		if err != nil {
+			log.Printf("[callback] Failed to exchange token: %v\n", err)
+			http.Error(w, "Failed to exchange token", http.StatusInternalServerError)
+			return
+		}
+
+		rawIDToken, ok := token.Extra("id_token").(string)
+		if !ok {
+			log.Println("[callback] No id_token found in token response")
+			http.Error(w, "No id_token field", http.StatusInternalServerError)
+			return
+		}
+
+		log.Println("[callback] Login successful, setting id_token cookie")
+		http.SetCookie(w, &http.Cookie{
+			Name:     "id_token",
+			Value:    rawIDToken,
+			Path:     "/",
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+		})
+
+		var originalPath string
+		if val, ok := redirectStateMap.Load(state); ok {
+			originalPath = val.(string)
+			redirectStateMap.Delete(state)
+			log.Printf("[callback] Restoring original path: %s", originalPath)
+		} else {
+			log.Println("[callback] No original path found for state, defaulting to /")
+			originalPath = "/"
+		}
+		http.Redirect(w, r, originalPath, http.StatusSeeOther)
+	})
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		logRequest("MAIN", r)
+
+		cookie, err := r.Cookie("id_token")
+		if err != nil || cookie.Value == "" {
+			state := generateState()
+			originalPath := r.URL.RequestURI()
+			redirectStateMap.Store(state, originalPath)
+			loginURL := oauth2Config.AuthCodeURL(state)
+			log.Printf("[auth] Redirecting to Keycloak login for path: %s -> %s\n", originalPath, loginURL)
+			http.Redirect(w, r, loginURL, http.StatusFound)
+			return
+		}
+
+		_, err = verifier.Verify(r.Context(), cookie.Value)
+		if err != nil {
+			log.Printf("[auth] Invalid token: %v\n", err)
+			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/echo-a"):
+			log.Println("[proxy] Routing to echo-a")
+			proxyTo(w, r, "http://echo-a:5678")
+		case strings.HasPrefix(r.URL.Path, "/echo-b"):
+			log.Println("[proxy] Routing to echo-b")
+			proxyTo(w, r, "http://echo-b:5678")
+		case strings.HasPrefix(r.URL.Path, "/echo-c-protected"):
+			log.Println("[proxy] Routing to echo-c")
+			proxyTo(w, r, "http://oauth2-echo-c:4180")
+		default:
+			log.Println("[main] Authenticated root access")
+			fmt.Fprintf(w, "Hello, authenticated user! Use /echo-a or /echo-b")
+		}
+	})
+
+	port := os.Getenv("PORT_NUMBER")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("Starting OIDC proxy on :%s\n", port)
+	http.ListenAndServe(":"+port, nil)
+}
+
+/*
+func proxyTo(w http.ResponseWriter, r *http.Request, upstream string) {
+	target, err := url.Parse(upstream)
+	if err != nil {
+		log.Printf("[proxy] Bad upstream URL: %v\n", err)
+		http.Error(w, "Bad upstream URL", http.StatusInternalServerError)
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ServeHTTP(w, r)
+}
+*/
+
+func proxyTo(w http.ResponseWriter, r *http.Request, upstream string) {
+	target, err := url.Parse(upstream)
+	if err != nil {
+		log.Printf("[proxy] Bad upstream URL: %v\n", err)
+		http.Error(w, "Bad upstream URL", http.StatusInternalServerError)
+		return
+	}
+
+	// Clone the request before mutating headers
+	clone := r.Clone(r.Context())
+
+	// Extract the ID token from the cookie and inject into headers
+	if cookie, err := r.Cookie("id_token"); err == nil && cookie.Value != "" {
+		log.Println("[proxy] Forwarding id_token in headers")
+		clone.Header.Set("Authorization", "Bearer "+cookie.Value)
+		clone.Header.Set("USER_ACCESS_TOKEN", cookie.Value)
+	} else {
+		log.Println("[proxy] No id_token cookie found for forwarding")
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.ServeHTTP(w, clone)
+}
+
+
+func generateState() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func logRequest(tag string, r *http.Request) {
+	log.Printf("[%s] %s %s", tag, r.Method, r.URL.Path)
+	for k, v := range r.Header {
+		log.Printf("[%s] Header: %s=%s", tag, k, strings.Join(v, ", "))
+	}
+}

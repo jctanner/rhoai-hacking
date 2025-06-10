@@ -1,0 +1,103 @@
+version: "3.9"
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command:
+      - start-dev
+      - --import-realm
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak:/opt/keycloak/data/import
+
+  echo-a:
+    #image: hashicorp/http-echo
+    build:
+      context: ./echo-server
+    command: ["-text=Hello from Echo A"]
+    #ports:
+    #  - "8082:5678"
+
+  echo-b:
+    #image: hashicorp/http-echo
+    build:
+      context: ./echo-server
+    command: ["-text=Hello from Echo B"]
+    #ports:
+    #  - "8083:5678"
+
+  oidc-proxy:
+    build:
+      context: ./oidc-proxy
+      dockerfile: Dockerfile
+    environment:
+      OIDC_ISSUER: http://keycloak:8080/realms/echo-realm
+      OIDC_ISSUER_INTERNAL: http://keycloak:8080/realms/echo-realm
+      OIDC_CLIENT_ID: echo-proxy
+      OIDC_CLIENT_SECRET: secret
+      OIDC_REDIRECT_URL: http://localhost:9000/callback
+      PORT_NUMBER: 9000
+    ports:
+      - "9000:9000"
+    depends_on:
+      - keycloak
+      - echo-a
+      - echo-b
+
+  echo-c:
+    build:
+      context: ./echo-server
+    command: ["-text=Hello from Echo C"]
+    ports:
+      - "8084:5678"
+    #environment:
+    #  PORT: 5678
+
+  oauth2-echo-c:
+    #image: quay.io/oauth2-proxy/oauth2-proxy:latest
+    build:
+      context: ./oauth2-proxy
+    ports:
+      - "4180:4180"
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    #volumes:
+    #  - ./entrypoint.sh:/entrypoint.sh:ro
+    environment:
+      OAUTH2_PROXY_STANDARD_LOGGING: "true"
+      OAUTH2_PROXY_PROVIDER: oidc
+      OAUTH2_PROXY_CLIENT_ID: echo-c-proxy
+      OAUTH2_PROXY_CLIENT_SECRET: some-secret
+      OAUTH2_PROXY_COOKIE_SECRET: a_secure_24_byte_secret_
+      OAUTH2_PROXY_EMAIL_DOMAINS: "*"
+
+      # Accept and validate JWTs from Authorization header
+      OAUTH2_PROXY_OIDC_ISSUER_URL: http://keycloak:8080/realms/echo-realm
+      OAUTH2_PROXY_SKIP_PROVIDER_BUTTON: "true"
+      OAUTH2_PROXY_SKIP_AUTH_STRIP_HEADERS: "false"
+      OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS: "false"
+      #OAUTH2_PROXY_SKIP_JWT_BEARER_TOKENS: "true"
+      #OAUTH2_PROXY_EXTRA_JWT_ISSUERS: "http://keycloak:8080/realms/echo-realm=echo-c-proxy"
+      OAUTH2_PROXY_EXTRA_JWT_ISSUERS: "http://keycloak:8080/realms/echo-realm=echo-c-proxy,echo-proxy"
+      OAUTH2_PROXY_OIDC_JWKS_URL: http://keycloak:8080/realms/echo-realm/protocol/openid-connect/certs
+
+      OAUTH2_PROXY_SET_AUTHORIZATION_HEADER: "true"
+      OAUTH2_PROXY_PASS_ACCESS_TOKEN: "true"
+
+      # Upstream echo-c
+      OAUTH2_PROXY_UPSTREAMS: http://echo-c:5678
+      OAUTH2_PROXY_HTTP_ADDRESS: "0.0.0.0:4180"
+
+      # Optional: allow running over HTTP
+      OAUTH2_PROXY_COOKIE_SECURE: "false"
+      OAUTH2_PROXY_COOKIE_SAMESITE: "lax"
+
+    depends_on:
+      - keycloak
+      - echo-c
+
+volumes:
+  keycloak_data:

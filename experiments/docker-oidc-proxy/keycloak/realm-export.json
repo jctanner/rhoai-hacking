@@ -1,0 +1,51 @@
+{
+  "realm": "echo-realm",
+  "enabled": true,
+  "clients": [
+    {
+      "clientId": "echo-proxy",
+      "secret": "secret",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "http://localhost:8080/callback",
+        "http://keycloak:8080/callback",
+        "http://localhost:9000/callback",
+        "*"
+      ],
+      "publicClient": false,
+      "standardFlowEnabled": true
+    },
+    {
+      "clientId": "echo-c-proxy",
+      "secret": "some-secret",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "redirectUris": [
+        "http://oauth2-proxy-echo:4180/oauth2/callback",
+        "http://localhost:4180/oauth2/callback",
+        "http://localhost:9000/callback",
+        "*"
+      ],
+      "standardFlowEnabled": true
+    }
+  ],
+  "users": [
+    {
+      "username": "testuser",
+      "email": "foo@bar.com",
+      "firstName": "test",
+      "lastName": "user",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}
