@@ -1,0 +1,57 @@
+version: "3.8"
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.1
+    #command: start-dev
+    command: start-dev --import-realm
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+    ports:
+      - "8080:8080"
+    networks:
+      - net
+    volumes:
+      - ./realm.json:/opt/keycloak/data/import/realm.json
+
+  envoy:
+    #image: envoyproxy/envoy:v1.30-latest
+    #image: envoyproxy/envoy-dev:latest
+    image: istio/proxyv2:1.21.0
+    #command:
+    #  [
+    #    "pilot-agent",
+    #    "proxy",
+    #    "--log_output_level=wasm:debug",
+    #    "--proxyLogLevel=debug",
+    #    "--configPath",
+    #    "/etc/envoy/envoy.yaml",
+    #  ]
+    command: ["proxy", "--configPath", "/etc/envoy/envoy.yaml"]
+    volumes:
+      # - ./certs:/etc/envoy/certs
+      - ./certs:/var/run/secrets/istio
+      - ./envoy.yaml:/etc/envoy/envoy.yaml
+      - ./jwt_redirect_filter.wasm:/etc/envoy/jwt_redirect_filter.wasm
+    ports:
+      - "8081:8081"
+    depends_on:
+      - keycloak
+      - echo-a
+      - echo-b
+    networks:
+      - net
+
+  echo-a:
+    image: ealen/echo-server
+    networks:
+      - net
+
+  echo-b:
+    image: ealen/echo-server
+    networks:
+      - net
+
+networks:
+  net:

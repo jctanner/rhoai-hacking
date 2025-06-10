@@ -1,0 +1,2 @@
+experiments/docker-envoy-oidc/jwt_redirect_filter/target
+experiments/docker-envoy-oidc/jwt_redirect_filter.wasm

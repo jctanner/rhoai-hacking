@@ -1,0 +1,30 @@
+FROM ubuntu:22.04 AS builder
+
+# Install required tools
+RUN apt-get update && apt-get install -y \
+    git cmake curl unzip wget build-essential \
+    libtool libssl-dev automake autoconf zip \
+    curl git unzip build-essential libtool \
+    cmake pkg-config zlib1g-dev python3
+
+# Install Bazel 7.6.0
+RUN mkdir -p /usr/local/lib/bazel/bin && \
+    curl -fLo /usr/local/lib/bazel/bin/bazel https://releases.bazel.build/7.6.0/release/bazel-7.6.0-linux-x86_64 && \
+    chmod +x /usr/local/lib/bazel/bin/bazel && \
+    ln -s /usr/local/lib/bazel/bin/bazel /usr/local/bin/bazel
+
+RUN useradd -ms /bin/bash envoyuser
+USER envoyuser
+WORKDIR /home/envoyuser
+
+# Build Envoy with WASM support
+RUN git clone --branch v1.34.1 --depth 1 https://github.com/envoyproxy/envoy.git envoy
+RUN cd envoy && bazel build //source/exe:envoy-static --define wasm=enabled
+
+# Final image
+FROM ubuntu:22.04
+RUN apt-get update && apt-get install -y ca-certificates
+
+COPY --from=builder /envoy/bazel-bin/source/exe/envoy-static /usr/local/bin/envoy
+
+ENTRYPOINT ["/usr/local/bin/envoy"]
