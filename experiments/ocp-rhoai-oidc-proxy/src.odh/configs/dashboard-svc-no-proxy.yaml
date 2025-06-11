@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: odh-dashboard-8080
+  namespace: opendatahub
+  labels:
+    app: odh-dashboard
+    app.kubernetes.io/part-of: dashboard
+    app.opendatahub.io/rhods-dashboard: "true"
+    platform.opendatahub.io/part-of: dashboard
+spec:
+  selector:
+    app: odh-dashboard
+    app.kubernetes.io/part-of: dashboard
+    deployment: odh-dashboard
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP
+

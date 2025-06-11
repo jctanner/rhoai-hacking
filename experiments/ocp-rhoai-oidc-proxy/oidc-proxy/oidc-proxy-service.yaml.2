@@ -1,0 +1,93 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oidc-proxy
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oidc-proxy-config
+  namespace: oidc-proxy
+data:
+  routes.json: |
+    [
+      {
+        "pathPrefix": "/",
+        "upstream": "http://rhods-dashboard-8080.redhat-ods-applications.svc.cluster.local:8080"
+      }
+    ]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oidc-proxy
+  namespace: oidc-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oidc-proxy
+  template:
+    metadata:
+      labels:
+        app: oidc-proxy
+    spec:
+      containers:
+        - name: oidc-proxy
+          image: registry.tannerjc.net/oidc-proxy:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT_NUMBER
+              value: "8080"
+            - name: OIDC_ISSUER
+              value: "https://keycloak.apps.sno419rc4.lab.net/realms/rhoai"
+            - name: OIDC_ISSUER_INTERNAL
+              value: "http://keycloak.keycloak.svc.cluster.local:8080/realms/rhoai"
+            - name: OIDC_CLIENT_ID
+              value: "rhoai-client"
+            - name: OIDC_CLIENT_SECRET
+              value: "super-secret"
+            - name: OIDC_REDIRECT_URL
+              value: "https://rhoai-proxy.apps.sno419rc4.lab.net/callback"
+            - name: ROUTE_CONFIG_PATH
+              value: "/etc/oidc-proxy/routes.json"
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/oidc-proxy
+              readOnly: true
+      volumes:
+        - name: config-volume
+          configMap:
+            name: oidc-proxy-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oidc-proxy
+  namespace: oidc-proxy
+spec:
+  selector:
+    app: oidc-proxy
+  ports:
+    - name: http
+      protocol: TCP
+      port: 80
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: oidc-proxy
+  namespace: oidc-proxy
+spec:
+  host: rhoai-proxy.apps.sno419rc4.lab.net
+  to:
+    kind: Service
+    name: oidc-proxy
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  port:
+    targetPort: http

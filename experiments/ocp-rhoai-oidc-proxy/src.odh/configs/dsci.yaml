@@ -1,0 +1,20 @@
+kind: DSCInitialization
+apiVersion: dscinitialization.opendatahub.io/v1
+metadata:
+  name: default-dsci
+spec:
+  #devFlags:
+  #  logLevel: debug
+  applicationsNamespace: opendatahub
+  monitoring:
+    managementState: Removed
+    namespace: opendatahub
+  serviceMesh:
+    controlPlane:
+      metricsCollection: Istio
+      name: data-science-smcp
+      namespace: istio-system
+    managementState: Removed
+  trustedCABundle:
+    customCABundle: ''
+    managementState: Managed

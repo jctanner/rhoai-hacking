@@ -1,0 +1,14 @@
+[
+  {
+    "pathPrefix": "/echo-a",
+    "upstream": "http://echo-a:5678"
+  },
+  {
+    "pathPrefix": "/echo-b",
+    "upstream": "http://echo-b:5678"
+  },
+  {
+    "pathPrefix": "/echo-c-protected",
+    "upstream": "http://oauth2-echo-c:4180"
+  }
+]
