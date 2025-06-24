@@ -1,6 +1,6 @@
 #!/bin/bash
 
-URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.6.0/kustomize_v5.6.0_linux_amd64.tar.gz"
+URL="https://github.com/derailed/k9s/releases/download/v0.50.6/k9s_Linux_amd64.tar.gz"
 TARBALL=$(basename $URL)
 
 if [[ ! -d bin ]]; then
@@ -15,8 +15,6 @@ if [[ ! -f tarballs/$TARBALL ]]; then
     curl -k -L -o tarballs/$TARBALL $URL
 fi
 
-if [[ ! -f bin/kustomize ]]; then
-    tar xzvf tarballs/$TARBALL
-fi
-
-mv kustomize bin/.
+tar xzvf tarballs/$TARBALL k9s
+mv k9s bin/.
+chmod +x bin/k9s

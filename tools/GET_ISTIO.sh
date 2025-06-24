@@ -1,14 +1,22 @@
 #!/bin/bash
 
-URL="https://github.com/istio/istio/releases/download/1.25.1/istio-1.25.1-linux-amd64.tar.gz"
+URL="https://github.com/istio/istio/releases/download/1.26.2/istio-1.26.2-linux-amd64.tar.gz"
 TARBALL=$(basename $URL)
 
-if [[ ! -f $TARBALL ]]; then
-    curl -L -o $TARBALL $URL
+if [[ ! -d bin ]]; then
+    mkdir -p bin
+fi 
+
+if [[ ! -d tarballs ]]; then
+    mkdir -p tarballs
 fi
 
-if [[ ! -f istioctl ]]; then
-    tar xzvf $TARBALL istio-1.25.1/bin/istioctl
-    mv istio-1.25.1/bin/istioctl .
-    rm -rf istio-1.25.1
+if [[ ! -f tarballs/$TARBALL ]]; then
+    curl -L -o tarballs/$TARBALL $URL
+fi
+
+if [[ ! -f bin/istioctl ]]; then
+    tar xzvf tarballs/$TARBALL istio-1.26.2/bin/istioctl
+    mv istio-1.26.2/bin/istioctl bin/.
+    rm -rf istio-1.26.2
 fi
