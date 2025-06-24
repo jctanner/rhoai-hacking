@@ -1,0 +1,55 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-a
+  namespace: ns-a
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: echo-a
+  template:
+    metadata:
+      labels:
+        app: echo-a
+    spec:
+      serviceAccountName: alice
+      containers:
+      - name: kube-rbac-proxy
+        image: gcr.io/kubebuilder/kube-rbac-proxy:v0.13.1
+        args:
+        - "--secure-listen-address=0.0.0.0:8443"
+        - "--upstream=http://127.0.0.1:80/"
+        - "--tls-cert-file=/certs/tls.crt"
+        - "--tls-private-key-file=/certs/tls.key"
+        - "--logtostderr=true"
+        - "--v=10"
+        ports:
+        - containerPort: 8443
+        volumeMounts:
+        - mountPath: /certs
+          name: tls
+          readOnly: true
+      - name: echo
+        image: ealen/echo-server
+        ports:
+        - containerPort: 80
+      volumes:
+      - name: tls
+        secret:
+          secretName: echo-a-tls
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-a
+  namespace: ns-a
+spec:
+  selector:
+    app: echo-a
+  ports:
+  - port: 443
+    targetPort: 8443
+    name: https
+
