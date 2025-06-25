@@ -68,6 +68,7 @@ spec:
         - "--auth-header-fields-enabled"
         - "--auth-header-user-field-name=x-remote-user"
         - "--auth-header-groups-field-name=x-remote-groups"
+        - "--ignore-paths=/api/k8s/foobar"
         ports:
         - containerPort: 8443
           name: https

@@ -162,4 +162,57 @@ echo-a-5c47f8b74-mhsc9 kube-rbac-proxy I0625 17:21:07.460064       1 request.go:
 echo-a-5c47f8b74-mhsc9 echo {"name":"echo-server","hostname":"echo-a-5c47f8b74-mhsc9","pid":1,"level":30,"host":{"hostname":"localhost","ip":"::ffff:127.0.0.1","ips":[]},"http":{"method":"GET","baseUrl":"","originalUrl":"/","protocol":"http"},"request":{"params":{},"query":{},"cookies":{},"body":{},"headers":{"host":"localhost:8443","user-agent":"curl/8.11.1","accept":"*/*","x-forwarded-for":"127.0.0.1","x-remote-groups":"","x-remote-user":"alice@example.com","accept-encoding":"gzip"}},"environment":{"PATH":"/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin","HOSTNAME":"echo-a-5c47f8b74-mhsc9","NODE_VERSION":"20.11.0","YARN_VERSION":"1.22.19","KUBERNETES_PORT_443_TCP_PROTO":"tcp","KUBERNETES_PORT_443_TCP_ADDR":"10.96.0.1","ECHO_PORT_443_TCP_ADDR":"10.96.58.59","ECHO_PORT_443_TCP_PROTO":"tcp","KUBERNETES_SERVICE_HOST":"10.96.0.1","KUBERNETES_SERVICE_PORT":"443","KUBERNETES_PORT_443_TCP_PORT":"443","KUBERNETES_SERVICE_PORT_HTTPS":"443","KUBERNETES_PORT":"tcp://10.96.0.1:443","ECHO_SERVICE_HOST":"10.96.58.59","KUBERNETES_PORT_443_TCP":"tcp://10.96.0.1:443","ECHO_SERVICE_PORT":"443","ECHO_SERVICE_PORT_HTTPS":"443","ECHO_PORT":"tcp://10.96.58.59:443","ECHO_PORT_443_TCP":"tcp://10.96.58.59:443","ECHO_PORT_443_TCP_PORT":"443","HOME":"/root"},"msg":"Wed, 25 Jun 2025 17:21:07 GMT | [GET] - http://localhost:8443/","time":"2025-06-25T17:21:07.466Z","v":0}
 ```
 
-
+```
+{
+  "host": {
+    "hostname": "localhost",
+    "ip": "::ffff:127.0.0.1",
+    "ips": []
+  },
+  "http": {
+    "method": "GET",
+    "baseUrl": "",
+    "originalUrl": "/api/k8s/foobar",
+    "protocol": "http"
+  },
+  "request": {
+    "params": {
+      "0": "/api/k8s/foobar"
+    },
+    "query": {},
+    "cookies": {},
+    "body": {},
+    "headers": {
+      "host": "localhost:8443",
+      "user-agent": "curl/8.11.1",
+      "accept": "*/*",
+      "authorization": "Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6IjI4ODE0OGFiNDMyNTQ3Yzg2MDgyNmRlYjdlN2E3ZDBlOTc5NDM4YzcifQ.eyJpc3MiOiJodHRwczovL2RleC5kZXguc3ZjLmNsdXN0ZXIubG9jYWw6NTU1NiIsInN1YiI6IkNnTXhNak1TQld4dlkyRnMiLCJhdWQiOiJlY2hvIiwiZXhwIjoxNzUwOTYzNjM0LCJpYXQiOjE3NTA4NzcyMzQsImF0X2hhc2giOiJZaEFWSWs5NngxNEdRS28zTDBsYVNBIiwiY19oYXNoIjoieGhVRVdFTm9mZVFfYWc3cVZQenlOUSIsImVtYWlsIjoiYWxpY2VAZXhhbXBsZS5jb20iLCJlbWFpbF92ZXJpZmllZCI6dHJ1ZSwibmFtZSI6ImFsaWNlIn0.D-IjWaXau-9iPgprr7jPxR2JX0xoLdYmncDdR6uRuHFX-H6rN3jyH81pjNwJLD9lgK6JOKPoJkyU4w63bwDRK1JFFGuIGjMjiIpkUP9S0NyKu5n6EDnYspDFOjkbxZl8XQGAuObaC7eDpoOOR727wm4zCECYsSOOkIzXUEl8tzU5rypjdTFO5Y6ogMWaZMMcrB2PZBj5e1Fh3Y1S2cC4QTls7HeXghx0ZiCuRej2AgaQwRsEQGRM_rw_3TKiJxtp4aKyT_J7KMTd6PZWlvA0Cja4zYrg_QgQ3Q_2-V3g7sVkFQUz_l4Z-GZHp8FQUYmQCntPwDbs-nQRCnSBWBUrhg",
+      "x-forwarded-for": "127.0.0.1",
+      "accept-encoding": "gzip"
+    }
+  },
+  "environment": {
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "HOSTNAME": "echo-a-5dc8c79bd6-gcbsn",
+    "NODE_VERSION": "20.11.0",
+    "YARN_VERSION": "1.22.19",
+    "KUBERNETES_SERVICE_PORT": "443",
+    "KUBERNETES_PORT_443_TCP_PROTO": "tcp",
+    "ECHO_SERVICE_PORT": "443",
+    "ECHO_SERVICE_PORT_HTTPS": "443",
+    "ECHO_PORT_443_TCP_ADDR": "10.96.129.158",
+    "KUBERNETES_SERVICE_HOST": "10.96.0.1",
+    "KUBERNETES_SERVICE_PORT_HTTPS": "443",
+    "KUBERNETES_PORT_443_TCP_PORT": "443",
+    "ECHO_PORT": "tcp://10.96.129.158:443",
+    "ECHO_PORT_443_TCP_PROTO": "tcp",
+    "KUBERNETES_PORT": "tcp://10.96.0.1:443",
+    "KUBERNETES_PORT_443_TCP_ADDR": "10.96.0.1",
+    "ECHO_PORT_443_TCP": "tcp://10.96.129.158:443",
+    "ECHO_PORT_443_TCP_PORT": "443",
+    "KUBERNETES_PORT_443_TCP": "tcp://10.96.0.1:443",
+    "ECHO_SERVICE_HOST": "10.96.129.158",
+    "HOME": "/root"
+  }
+}
+```

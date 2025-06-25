@@ -37,7 +37,15 @@ if [[ "$ID_TOKEN" == "null" || -z "$ID_TOKEN" ]]; then
 fi
 
 # Step 4: Use ID Token to access echo
-echo ""
+echo "-------------------------------------------------------------------------------------"
+echo "GET ROOT"
+echo "-------------------------------------------------------------------------------------"
 echo "Sending request to echo service with ID token..."
 curl -k -v "$ECHO_URL" -H "Authorization: Bearer $ID_TOKEN" | jq .
 
+# Step 5: Use ID Token to access echo's api endpint ...
+echo "-------------------------------------------------------------------------------------"
+echo "PASSTRHOUGH TO API"
+echo "-------------------------------------------------------------------------------------"
+echo "Sending request to echo service with ID token..."
+curl -k -v "${ECHO_URL}api/k8s/foobar" -H "Authorization: Bearer $ID_TOKEN"  | jq .
