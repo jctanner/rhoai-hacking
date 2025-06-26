@@ -1,0 +1,9 @@
+apiVersion: ds.example.com/v1alpha1
+kind: Notebook
+metadata:
+  labels:
+    app.kubernetes.io/name: notebook-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: notebook-sample
+spec:
+  # TODO(user): Add fields here
