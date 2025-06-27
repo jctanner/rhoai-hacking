@@ -1,14 +1,17 @@
 package proxy
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/jctanner/odh-gateway/pkg/config"
@@ -31,6 +34,7 @@ func StartServer() error {
 	}
 
 	go watchConfig(cfgPath)
+	go pollConfig(cfgPath)
 
 	port := os.Getenv("GATEWAY_PORT")
 	if port == "" {
@@ -48,7 +52,13 @@ func StartServer() error {
 
 // reloadConfig builds the routing mux and updates the global router
 func reloadConfig(path string) error {
-	cfg, err := config.LoadConfig(path)
+	// Force a fresh read by resolving the symlink
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("failed to resolve symlink for %s: %w", path, err)
+	}
+
+	cfg, err := config.LoadConfig(resolvedPath)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -92,6 +102,7 @@ func reloadConfig(path string) error {
 	return nil
 }
 
+/*
 // watchConfig watches the config file and reloads when it changes
 func watchConfig(path string) {
 	watcher, err := fsnotify.NewWatcher()
@@ -124,5 +135,80 @@ func watchConfig(path string) {
 			}
 			log.Printf("watch error: %v", err)
 		}
+	}
+}
+*/
+
+func watchConfig(path string) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Printf("watch error: %v", err)
+		return
+	}
+	defer watcher.Close()
+
+	dir := filepath.Dir(path)
+	if err := watcher.Add(dir); err != nil {
+		log.Printf("watch add error: %v", err)
+		return
+	}
+
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+
+			// Watch for changes to the symlink target
+			if filepath.Clean(event.Name) == filepath.Clean(path) &&
+				(event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename)) != 0 {
+
+				log.Printf("Detected change in config: %s", event.Name)
+				if err := reloadConfig(path); err != nil {
+					log.Printf("Failed to reload config: %v", err)
+				}
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			log.Printf("watch error: %v", err)
+		}
+	}
+}
+
+
+// pollConfig polls the config file every 2 seconds and reloads if the hash changes
+func pollConfig(path string) {
+	var lastHash [32]byte
+
+	for {
+		resolvedPath, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			log.Printf("polling: failed to resolve symlink: %v", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		data, err := os.ReadFile(resolvedPath)
+		if err != nil {
+			if !os.IsNotExist(err) && !os.IsPermission(err) {
+				log.Printf("polling: read error: %v", err)
+			}
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		hash := sha256.Sum256(data)
+		if hash != lastHash {
+			log.Printf("polling: detected config change via hash")
+			lastHash = hash
+			if err := reloadConfig(path); err != nil {
+				log.Printf("polling: reload failed: %v", err)
+			}
+		}
+
+		time.Sleep(2 * time.Second)
 	}
 }
