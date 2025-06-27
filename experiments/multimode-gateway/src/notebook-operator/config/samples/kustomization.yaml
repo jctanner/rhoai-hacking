@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- ds_v1alpha1_notebook.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
