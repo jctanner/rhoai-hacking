@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -55,6 +56,23 @@ type ODHGatewayReconciler struct {
 type RouteEntry struct {
 	Path     string
 	Upstream string
+}
+
+// sortRoutes sorts routes by specificity (longest path first) then alphabetically
+// This ensures that more specific routes are matched before catch-all routes,
+// while maintaining alphabetical order for readability when paths have the same length
+func sortRoutes(routes []RouteEntry) {
+	sort.Slice(routes, func(i, j int) bool {
+		pathI, pathJ := routes[i].Path, routes[j].Path
+
+		// Primary sort: by path length (descending) - longer/more specific paths first
+		if len(pathI) != len(pathJ) {
+			return len(pathI) > len(pathJ)
+		}
+
+		// Secondary sort: alphabetically for readability when lengths are equal
+		return pathI < pathJ
+	})
 }
 
 // +kubebuilder:rbac:groups=gateway.opendatahub.io,resources=odhgateways,verbs=get;list;watch;create;update;patch;delete
@@ -120,6 +138,10 @@ func (r *ODHGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			routes = append(routes, RouteEntry{Path: path, Upstream: upstream})
 		}
 	}
+
+	// Sort routes by specificity (longest path first) then alphabetically
+	// This ensures more specific routes are matched before catch-all routes
+	sortRoutes(routes)
 
 	// Managed configmap generation
 	if cr.Spec.RouteConfigMap != nil && cr.Spec.RouteConfigMap.Managed {
