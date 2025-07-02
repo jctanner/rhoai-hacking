@@ -18,24 +18,19 @@ import (
 )
 
 var (
-	mu     sync.RWMutex
-	router http.Handler
+	mu             sync.RWMutex
+	router         http.Handler
+	oidcMiddleware *OIDCMiddleware
 )
 
 // StartServer starts the reverse proxy with hot-reload and request logging
-func StartServer(tlsCertFile, tlsKeyFile string) error {
+func StartServer(tlsCertFile, tlsKeyFile string, oidcConfig OIDCConfig) error {
 	cfgPath := os.Getenv("GATEWAY_CONFIG")
 	if cfgPath == "" {
 		cfgPath = "/etc/odh-gateway/config.yaml"
 	}
 
-	if err := reloadConfig(cfgPath); err != nil {
-		return err
-	}
-
-	go watchConfig(cfgPath)
-	go pollConfig(cfgPath)
-
+	// Determine base URL for OIDC callbacks
 	port := os.Getenv("GATEWAY_PORT")
 	if port == "" {
 		if tlsCertFile != "" && tlsKeyFile != "" {
@@ -44,6 +39,26 @@ func StartServer(tlsCertFile, tlsKeyFile string) error {
 			port = "8080" // Default HTTP port
 		}
 	}
+
+	scheme := "http"
+	if tlsCertFile != "" && tlsKeyFile != "" {
+		scheme = "https"
+	}
+	baseURL := fmt.Sprintf("%s://localhost:%s", scheme, port)
+
+	// Initialize OIDC middleware
+	var err error
+	oidcMiddleware, err = NewOIDCMiddleware(oidcConfig, oidcConfig.Enabled, baseURL)
+	if err != nil {
+		return fmt.Errorf("failed to initialize OIDC middleware: %w", err)
+	}
+
+	if err := reloadConfig(cfgPath); err != nil {
+		return err
+	}
+
+	go watchConfig(cfgPath)
+	go pollConfig(cfgPath)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s %s %s", r.RemoteAddr, r.Method, r.URL)
@@ -57,9 +72,15 @@ func StartServer(tlsCertFile, tlsKeyFile string) error {
 		log.Printf("Starting HTTPS server on :%s", port)
 		log.Printf("Using TLS cert: %s", tlsCertFile)
 		log.Printf("Using TLS key: %s", tlsKeyFile)
+		if oidcConfig.Enabled {
+			log.Printf("OIDC authentication enabled (issuer: %s)", oidcConfig.IssuerURL)
+		}
 		return http.ListenAndServeTLS(":"+port, tlsCertFile, tlsKeyFile, handler)
 	} else {
 		log.Printf("Starting HTTP server on :%s", port)
+		if oidcConfig.Enabled {
+			log.Printf("OIDC authentication enabled (issuer: %s)", oidcConfig.IssuerURL)
+		}
 		return http.ListenAndServe(":"+port, handler)
 	}
 }
@@ -78,6 +99,17 @@ func reloadConfig(path string) error {
 	}
 
 	mux := http.NewServeMux()
+
+	// Register OIDC endpoints if enabled
+	if oidcMiddleware != nil && oidcMiddleware.config.Enabled {
+		mux.Handle("/oidc/callback", oidcMiddleware.Middleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Callback is handled by middleware
+		})))
+		mux.Handle("/oidc/logout", oidcMiddleware.Middleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Logout is handled by middleware
+		})))
+	}
+
 	for _, route := range cfg.Routes {
 		if route.PathPrefix == "" {
 			log.Printf("Skipping route with empty path prefix")
@@ -98,16 +130,41 @@ func reloadConfig(path string) error {
 
 		proxy := httputil.NewSingleHostReverseProxy(target)
 
-		// Register the handler for this prefix without stripping the path
-		mux.Handle(prefix, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Create the handler for this route
+		routeHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasPrefix(r.URL.Path, prefix) {
 				proxy.ServeHTTP(w, r)
 			} else {
 				http.NotFound(w, r)
 			}
-		}))
+		})
 
-		log.Printf("Routing %s -> %s", prefix, route.Upstream)
+		// Wrap with OIDC middleware if available
+		var finalHandler http.Handler = routeHandler
+		if oidcMiddleware != nil {
+			finalHandler = oidcMiddleware.Middleware(route.AuthRequired)(routeHandler)
+		}
+
+		mux.Handle(prefix, finalHandler)
+
+		authStatus := "no auth"
+		if oidcMiddleware != nil && oidcMiddleware.config.Enabled {
+			if route.AuthRequired != nil {
+				if *route.AuthRequired {
+					authStatus = "auth required"
+				} else {
+					authStatus = "auth disabled"
+				}
+			} else {
+				if oidcMiddleware.defaultAuth {
+					authStatus = "auth required (default)"
+				} else {
+					authStatus = "auth disabled (default)"
+				}
+			}
+		}
+
+		log.Printf("Routing %s -> %s (%s)", prefix, route.Upstream, authStatus)
 	}
 
 	mu.Lock()

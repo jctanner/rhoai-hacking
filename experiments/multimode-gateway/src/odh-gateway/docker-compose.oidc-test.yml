@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  # ODH Gateway with OIDC enabled
+  odh-gateway:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - GATEWAY_CONFIG=/etc/odh-gateway/config.yaml
+      - GATEWAY_PORT=8080
+      - GATEWAY_OIDC_ISSUER_URL=https://fake-oidc-provider.com/auth/realms/test
+      - GATEWAY_OIDC_CLIENT_ID=odh-gateway
+      - GATEWAY_OIDC_CLIENT_SECRET=fake-secret
+    volumes:
+      - ./test/config-oidc.yaml:/etc/odh-gateway/config.yaml:ro
+    depends_on:
+      jupyter-service:
+        condition: service_healthy
+      public-service:
+        condition: service_healthy
+      api-service:
+        condition: service_healthy
+      docs-service:
+        condition: service_healthy
+      default-service:
+        condition: service_healthy
+    networks:
+      - gateway-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/docs/"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Protected service (requires auth)
+  jupyter-service:
+    image: mendhak/http-https-echo:33
+    environment:
+      - HTTP_PORT=80
+    networks:
+      - gateway-test
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Public service (no auth required)
+  public-service:
+    image: mendhak/http-https-echo:33
+    environment:
+      - HTTP_PORT=80
+    networks:
+      - gateway-test
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Protected API service
+  api-service:
+    image: mendhak/http-https-echo:33
+    environment:
+      - HTTP_PORT=80
+    networks:
+      - gateway-test
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Public docs service
+  docs-service:
+    image: mendhak/http-https-echo:33
+    environment:
+      - HTTP_PORT=80
+    networks:
+      - gateway-test
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Default service
+  default-service:
+    image: mendhak/http-https-echo:33
+    environment:
+      - HTTP_PORT=80
+    networks:
+      - gateway-test
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # OIDC test runner
+  oidc-test-runner:
+    image: curlimages/curl:latest
+    depends_on:
+      odh-gateway:
+        condition: service_healthy
+    volumes:
+      - ./test/run-oidc-tests.sh:/test/run-oidc-tests.sh:ro
+    command: ["/bin/sh", "/test/run-oidc-tests.sh"]
+    networks:
+      - gateway-test
+
+networks:
+  gateway-test:
+    driver: bridge 

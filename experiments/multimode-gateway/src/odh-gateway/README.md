@@ -42,8 +42,15 @@ The gateway consists of three main components:
 |------|-------------|
 | `--tls-cert-file` | Path to TLS certificate file (enables HTTPS) |
 | `--tls-key-file` | Path to TLS private key file (enables HTTPS) |
+| `--oidc-enabled` | Enable OIDC authentication globally (default: false) |
+| `--oidc-issuer-url` | OIDC issuer URL (required if OIDC enabled) |
+| `--oidc-client-id` | OIDC client ID (required if OIDC enabled) |
+| `--oidc-client-secret` | OIDC client secret (required if OIDC enabled) |
 
-**Note:** Both `--tls-cert-file` and `--tls-key-file` must be provided together to enable HTTPS.
+**Notes:**
+- Both `--tls-cert-file` and `--tls-key-file` must be provided together to enable HTTPS
+- When `--oidc-enabled` is true, all OIDC configuration flags must be provided
+- All flags can be set via environment variables (see below)
 
 ### Environment Variables
 
@@ -51,6 +58,12 @@ The gateway consists of three main components:
 |----------|---------|-------------|
 | `GATEWAY_CONFIG` | `/etc/odh-gateway/config.yaml` | Path to the configuration file |
 | `GATEWAY_PORT` | `8080` (HTTP) / `8443` (HTTPS) | Port for the gateway to listen on |
+| `OIDC_ENABLED` | `false` | Enable OIDC authentication globally |
+| `OIDC_ISSUER_URL` | - | OIDC issuer URL |
+| `OIDC_CLIENT_ID` | - | OIDC client ID |
+| `OIDC_CLIENT_SECRET` | - | OIDC client secret |
+
+**Environment Variable Priority:** Environment variables take precedence over command line flags.
 
 ### Configuration File Format
 
@@ -60,30 +73,39 @@ The gateway reads its routing configuration from a YAML file with the following 
 routes:
   - path: "/jupyter/"
     upstream: "http://jupyter-service:8888"
+    authRequired: true  # Override global OIDC setting for this route
   - path: "/mlflow/"
     upstream: "http://mlflow-service:5000"
+    authRequired: false # Disable auth for this route even if globally enabled
   - path: "/tensorboard/"
     upstream: "http://tensorboard-service:6006"
+    # authRequired not specified - uses global default
 ```
 
 #### Route Configuration
 
 - **`path`**: URL path prefix to match (automatically normalized to end with `/`)
 - **`upstream`**: Target service URL to proxy requests to
+- **`authRequired`** *(optional)*: Boolean to override global OIDC authentication setting for this specific route
 
 #### Fallback Route Support
 
 The gateway supports using `"/"` as a catchall fallback route for any requests that don't match more specific path prefixes. This is useful for handling static assets, health checks, or providing a default service.
 
-**Example with fallback:**
+**Example with fallback and authentication:**
 ```yaml
 routes:
   - path: "/jupyter/"
     upstream: "http://jupyter-service:8888"
+    authRequired: true  # Requires OIDC authentication
   - path: "/mlflow/"
     upstream: "http://mlflow-service:5000"
+    authRequired: true  # Requires OIDC authentication
+  - path: "/public/"
+    upstream: "http://public-service:8080"
+    authRequired: false # No authentication required
   - path: "/"
-    upstream: "http://default-service:8080"  # Handles all other requests
+    upstream: "http://default-service:8080"  # Uses global auth setting
 ```
 
 **Request routing behavior:**
@@ -143,6 +165,14 @@ export GATEWAY_PORT=8443
 go run cmd/odh-gateway/main.go \
     --tls-cert-file=/path/to/cert.pem \
     --tls-key-file=/path/to/cert.key
+
+# Run with OIDC authentication
+export GATEWAY_CONFIG=./config.yaml
+export OIDC_ENABLED=true
+export OIDC_ISSUER_URL=https://your-keycloak.com/auth/realms/your-realm
+export OIDC_CLIENT_ID=odh-gateway
+export OIDC_CLIENT_SECRET=your-client-secret
+go run cmd/odh-gateway/main.go
 ```
 
 ### Docker Build
@@ -185,6 +215,51 @@ openssl req -new -x509 -key cert.key -out cert.pem -days 365 \
 
 For production environments, use certificates from a trusted Certificate Authority or tools like cert-manager in Kubernetes.
 
+### OIDC Authentication
+
+The gateway supports OpenID Connect (OIDC) authentication for securing access to upstream services.
+
+#### Basic OIDC Setup
+
+```bash
+# Run with OIDC authentication enabled
+./odh-gateway-server \
+    --oidc-enabled \
+    --oidc-issuer-url=https://your-oidc-provider.com/auth/realms/your-realm \
+    --oidc-client-id=your-client-id \
+    --oidc-client-secret=your-client-secret
+
+# Or via environment variables
+export OIDC_ENABLED=true
+export OIDC_ISSUER_URL=https://your-oidc-provider.com/auth/realms/your-realm
+export OIDC_CLIENT_ID=your-client-id
+export OIDC_CLIENT_SECRET=your-client-secret
+./odh-gateway-server
+```
+
+#### OIDC Endpoints
+
+When OIDC is enabled, the gateway provides these endpoints:
+
+- `/oidc/callback` - OIDC callback endpoint (automatically handled)
+- `/oidc/logout` - Logout endpoint to clear authentication
+
+#### Authentication Flow
+
+1. **Unauthenticated Request**: User accesses a protected route
+2. **Redirect to OIDC**: Gateway redirects to OIDC provider for authentication
+3. **User Login**: User authenticates with OIDC provider
+4. **Callback**: OIDC provider redirects back to `/oidc/callback` with authorization code
+5. **Token Exchange**: Gateway exchanges code for ID token and validates it
+6. **Session Cookie**: Gateway sets secure session cookie with ID token
+7. **Access Granted**: User is redirected to original URL with authenticated session
+
+#### Per-Route Authentication Control
+
+- **Global Default**: Set with `--oidc-enabled` flag
+- **Route Override**: Use `authRequired: true/false` in route configuration
+- **Flexible Control**: Mix authenticated and public routes as needed
+
 ## Kubernetes Deployment
 
 ### Deployment Example
@@ -214,6 +289,18 @@ spec:
           value: "/etc/odh-gateway/config.yaml"
         - name: GATEWAY_PORT
           value: "8080"
+        # Uncomment below for OIDC authentication
+        # - name: OIDC_ENABLED
+        #   value: "true"
+        # - name: OIDC_ISSUER_URL
+        #   value: "https://your-keycloak.com/auth/realms/your-realm"
+        # - name: OIDC_CLIENT_ID
+        #   value: "odh-gateway"
+        # - name: OIDC_CLIENT_SECRET
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: oidc-client-secret
+        #       key: client-secret
         volumeMounts:
         - name: config-volume
           mountPath: /etc/odh-gateway
@@ -240,6 +327,10 @@ spec:
       # - name: tls-certs
       #   secret:
       #     secretName: odh-gateway-tls
+      # Uncomment below for OIDC client secret
+      # - name: oidc-client-secret
+      #   secret:
+      #     secretName: odh-gateway-oidc-secret
 ---
 apiVersion: v1
 kind: Service
@@ -264,14 +355,18 @@ spec:
 
 ## Logging
 
-The gateway provides comprehensive request logging:
+The gateway provides comprehensive request logging with authentication status:
 
 ```
-2024/01/15 10:30:45 Listening on :8080
-2024/01/15 10:30:45 Routing /jupyter/ -> http://jupyter-service:8888
-2024/01/15 10:30:45 Routing /mlflow/ -> http://mlflow-service:5000
+2024/01/15 10:30:45 Starting HTTP server on :8080
+2024/01/15 10:30:45 OIDC authentication enabled (issuer: https://keycloak.example.com/auth/realms/odh)
+2024/01/15 10:30:45 Routing /jupyter/ -> http://jupyter-service:8888 (auth required)
+2024/01/15 10:30:45 Routing /mlflow/ -> http://mlflow-service:5000 (auth required)
+2024/01/15 10:30:45 Routing /public/ -> http://public-service:8080 (auth disabled)
+2024/01/15 10:30:45 Routing / -> http://default-service:8080 (auth required (default))
 2024/01/15 10:31:02 192.168.1.100:54321 GET /jupyter/lab
 2024/01/15 10:31:15 192.168.1.100:54322 POST /mlflow/api/2.0/mlflow/experiments/create
+2024/01/15 10:31:25 User authenticated successfully, redirecting to: /jupyter/lab
 ```
 
 ## Dependencies
@@ -279,6 +374,8 @@ The gateway provides comprehensive request logging:
 - **Go 1.24+**: Programming language
 - **gopkg.in/yaml.v3**: YAML configuration parsing
 - **github.com/fsnotify/fsnotify**: File system event monitoring
+- **github.com/coreos/go-oidc/v3**: OpenID Connect client library
+- **golang.org/x/oauth2**: OAuth2 client library
 
 ## Use Cases
 
@@ -291,10 +388,14 @@ This gateway is particularly useful for:
 
 ## Security Considerations
 
-- The gateway currently does not implement authentication or authorization
-- SSL/TLS termination should be handled by an ingress controller or load balancer
-- Network policies should be used to restrict access to upstream services
-- Configuration files may contain sensitive upstream URLs and should be protected accordingly
+- **OIDC Authentication**: When enabled, provides enterprise-grade authentication via OpenID Connect
+- **Secure Cookies**: ID tokens are stored in HTTP-only, secure cookies with appropriate SameSite policies
+- **CSRF Protection**: State parameter validation prevents cross-site request forgery attacks
+- **Token Validation**: ID tokens are verified against the OIDC provider's public keys
+- **SSL/TLS**: Should be used in production environments (especially important with OIDC cookies)
+- **Network policies**: Should be used to restrict access to upstream services
+- **Secret Management**: OIDC client secrets should be stored securely (e.g., Kubernetes secrets)
+- **Configuration Protection**: Configuration files may contain sensitive upstream URLs and should be protected accordingly
 
 ## Future Enhancements
 

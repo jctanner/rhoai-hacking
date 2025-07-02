@@ -12,10 +12,9 @@ type Config struct {
 }
 
 type Route struct {
-	PathPrefix string `yaml:"path"`
-	Upstream   string `yaml:"upstream"`
-	// Optional future fields:
-	// AuthRequired bool   `yaml:"authRequired,omitempty"`
+	PathPrefix   string `yaml:"path"`
+	Upstream     string `yaml:"upstream"`
+	AuthRequired *bool  `yaml:"authRequired,omitempty"` // Optional per-route auth override
 }
 
 func LoadConfig(path string) (*Config, error) {

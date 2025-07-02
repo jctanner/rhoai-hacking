@@ -104,6 +104,59 @@ gen-certs:
 		-subj "/C=US/ST=State/L=City/O=ODH-Gateway/CN=localhost"
 	@echo "Generated cert.pem and cert.key"
 
+# Run integration tests with docker-compose
+.PHONY: test-integration
+test-integration:
+	@echo "Running integration tests..."
+	docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from test-runner
+	docker-compose -f docker-compose.test.yml down
+
+# Build and run integration tests (clean slate)
+.PHONY: test-integration-clean
+test-integration-clean:
+	@echo "Running integration tests (clean build)..."
+	docker-compose -f docker-compose.test.yml down --volumes --remove-orphans || true
+	docker-compose -f docker-compose.test.yml build --no-cache
+	docker-compose -f docker-compose.test.yml up --abort-on-container-exit --exit-code-from test-runner
+	docker-compose -f docker-compose.test.yml down
+
+# OIDC integration tests
+.PHONY: test-integration-oidc
+test-integration-oidc:
+	@echo "Running OIDC integration tests..."
+	docker-compose -f docker-compose.oidc-test.yml up --build --abort-on-container-exit --exit-code-from oidc-test-runner
+	docker-compose -f docker-compose.oidc-test.yml down
+
+# Build and run OIDC integration tests (clean slate)
+.PHONY: test-integration-oidc-clean
+test-integration-oidc-clean:
+	@echo "Running OIDC integration tests (clean build)..."
+	docker-compose -f docker-compose.oidc-test.yml down --volumes --remove-orphans || true
+	docker-compose -f docker-compose.oidc-test.yml build --no-cache
+	docker-compose -f docker-compose.oidc-test.yml up --abort-on-container-exit --exit-code-from oidc-test-runner
+	docker-compose -f docker-compose.oidc-test.yml down
+
+# Run all integration tests
+.PHONY: test-integration-all
+test-integration-all: test-integration test-integration-oidc
+
+# View integration test logs
+.PHONY: test-logs
+test-logs:
+	docker-compose -f docker-compose.test.yml logs
+
+# View OIDC integration test logs
+.PHONY: test-integration-oidc-logs
+test-integration-oidc-logs:
+	docker-compose -f docker-compose.oidc-test.yml logs
+
+# Clean up integration test resources
+.PHONY: test-integration-clean
+test-integration-clean:
+	docker-compose -f docker-compose.test.yml down --volumes --remove-orphans
+	docker-compose -f docker-compose.oidc-test.yml down --volumes --remove-orphans || true
+	#docker system prune -f
+
 # Help target
 .PHONY: help
 help:
@@ -120,6 +173,14 @@ help:
 	@echo "  dev          - Build binary and run locally"
 	@echo "  dev-tls      - Build binary and run locally with TLS"
 	@echo "  gen-certs    - Generate self-signed certificates for development"
+	@echo "  test-integration - Run integration tests with docker-compose"
+	@echo "  test-integration-clean - Run integration tests with clean build"
+	@echo "  test-integration-oidc - Run OIDC integration tests"
+	@echo "  test-integration-oidc-clean - Run OIDC integration tests with clean build"
+	@echo "  test-integration-all - Run all integration tests (basic + OIDC)"
+	@echo "  test-logs    - View integration test logs"
+	@echo "  test-integration-oidc-logs - View OIDC integration test logs"
+	@echo "  test-integration-clean - Clean up integration test resources"
 	@echo "  clean        - Clean up build artifacts and local images"
 	@echo "  deps         - Download and tidy Go dependencies"
 	@echo "  fmt          - Format Go code"
@@ -135,6 +196,9 @@ help:
 	@echo "Examples:"
 	@echo "  make build"
 	@echo "  make publish"
+	@echo "  make test-integration"
+	@echo "  make test-integration-oidc"
+	@echo "  make test-integration-all"
 	@echo "  make gen-certs && make dev-tls"
 	@echo "  make build REGISTRY=my-registry.com IMAGE_NAME=my-proxy TAG=v1.0.0"
 	@echo "  make publish TAG=latest" 

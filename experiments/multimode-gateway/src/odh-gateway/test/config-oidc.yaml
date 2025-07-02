@@ -1,0 +1,24 @@
+routes:
+  # Protected route - requires OIDC auth
+  - path: /jupyter/
+    target: http://jupyter-service:80
+    authRequired: true
+    
+  # Public route - no auth required  
+  - path: /public/
+    target: http://public-service:80
+    authRequired: false
+    
+  # Protected API route
+  - path: /api/
+    target: http://api-service:80
+    authRequired: true
+    
+  # Public docs - no auth required
+  - path: /docs/  
+    target: http://docs-service:80
+    authRequired: false
+    
+  # Fallback route - no auth required by default
+  - path: /
+    target: http://default-service:80 
