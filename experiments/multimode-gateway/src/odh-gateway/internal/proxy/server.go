@@ -195,43 +195,6 @@ func reloadConfig(path string, fallbackProviderConfig providers.ProviderConfig) 
 	return nil
 }
 
-/*
-// watchConfig watches the config file and reloads when it changes
-func watchConfig(path string) {
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		log.Printf("watch error: %v", err)
-		return
-	}
-	defer watcher.Close()
-
-	if err := watcher.Add(path); err != nil {
-		log.Printf("watch add error: %v", err)
-		return
-	}
-
-	for {
-		select {
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return
-			}
-			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
-				log.Printf("Detected change in config: %s", event.Name)
-				if err := reloadConfig(path); err != nil {
-					log.Printf("Failed to reload config: %v", err)
-				}
-			}
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				return
-			}
-			log.Printf("watch error: %v", err)
-		}
-	}
-}
-*/
-
 func watchConfig(path string, fallbackProviderConfig providers.ProviderConfig) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
