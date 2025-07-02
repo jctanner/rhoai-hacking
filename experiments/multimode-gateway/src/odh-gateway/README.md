@@ -185,15 +185,31 @@ docker build -t odh-gateway:latest .
 docker run -p 8080:8080 -v $(pwd)/config.yaml:/etc/odh-gateway/config.yaml odh-gateway:latest
 ```
 
-### Automated Build Script
+### Automated Build and Publishing
 
-The project includes a build script for automated deployment:
+The project includes a Makefile with targets for automated build and deployment:
 
 ```bash
-./BUILD_AND_PUBLISH.sh
+# Build the container image
+make build
+
+# Build and push to registry
+make publish
+
+# View all available targets
+make help
 ```
 
-This script builds and pushes the image to `registry.tannerjc.net/odh-proxy:latest`.
+The `make publish` target builds and pushes the image to `registry.tannerjc.net/odh-proxy:latest`.
+
+**Available make targets:**
+- `make build` - Build the container image
+- `make publish` - Build and push the container image to registry
+- `make build-binary` - Build the Go binary locally
+- `make test` - Run Go tests
+- `make test-integration` - Run integration tests
+- `make gen-certs` - Generate self-signed certificates for development
+- `make clean` - Clean up build artifacts
 
 ### TLS Certificate Setup
 
