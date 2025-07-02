@@ -1,6 +1,6 @@
 # ODH Gateway
 
-A lightweight, configurable reverse proxy designed for OpenShift Data Hub (ODH) and Kubernetes environments. The gateway dynamically routes incoming HTTP requests to upstream services based on path prefixes defined in a YAML configuration file.
+A lightweight, configurable reverse proxy designed for Open Data Hub (ODH) and Kubernetes environments. The gateway dynamically routes incoming HTTP requests to upstream services based on path prefixes defined in a YAML configuration file.
 
 ## Features
 
@@ -15,7 +15,7 @@ A lightweight, configurable reverse proxy designed for OpenShift Data Hub (ODH) 
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Client        │───▶│   ODH Gateway   │───▶│   Upstream      │
+│   Client        │──▶│   ODH Gateway   │──▶│   Upstream      │
 │   Request       │    │   (Reverse      │    │   Services      │
 │                 │    │    Proxy)       │    │                 │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
