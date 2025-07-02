@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # Stage 1: Build
-FROM docker.io/library/golang:1.24 AS builder
+FROM registry.tannerjc.net/golang:1.24 AS builder
 
 WORKDIR /app
 

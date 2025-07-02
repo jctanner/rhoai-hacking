@@ -1,0 +1,7 @@
+FROM registry.access.redhat.com/ubi9/ubi:latest
+RUN curl -L -o /tmp/go1.24.4.linux-amd64.tar.gz https://go.dev/dl/go1.24.4.linux-amd64.tar.gz
+RUN tar -C /opt/ -xzf /tmp/go1.24.4.linux-amd64.tar.gz
+RUN ln -s /opt/go/bin/go /usr/bin/go
+
+RUN find /opt/go/
+RUN /usr/bin/go version

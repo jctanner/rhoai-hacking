@@ -1,20 +1,20 @@
-# Build the manager binary
-FROM docker.io/golang:1.23 AS builder
+# Build the manager binary  
+FROM registry.tannerjc.net/golang:1.23 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
-COPY go.mod go.mod
-COPY go.sum go.sum
+COPY --chown=1001:0 go.mod go.mod
+COPY --chown=1001:0 go.sum go.sum
 # cache deps before building and copying source so that we don't need to re-download as much
 # and so that source changes don't invalidate our downloaded layer
 RUN go mod download
 
 # Copy the go source
-COPY cmd/main.go cmd/main.go
-COPY api/ api/
-COPY internal/ internal/
+COPY --chown=1001:0 cmd/main.go cmd/main.go
+COPY --chown=1001:0 api/ api/
+COPY --chown=1001:0 internal/ internal/
 
 # Build
 # the GOARCH has not a default value to allow the binary be built according to the host where the command
