@@ -6,4 +6,56 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: odhgateway-sample
 spec:
-  # TODO(user): Add fields here
+  mode: "oidc"  # Authentication mode: "oidc" or "openshift"
+  hostname: "gateway.example.com"  # External hostname for the gateway
+  configMapName: "odh-proxy-config"  # Name of the main proxy ConfigMap
+  image: "registry.tannerjc.net/odh-proxy:latest"  # Proxy container image
+  
+  # OIDC Authentication Configuration
+  oidc:
+    issuerURL: "https://your-oidc-provider.com"
+    clientID: "odh-gateway"
+    clientSecretRef:
+      name: "oidc-client-secret"
+      key: "client-secret"
+  
+  # Route ConfigMap Configuration (optional - auto-generated if not specified)
+  routeConfigMap:
+    name: "odh-routes"
+    managed: true
+    key: "config.yaml"
+  
+  # Namespace selector to limit service discovery (optional)
+  namespaceSelector:
+    include:
+      - "data-science"
+      - "mlops"
+      - "default"
+
+---
+# Example of a Secret for OIDC authentication
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oidc-client-secret
+type: Opaque
+data:
+  client-secret: bXktc2VjcmV0LWNsaWVudC1zZWNyZXQ=  # base64 encoded "my-secret-client-secret"
+
+---
+# Example Service that will be discovered by the gateway
+apiVersion: v1
+kind: Service
+metadata:
+  name: example-service
+  namespace: default
+  annotations:
+    # These annotations make the service discoverable by the ODH Gateway
+    odhgateway.opendatahub.io/enabled: "true"
+    odhgateway.opendatahub.io/route-path: "/example"
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: example-app
