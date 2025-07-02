@@ -92,7 +92,7 @@ check_prerequisites() {
 }
 
 create_cluster() {
-    log_step "Creating KIND Cluster"
+    log_step "Creating OIDC-Enabled KIND Cluster"
     
     # Delete existing cluster if it exists
     if kind get clusters | grep -q $CLUSTER_NAME; then
@@ -100,13 +100,164 @@ create_cluster() {
         kind delete cluster --name $CLUSTER_NAME
     fi
     
-    # Create new cluster
-    log_info "Creating cluster '$CLUSTER_NAME'"
-    kind create cluster --name $CLUSTER_NAME
+    # Create audit log directory
+    log_info "Creating audit log directory"
+    mkdir -p /tmp/kind-audit
+    
+    # Create KIND config with OIDC
+    log_info "Creating KIND configuration with OIDC support"
+    cat > /tmp/kind-config-oidc.yaml << EOF
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: $CLUSTER_NAME
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: ClusterConfiguration
+    apiServer:
+      extraArgs:
+        # OIDC Authentication Configuration
+        oidc-issuer-url: "https://keycloak.tannerjc.net/realms/sno419"
+        oidc-client-id: "console-test"
+        oidc-username-claim: "preferred_username"
+        oidc-username-prefix: "oidc:"
+        oidc-groups-claim: "groups"
+        oidc-groups-prefix: "oidc:"
+        oidc-signing-algs: "RS256"
+        # Enable API server auditing for debugging
+        audit-log-maxage: "30"
+        audit-log-maxbackup: "3"
+        audit-log-maxsize: "100"
+        audit-log-path: "/var/log/audit.log"
+  extraPortMappings:
+  - containerPort: 6443
+    hostPort: 6443
+    protocol: TCP
+  extraMounts:
+  - hostPath: /tmp/kind-audit
+    containerPath: /var/log
+    readOnly: false
+EOF
+    
+    # Create new cluster with OIDC configuration
+    log_info "Creating OIDC-enabled cluster '$CLUSTER_NAME'"
+    kind create cluster --config /tmp/kind-config-oidc.yaml
+    
+    # Wait for cluster to be ready
+    log_info "Waiting for cluster to be ready"
+    kubectl wait --for=condition=Ready nodes --all --timeout=300s
     
     # Verify cluster is ready
     kubectl cluster-info --context kind-$CLUSTER_NAME
-    log_success "Cluster '$CLUSTER_NAME' created and ready"
+    
+    # Verify OIDC configuration
+    log_info "Verifying OIDC configuration in API server"
+    if docker exec $CLUSTER_NAME-control-plane ps aux | grep -q "oidc-issuer-url"; then
+        log_success "✅ OIDC is configured in API server"
+        log_info "OIDC Configuration:"
+        docker exec $CLUSTER_NAME-control-plane ps aux | grep kube-apiserver | tr ' ' '\n' | grep oidc- | head -5
+    else
+        log_warning "⚠️  OIDC configuration not detected"
+    fi
+    
+    # Clean up temporary config
+    rm -f /tmp/kind-config-oidc.yaml
+    
+    log_success "OIDC-enabled cluster '$CLUSTER_NAME' created and ready"
+}
+
+setup_oidc_rbac() {
+    log_step "Setting up OIDC RBAC Bindings"
+    
+    log_info "Creating RBAC bindings for OIDC users and groups"
+    cat > /tmp/rbac-oidc-users.yaml << EOF
+---
+# ClusterRoleBinding for OIDC users to have admin access
+# Adjust this based on your security requirements
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oidc-users-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: User
+  name: oidc:admin  # This matches users with username "admin" from OIDC
+  apiGroup: rbac.authorization.k8s.io
+- kind: User
+  name: oidc:jctanner  # Add your username here
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ClusterRoleBinding for OIDC groups
+# This gives admin access to users in the "admins" group from OIDC
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oidc-groups-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: Group
+  name: oidc:admins  # This matches the "admins" group from OIDC
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# More restrictive binding for regular users
+# Gives read-only access to users in the "users" group
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oidc-groups-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+- kind: Group
+  name: oidc:users  # This matches the "users" group from OIDC
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ServiceAccount for testing JWT authentication
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jwt-test-sa
+  namespace: default
+  
+---
+# ClusterRoleBinding for the test ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jwt-test-sa-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: ServiceAccount
+  name: jwt-test-sa
+  namespace: default
+EOF
+
+    # Apply RBAC bindings
+    kubectl apply -f /tmp/rbac-oidc-users.yaml
+    
+    # Clean up temporary file
+    rm -f /tmp/rbac-oidc-users.yaml
+    
+    # Verify RBAC bindings
+    log_info "Verifying RBAC bindings"
+    kubectl get clusterrolebindings | grep -i oidc
+    
+    log_success "OIDC RBAC bindings configured"
 }
 
 deploy_gateway_operator() {
@@ -237,7 +388,10 @@ verify_deployment() {
 display_access_info() {
     log_step "Access Information"
     
-    echo -e "\n${GREEN}🎉 ODH Gateway System Deployed Successfully! 🎉${NC}\n"
+    echo -e "\n${GREEN}🎉 OIDC-Enabled ODH Gateway System Deployed Successfully! 🎉${NC}\n"
+    
+    # Get API server endpoint
+    API_SERVER=$(kubectl config view --raw -o jsonpath='{.clusters[0].cluster.server}')
     
     echo -e "${BLUE}To access your services:${NC}"
     echo -e "1. Port forward the gateway service:"
@@ -251,11 +405,30 @@ display_access_info() {
     echo -e "   ${YELLOW}http://localhost:8080/notebooks/notebook-sample3${NC}"
     echo -e "   ${YELLOW}http://localhost:8080/notebooks/notebook-sample4${NC}"
     echo -e ""
+    echo -e "${BLUE}🔐 OIDC Authentication & JWT API Access:${NC}"
+    echo -e "API Server: ${YELLOW}$API_SERVER${NC}"
+    echo -e ""
+    echo -e "• Test JWT authentication with curl:"
+    echo -e "  ${YELLOW}curl -k -H \"Authorization: Bearer YOUR_JWT_TOKEN\" \\${NC}"
+    echo -e "  ${YELLOW}     $API_SERVER/api/v1/namespaces${NC}"
+    echo -e ""
+    echo -e "• Configure kubectl with OIDC:"
+    echo -e "  ${YELLOW}kubectl config set-credentials oidc-user \\${NC}"
+    echo -e "  ${YELLOW}    --auth-provider=oidc \\${NC}"
+    echo -e "  ${YELLOW}    --auth-provider-arg=idp-issuer-url=https://keycloak.tannerjc.net/realms/sno419 \\${NC}"
+    echo -e "  ${YELLOW}    --auth-provider-arg=client-id=console-test \\${NC}"
+    echo -e "  ${YELLOW}    --auth-provider-arg=id-token=YOUR_JWT_TOKEN${NC}"
+    echo -e ""
+    echo -e "• Dashboard JWT integration ready - use user's JWT for K8s API calls"
+    echo -e ""
     echo -e "${BLUE}Useful commands:${NC}"
     echo -e "• View all resources: ${YELLOW}kubectl get all -A${NC}"
     echo -e "• Check gateway config: ${YELLOW}kubectl get configmap odhgateway-sample-routes -o yaml${NC}"
     echo -e "• View operator logs: ${YELLOW}kubectl logs -n odh-gateway-operator-system deployment/odh-gateway-operator-controller-manager${NC}"
     echo -e "• Port forward dashboard directly: ${YELLOW}kubectl port-forward svc/odh-dashboard-svc 5000:80${NC}"
+    echo -e "• Check OIDC RBAC bindings: ${YELLOW}kubectl get clusterrolebindings | grep oidc${NC}"
+    echo -e "• Check API server OIDC config: ${YELLOW}docker exec $CLUSTER_NAME-control-plane ps aux | grep oidc${NC}"
+    echo -e "• View audit logs: ${YELLOW}sudo tail -f /tmp/kind-audit/audit.log${NC}"
 }
 
 cleanup() {
@@ -278,6 +451,7 @@ main() {
     
     check_prerequisites
     create_cluster
+    setup_oidc_rbac
     deploy_gateway_operator
     deploy_notebook_operator
     deploy_dashboard
@@ -292,6 +466,13 @@ main() {
 case "${1:-}" in
     "cluster")
         create_cluster
+        ;;
+    "rbac")
+        setup_oidc_rbac
+        ;;
+    "cluster-oidc")
+        create_cluster
+        setup_oidc_rbac
         ;;
     "operators")
         deploy_gateway_operator
@@ -314,14 +495,19 @@ case "${1:-}" in
         echo "Usage: $0 [command]"
         echo ""
         echo "Commands:"
-        echo "  (no args)  - Deploy everything (default)"
-        echo "  cluster    - Create KIND cluster only"
-        echo "  operators  - Deploy operators only"
-        echo "  dashboard  - Deploy dashboard only"
-        echo "  samples    - Create sample resources only"
-        echo "  verify     - Verify deployment"
-        echo "  clean      - Delete cluster"
-        echo "  help       - Show this help"
+        echo "  (no args)    - Deploy everything (default)"
+        echo "  cluster      - Create OIDC-enabled KIND cluster only"
+        echo "  rbac         - Setup OIDC RBAC bindings only"
+        echo "  cluster-oidc - Create cluster and setup OIDC RBAC"
+        echo "  operators    - Deploy operators only"
+        echo "  dashboard    - Deploy dashboard only"
+        echo "  samples      - Create sample resources only"
+        echo "  verify       - Verify deployment"
+        echo "  clean        - Delete cluster"
+        echo "  help         - Show this help"
+        echo ""
+        echo "The cluster is now created with OIDC authentication enabled by default."
+        echo "Your dashboard can use JWT tokens to make authenticated K8s API calls."
         ;;
     "")
         main
