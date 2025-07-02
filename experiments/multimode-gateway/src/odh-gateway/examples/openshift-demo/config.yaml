@@ -1,0 +1,41 @@
+provider:
+  type: openshift
+  openshift:
+    clusterUrl: https://api.openshift.example.com:6443
+    clientId: odh-gateway
+    clientSecret: your-openshift-oauth-secret
+    scope: "user:info user:check-access"
+    # caBundle: |
+    #   -----BEGIN CERTIFICATE-----
+    #   Your OpenShift cluster CA certificate here
+    #   -----END CERTIFICATE-----
+
+routes:
+  # Protected route - requires OpenShift authentication
+  - path: /jupyter/
+    upstream: http://jupyter-service:80
+    authRequired: true
+    
+  # Protected route - MLflow with auth
+  - path: /mlflow/
+    upstream: http://mlflow-service:80
+    authRequired: true
+    
+  # Protected API route
+  - path: /api/
+    upstream: http://api-service:80  
+    authRequired: true
+    
+  # Public route - documentation (no auth required)
+  - path: /docs/
+    upstream: http://docs-service:80
+    authRequired: false
+    
+  # Public route - health checks
+  - path: /health/
+    upstream: http://health-service:80
+    authRequired: false
+    
+  # Fallback route - public by default
+  - path: /
+    upstream: http://welcome-service:80 

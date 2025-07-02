@@ -20,11 +20,12 @@ import (
 var (
 	mu             sync.RWMutex
 	router         http.Handler
-	oidcMiddleware *OIDCMiddleware
+	authProvider   AuthProvider
+	authMiddleware *AuthMiddleware
 )
 
 // StartServer starts the reverse proxy with hot-reload and request logging
-func StartServer(tlsCertFile, tlsKeyFile string, oidcConfig OIDCConfig) error {
+func StartServer(tlsCertFile, tlsKeyFile string, providerConfig ProviderConfig) error {
 	cfgPath := os.Getenv("GATEWAY_CONFIG")
 	if cfgPath == "" {
 		cfgPath = "/etc/odh-gateway/config.yaml"
@@ -46,19 +47,22 @@ func StartServer(tlsCertFile, tlsKeyFile string, oidcConfig OIDCConfig) error {
 	}
 	baseURL := fmt.Sprintf("%s://localhost:%s", scheme, port)
 
-	// Initialize OIDC middleware
+	// Initialize authentication provider
 	var err error
-	oidcMiddleware, err = NewOIDCMiddleware(oidcConfig, oidcConfig.Enabled, baseURL)
+	authProvider, err = CreateProvider(providerConfig, baseURL)
 	if err != nil {
-		return fmt.Errorf("failed to initialize OIDC middleware: %w", err)
+		return fmt.Errorf("failed to create auth provider: %w", err)
 	}
 
-	if err := reloadConfig(cfgPath); err != nil {
+	// Initialize auth middleware
+	authMiddleware = NewAuthMiddleware(authProvider)
+
+	if err := reloadConfig(cfgPath, providerConfig); err != nil {
 		return err
 	}
 
-	go watchConfig(cfgPath)
-	go pollConfig(cfgPath)
+	go watchConfig(cfgPath, providerConfig)
+	go pollConfig(cfgPath, providerConfig)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s %s %s", r.RemoteAddr, r.Method, r.URL)
@@ -72,21 +76,21 @@ func StartServer(tlsCertFile, tlsKeyFile string, oidcConfig OIDCConfig) error {
 		log.Printf("Starting HTTPS server on :%s", port)
 		log.Printf("Using TLS cert: %s", tlsCertFile)
 		log.Printf("Using TLS key: %s", tlsKeyFile)
-		if oidcConfig.Enabled {
-			log.Printf("OIDC authentication enabled (issuer: %s)", oidcConfig.IssuerURL)
+		if authProvider.IsEnabled() {
+			log.Printf("Authentication enabled using %s provider", authProvider.Name())
 		}
 		return http.ListenAndServeTLS(":"+port, tlsCertFile, tlsKeyFile, handler)
 	} else {
 		log.Printf("Starting HTTP server on :%s", port)
-		if oidcConfig.Enabled {
-			log.Printf("OIDC authentication enabled (issuer: %s)", oidcConfig.IssuerURL)
+		if authProvider.IsEnabled() {
+			log.Printf("Authentication enabled using %s provider", authProvider.Name())
 		}
 		return http.ListenAndServe(":"+port, handler)
 	}
 }
 
 // reloadConfig builds the routing mux and updates the global router
-func reloadConfig(path string) error {
+func reloadConfig(path string, fallbackProviderConfig ProviderConfig) error {
 	// Force a fresh read by resolving the symlink
 	resolvedPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -98,16 +102,37 @@ func reloadConfig(path string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
+	// Use provider config from file if available, otherwise use fallback (environment variables)
+	var providerConfig ProviderConfig
+	if cfg.Provider != nil {
+		providerConfig = ProviderConfig{
+			Type:      cfg.Provider.Type,
+			OIDC:      (*OIDCProviderConfig)(cfg.Provider.OIDC),
+			OpenShift: (*OpenShiftProviderConfig)(cfg.Provider.OpenShift),
+		}
+	} else {
+		providerConfig = fallbackProviderConfig
+	}
+
+	// Update auth provider if config changed
+	if authProvider == nil || shouldUpdateProvider(providerConfig) {
+		newProvider, err := CreateProvider(providerConfig, getBaseURL())
+		if err != nil {
+			log.Printf("Failed to create new provider: %v", err)
+		} else {
+			authProvider = newProvider
+			authMiddleware = NewAuthMiddleware(authProvider)
+			log.Printf("Auth provider updated: %s (enabled: %v)", authProvider.Name(), authProvider.IsEnabled())
+		}
+	}
+
 	mux := http.NewServeMux()
 
-	// Register OIDC endpoints if enabled
-	if oidcMiddleware != nil && oidcMiddleware.config.Enabled {
-		mux.Handle("/oidc/callback", oidcMiddleware.Middleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Callback is handled by middleware
-		})))
-		mux.Handle("/oidc/logout", oidcMiddleware.Middleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Logout is handled by middleware
-		})))
+	// Register auth endpoints if provider is enabled
+	if authProvider != nil && authProvider.IsEnabled() {
+		mux.Handle("/auth/callback", authMiddleware.HandleCallback())
+		mux.Handle("/auth/logout", authMiddleware.HandleLogout())
+		mux.Handle("/auth/login", authMiddleware.HandleLogin())
 	}
 
 	for _, route := range cfg.Routes {
@@ -139,16 +164,16 @@ func reloadConfig(path string) error {
 			}
 		})
 
-		// Wrap with OIDC middleware if available
+		// Wrap with auth middleware if available
 		var finalHandler http.Handler = routeHandler
-		if oidcMiddleware != nil {
-			finalHandler = oidcMiddleware.Middleware(route.AuthRequired)(routeHandler)
+		if authMiddleware != nil {
+			finalHandler = authMiddleware.Middleware(route.AuthRequired)(routeHandler)
 		}
 
 		mux.Handle(prefix, finalHandler)
 
 		authStatus := "no auth"
-		if oidcMiddleware != nil && oidcMiddleware.config.Enabled {
+		if authProvider != nil && authProvider.IsEnabled() {
 			if route.AuthRequired != nil {
 				if *route.AuthRequired {
 					authStatus = "auth required"
@@ -156,11 +181,7 @@ func reloadConfig(path string) error {
 					authStatus = "auth disabled"
 				}
 			} else {
-				if oidcMiddleware.defaultAuth {
-					authStatus = "auth required (default)"
-				} else {
-					authStatus = "auth disabled (default)"
-				}
+				authStatus = "no auth (default)"
 			}
 		}
 
@@ -210,7 +231,7 @@ func watchConfig(path string) {
 }
 */
 
-func watchConfig(path string) {
+func watchConfig(path string, fallbackProviderConfig ProviderConfig) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Printf("watch error: %v", err)
@@ -236,7 +257,7 @@ func watchConfig(path string) {
 				(event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename)) != 0 {
 
 				log.Printf("Detected change in config: %s", event.Name)
-				if err := reloadConfig(path); err != nil {
+				if err := reloadConfig(path, fallbackProviderConfig); err != nil {
 					log.Printf("Failed to reload config: %v", err)
 				}
 			}
@@ -250,7 +271,7 @@ func watchConfig(path string) {
 }
 
 // pollConfig polls the config file every 2 seconds and reloads if the hash changes
-func pollConfig(path string) {
+func pollConfig(path string, fallbackProviderConfig ProviderConfig) {
 	var lastHash [32]byte
 
 	for {
@@ -274,7 +295,7 @@ func pollConfig(path string) {
 		if hash != lastHash {
 			log.Printf("polling: detected config change via hash")
 			lastHash = hash
-			if err := reloadConfig(path); err != nil {
+			if err := reloadConfig(path, fallbackProviderConfig); err != nil {
 				log.Printf("polling: reload failed: %v", err)
 			}
 		}

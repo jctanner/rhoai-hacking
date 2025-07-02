@@ -1,0 +1,36 @@
+provider:
+  type: oidc
+  oidc:
+    issuerUrl: http://keycloak:8090/realms/odh
+    clientId: odh-gateway
+    clientSecret: odh-gateway-secret-123
+
+routes:
+  # Protected route - requires OIDC authentication
+  - path: /jupyter/
+    upstream: http://jupyter-service:80
+    authRequired: true
+    
+  # Protected route - MLflow with auth
+  - path: /mlflow/
+    upstream: http://mlflow-service:80
+    authRequired: true
+    
+  # Protected API route
+  - path: /api/
+    upstream: http://api-service:80  
+    authRequired: true
+    
+  # Public route - documentation (no auth required)
+  - path: /docs/
+    upstream: http://docs-service:80
+    authRequired: false
+    
+  # Public route - health checks
+  - path: /health/
+    upstream: http://health-service:80
+    authRequired: false
+    
+  # Fallback route - public by default
+  - path: /
+    upstream: http://welcome-service:80 
