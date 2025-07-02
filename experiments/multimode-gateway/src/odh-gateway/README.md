@@ -40,17 +40,18 @@ The gateway consists of three main components:
 
 | Flag | Description |
 |------|-------------|
+| `--config` | Path to configuration file (default: `/etc/odh-gateway/config.yaml`) |
 | `--tls-cert-file` | Path to TLS certificate file (enables HTTPS) |
 | `--tls-key-file` | Path to TLS private key file (enables HTTPS) |
-| `--oidc-enabled` | Enable OIDC authentication globally (default: false) |
-| `--oidc-issuer-url` | OIDC issuer URL (required if OIDC enabled) |
-| `--oidc-client-id` | OIDC client ID (required if OIDC enabled) |
-| `--oidc-client-secret` | OIDC client secret (required if OIDC enabled) |
+| `--oidc-issuer-url` | OIDC issuer URL |
+| `--oidc-client-id` | OIDC client ID |
+| `--oidc-client-secret` | OIDC client secret |
 
 **Notes:**
 - Both `--tls-cert-file` and `--tls-key-file` must be provided together to enable HTTPS
-- When `--oidc-enabled` is true, all OIDC configuration flags must be provided
+- OIDC authentication is automatically enabled when all three OIDC configuration flags are provided
 - All flags can be set via environment variables (see below)
+- Use `--help` to see the full help output with descriptions
 
 ### Environment Variables
 
@@ -58,12 +59,11 @@ The gateway consists of three main components:
 |----------|---------|-------------|
 | `GATEWAY_CONFIG` | `/etc/odh-gateway/config.yaml` | Path to the configuration file |
 | `GATEWAY_PORT` | `8080` (HTTP) / `8443` (HTTPS) | Port for the gateway to listen on |
-| `OIDC_ENABLED` | `false` | Enable OIDC authentication globally |
 | `OIDC_ISSUER_URL` | - | OIDC issuer URL |
 | `OIDC_CLIENT_ID` | - | OIDC client ID |
 | `OIDC_CLIENT_SECRET` | - | OIDC client secret |
 
-**Environment Variable Priority:** Environment variables take precedence over command line flags.
+**Environment Variable Priority:** Environment variables take precedence over command line flags. OIDC authentication is automatically enabled when all three OIDC environment variables are set.
 
 ### Configuration File Format
 
@@ -166,9 +166,8 @@ go run cmd/odh-gateway/main.go \
     --tls-cert-file=/path/to/cert.pem \
     --tls-key-file=/path/to/cert.key
 
-# Run with OIDC authentication
+# Run with OIDC authentication (automatically enabled when all OIDC vars are set)
 export GATEWAY_CONFIG=./config.yaml
-export OIDC_ENABLED=true
 export OIDC_ISSUER_URL=https://your-keycloak.com/auth/realms/your-realm
 export OIDC_CLIENT_ID=odh-gateway
 export OIDC_CLIENT_SECRET=your-client-secret
@@ -238,19 +237,20 @@ The gateway supports OpenID Connect (OIDC) authentication for securing access to
 #### Basic OIDC Setup
 
 ```bash
-# Run with OIDC authentication enabled
+# Run with OIDC authentication (automatically enabled when all flags are provided)
 ./odh-gateway-server \
-    --oidc-enabled \
     --oidc-issuer-url=https://your-oidc-provider.com/auth/realms/your-realm \
     --oidc-client-id=your-client-id \
     --oidc-client-secret=your-client-secret
 
 # Or via environment variables
-export OIDC_ENABLED=true
 export OIDC_ISSUER_URL=https://your-oidc-provider.com/auth/realms/your-realm
 export OIDC_CLIENT_ID=your-client-id
 export OIDC_CLIENT_SECRET=your-client-secret
 ./odh-gateway-server
+
+# View help for all available options
+./odh-gateway-server --help
 ```
 
 #### OIDC Endpoints
@@ -272,8 +272,8 @@ When OIDC is enabled, the gateway provides these endpoints:
 
 #### Per-Route Authentication Control
 
-- **Global Default**: Set with `--oidc-enabled` flag
-- **Route Override**: Use `authRequired: true/false` in route configuration
+- **Global Default**: OIDC is enabled when all OIDC configuration is provided
+- **Route Override**: Use `authRequired: true/false` in route configuration to override global setting
 - **Flexible Control**: Mix authenticated and public routes as needed
 
 ## Kubernetes Deployment
@@ -305,9 +305,7 @@ spec:
           value: "/etc/odh-gateway/config.yaml"
         - name: GATEWAY_PORT
           value: "8080"
-        # Uncomment below for OIDC authentication
-        # - name: OIDC_ENABLED
-        #   value: "true"
+        # Uncomment below for OIDC authentication (automatically enabled when all variables are set)
         # - name: OIDC_ISSUER_URL
         #   value: "https://your-keycloak.com/auth/realms/your-realm"
         # - name: OIDC_CLIENT_ID
@@ -385,6 +383,39 @@ The gateway provides comprehensive request logging with authentication status:
 2024/01/15 10:31:25 User authenticated successfully, redirecting to: /jupyter/lab
 ```
 
+## CLI Help
+
+The gateway now uses Cobra for CLI argument parsing, providing improved help output and command-line experience:
+
+```bash
+# View detailed help with all available flags
+odh-gateway --help
+
+# Sample output:
+# ODH Gateway is a lightweight, configurable reverse proxy designed for Open Data Hub (ODH)
+# and Kubernetes environments. The gateway dynamically routes incoming HTTP requests to upstream
+# services based on path prefixes defined in a YAML configuration file.
+#
+# Features:
+# - Dynamic routing with hot-reload capability
+# - OIDC and OpenShift OAuth authentication support
+# - TLS/HTTPS support
+# - ConfigMap integration for Kubernetes
+# - Request logging and monitoring
+#
+# Usage:
+#   odh-gateway [flags]
+#
+# Flags:
+#       --config string               config file (default is /etc/odh-gateway/config.yaml)
+#   -h, --help                        help for odh-gateway
+#       --oidc-client-id string       OIDC client ID
+#       --oidc-client-secret string   OIDC client secret
+#       --oidc-issuer-url string      OIDC issuer URL
+#       --tls-cert-file string        Path to TLS certificate file (enables HTTPS)
+#       --tls-key-file string         Path to TLS private key file (enables HTTPS)
+```
+
 ## Dependencies
 
 - **Go 1.24+**: Programming language
@@ -392,6 +423,8 @@ The gateway provides comprehensive request logging with authentication status:
 - **github.com/fsnotify/fsnotify**: File system event monitoring
 - **github.com/coreos/go-oidc/v3**: OpenID Connect client library
 - **golang.org/x/oauth2**: OAuth2 client library
+- **github.com/spf13/cobra**: CLI framework for improved command-line experience
+- **github.com/spf13/viper**: Configuration management with environment variable support
 
 ## Use Cases
 
