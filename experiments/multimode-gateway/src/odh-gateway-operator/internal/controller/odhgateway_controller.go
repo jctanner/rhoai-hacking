@@ -78,6 +78,10 @@ func sortRoutes(routes []RouteEntry) {
 // +kubebuilder:rbac:groups=gateway.opendatahub.io,resources=odhgateways,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.opendatahub.io,resources=odhgateways/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gateway.opendatahub.io,resources=odhgateways/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.

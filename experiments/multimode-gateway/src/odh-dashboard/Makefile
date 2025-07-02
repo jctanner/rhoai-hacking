@@ -3,8 +3,9 @@
 # Variables
 IMAGE_NAME ?= odh-dashboard
 IMAGE_TAG ?= latest
-REGISTRY ?= registry.example.com
+REGISTRY ?= registry.tannerjc.net
 FULL_IMAGE = $(REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+CONTAINER_TOOL ?= podman
 
 # Python/Flask commands
 .PHONY: install
@@ -24,19 +25,26 @@ test:  ## Run basic tests
 	@echo "Testing health endpoint..."
 	@curl -f http://localhost:5000/health || echo "Service not running"
 
-# Docker commands
+# Container commands
 .PHONY: build
-build:  ## Build Docker image
-	docker build -t $(IMAGE_NAME):$(IMAGE_TAG) .
+build:  ## Build container image
+	$(CONTAINER_TOOL) build -t $(IMAGE_NAME):$(IMAGE_TAG) .
 
-.PHONY: run-docker
-run-docker:  ## Run Docker container locally
-	docker run -p 5000:5000 --rm $(IMAGE_NAME):$(IMAGE_TAG)
+.PHONY: build-registry
+build-registry:  ## Build container image with registry name
+	$(CONTAINER_TOOL) build -t $(FULL_IMAGE) .
+
+.PHONY: run-container
+run-container:  ## Run container locally
+	$(CONTAINER_TOOL) run -p 5000:5000 --rm $(IMAGE_NAME):$(IMAGE_TAG)
 
 .PHONY: push
-push:  ## Push Docker image to registry
-	docker tag $(IMAGE_NAME):$(IMAGE_TAG) $(FULL_IMAGE)
-	docker push $(FULL_IMAGE)
+push:  ## Push container image to registry
+	$(CONTAINER_TOOL) tag $(IMAGE_NAME):$(IMAGE_TAG) $(FULL_IMAGE)
+	$(CONTAINER_TOOL) push $(FULL_IMAGE)
+
+.PHONY: publish
+publish: build-registry push  ## Build and push container image to registry
 
 # Kubernetes commands
 .PHONY: deploy
@@ -65,7 +73,7 @@ port-forward:  ## Port forward to local machine
 clean:  ## Clean up local artifacts
 	find . -type f -name "*.pyc" -delete
 	find . -type d -name "__pycache__" -delete
-	docker image prune -f
+	$(CONTAINER_TOOL) image prune -f
 
 .PHONY: help
 help:  ## Show this help message

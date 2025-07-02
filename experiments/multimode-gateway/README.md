@@ -67,7 +67,28 @@ A Kubernetes operator that:
 - Go 1.19+ for building from source
 - kubectl configured to access your cluster
 
-### Building and Running
+### 🚀 Complete System Deployment (Recommended)
+
+For a **one-command deployment** of the entire ODH Gateway system:
+
+```bash
+# Deploy everything: cluster + operators + dashboard + samples
+./DEPLOY_ALL.sh
+```
+
+This will:
+1. Create a KIND cluster
+2. Deploy ODH Gateway Operator  
+3. Deploy Notebook Operator
+4. Deploy ODH Dashboard (as "/" fallback route)
+5. Create sample notebooks
+6. Verify everything is working
+
+**See [USAGE.md](USAGE.md) for complete deployment guide and troubleshooting.**
+
+### Manual Deployment
+
+If you prefer to deploy components individually:
 
 1. **Build and deploy the ODH Gateway Operator:**
 ```bash
@@ -98,6 +119,25 @@ kubectl apply -f configs/gateway.yaml
 kubectl apply -f configs/nb2.yaml
 kubectl apply -f configs/nb3.yaml
 kubectl apply -f configs/nb4.yaml
+```
+
+6. **Deploy the dashboard:**
+```bash
+cd src/odh-dashboard
+make build deploy
+```
+
+## Accessing the System
+
+After deployment, access your services:
+
+```bash
+# Port forward the gateway
+kubectl port-forward svc/odhgateway-sample-svc 8080:80
+
+# Then visit:
+# - Dashboard: http://localhost:8080 (fallback route)
+# - Notebooks: http://localhost:8080/notebooks/<notebook-name>
 ```
 
 ## Configuration

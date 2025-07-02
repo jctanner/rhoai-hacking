@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
       - name: dashboard
-        image: registry.example.com/odh-dashboard:latest
+        image: registry.tannerjc.net/odh-dashboard:latest
         ports:
         - containerPort: 5000
           name: http
