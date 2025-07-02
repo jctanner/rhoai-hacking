@@ -1,0 +1,21 @@
+# Test configuration for ODH Gateway integration tests
+routes:
+  # Jupyter service route
+  - path: "/jupyter/"
+    upstream: "http://jupyter-service:80"
+
+  # MLflow service route  
+  - path: "/mlflow/"
+    upstream: "http://mlflow-service:80"
+
+  # Documentation service route
+  - path: "/docs/"
+    upstream: "http://docs-service:80"
+
+  # API service route
+  - path: "/api/"
+    upstream: "http://api-service:80"
+
+  # Fallback route - handles all other requests
+  - path: "/"
+    upstream: "http://default-service:80" 
