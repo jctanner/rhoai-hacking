@@ -1,121 +1,258 @@
-# notebook-operator
-// TODO(user): Add simple overview of use/purpose
+# Notebook Operator
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+A Kubernetes operator that manages Jupyter notebook instances and automatically integrates them with the ODH Gateway for centralized access and authentication.
 
-## Getting Started
+## Overview
 
-### Prerequisites
-- go version v1.23.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+The Notebook Operator simplifies the deployment and management of Jupyter notebooks in Kubernetes by:
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+- **Automated Deployment**: Creates notebook pods and services from simple custom resources
+- **Gateway Integration**: Automatically annotates services for ODH Gateway discovery
+- **Routing Configuration**: Sets up proper base URLs and paths for notebook access
+- **Resource Management**: Handles persistent storage, resource limits, and container configuration
+- **Service Discovery**: Makes notebooks discoverable through the centralized gateway
 
-```sh
-make docker-build docker-push IMG=<some-registry>/notebook-operator:tag
+## How It Works
+
+When you create a `Notebook` custom resource, the operator:
+
+1. **Creates a Pod** running the specified Jupyter notebook image
+2. **Configures the Notebook** with proper base URL and authentication settings
+3. **Creates a Service** to expose the notebook pod
+4. **Adds Annotations** to the service for ODH Gateway discovery (`odhgateway.opendatahub.io/enabled: "true"`)
+5. **Sets up Routing** by defining the route path in service annotations
+
+The ODH Gateway Operator automatically discovers these annotated services and updates the gateway's routing configuration, making the notebooks accessible through the centralized gateway with authentication.
+
+## Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Notebook CR   │──▶│  Notebook       │──▶│   Jupyter       │
+│   (User Input)  │    │  Operator       │    │   Pod + Svc     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                              │                         │
+                              ▼                         ▼
+                       ┌─────────────────┐    ┌─────────────────┐
+                       │  Service        │    │  ODH Gateway    │
+                       │  Annotations    │──▶│  Discovery      │
+                       │  (Gateway Tags) │    │  (Auto-routing) │
+                       └─────────────────┘    └─────────────────┘
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+## Notebook Custom Resource
 
-**Install the CRDs into the cluster:**
+### API Reference
 
-```sh
+The `Notebook` custom resource uses the API group `ds.example.com/v1alpha1` and supports the following specification:
+
+```yaml
+apiVersion: ds.example.com/v1alpha1
+kind: Notebook
+metadata:
+  name: my-notebook
+  namespace: notebooks
+spec:
+  # Required: Jupyter notebook image to run
+  image: "jupyter/scipy-notebook:latest"
+  
+  # Optional: Port the notebook server runs on (default: 8888)
+  port: 8888
+  
+  # Optional: Name of PVC for persistent storage
+  pvcName: "my-notebook-storage"
+  
+  # Optional: Resource requirements
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+```
+
+### Field Descriptions
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `image` | string | Yes | Container image for the Jupyter notebook (e.g., `jupyter/scipy-notebook:latest`) |
+| `port` | int32 | No | Port number for the notebook server (default: 8888) |
+| `pvcName` | string | No | Name of a PersistentVolumeClaim for notebook storage |
+| `resources` | ResourceRequirements | No | CPU and memory requests/limits for the notebook pod |
+
+### Status Fields
+
+The operator updates the notebook status with:
+
+| Field | Description |
+|-------|-------------|
+| `podName` | Name of the created pod |
+| `phase` | Current phase of the notebook (Creating, Running, Failed, etc.) |
+
+## Examples
+
+### Basic Notebook
+
+```yaml
+apiVersion: ds.example.com/v1alpha1
+kind: Notebook
+metadata:
+  name: data-science-notebook
+  namespace: user-workspaces
+spec:
+  image: "jupyter/datascience-notebook:latest"
+```
+
+This creates a basic data science notebook accessible at `/notebooks/data-science-notebook` through the ODH Gateway.
+
+### Notebook with Persistent Storage
+
+```yaml
+apiVersion: ds.example.com/v1alpha1
+kind: Notebook
+metadata:
+  name: research-notebook
+  namespace: research-team
+spec:
+  image: "jupyter/tensorflow-notebook:latest"
+  pvcName: "research-data"
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+```
+
+### Custom Port Configuration
+
+```yaml
+apiVersion: ds.example.com/v1alpha1
+kind: Notebook
+metadata:
+  name: custom-notebook
+  namespace: default
+spec:
+  image: "my-registry/custom-jupyter:v1.0"
+  port: 9999
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+```
+
+## Automatic Gateway Integration
+
+When the operator creates a notebook, it automatically adds the following annotations to the service:
+
+```yaml
+annotations:
+  odhgateway.opendatahub.io/enabled: "true"
+  odhgateway.opendatahub.io/route-path: "/notebooks/<notebook-name>"
+```
+
+This makes the notebook discoverable by the ODH Gateway Operator, which will:
+1. Add the notebook to the gateway's routing configuration
+2. Make it accessible through the centralized gateway
+3. Apply authentication policies based on the gateway configuration
+
+## Notebook Configuration
+
+The operator automatically configures notebooks with:
+
+- **Base URL**: Set to `/notebooks/<notebook-name>` for proper routing through the gateway
+- **Authentication**: Disabled token/password authentication (handled by gateway)
+- **Port Binding**: Configured to listen on the specified port
+- **Service Labels**: Added for proper pod selection
+
+## Development
+
+### Prerequisites
+
+- Go 1.23.0+
+- Docker 17.03+
+- kubectl v1.11.3+
+- Access to a Kubernetes v1.11.3+ cluster
+
+### Building and Running
+
+1. **Install CRDs**:
+```bash
 make install
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
-
-```sh
-make deploy IMG=<some-registry>/notebook-operator:tag
+2. **Run locally** (against configured cluster):
+```bash
+make run
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
-```sh
-kubectl apply -k config/samples/
+3. **Build and deploy**:
+```bash
+make docker-build docker-push IMG=<registry>/notebook-operator:tag
+make deploy IMG=<registry>/notebook-operator:tag
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
+### Testing
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+Create a test notebook:
 
-```sh
-kubectl delete -k config/samples/
+```bash
+kubectl apply -f - <<EOF
+apiVersion: ds.example.com/v1alpha1
+kind: Notebook
+metadata:
+  name: test-notebook
+  namespace: default
+spec:
+  image: "jupyter/minimal-notebook:latest"
+EOF
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
+Check the created resources:
 
-```sh
-make uninstall
+```bash
+# Check the notebook status
+kubectl get notebooks
+
+# Check the created pod
+kubectl get pods -l notebook=test-notebook
+
+# Check the service and its annotations
+kubectl get svc test-notebook-svc -o yaml
 ```
 
-**UnDeploy the controller from the cluster:**
+## Monitoring and Troubleshooting
 
-```sh
-make undeploy
+### Check Notebook Status
+
+```bash
+kubectl get notebooks -A
+kubectl describe notebook <notebook-name>
 ```
 
-## Project Distribution
+### View Operator Logs
 
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
-
-```sh
-make build-installer IMG=<some-registry>/notebook-operator:tag
+```bash
+kubectl logs -n notebook-operator-system deployment/notebook-operator-controller-manager
 ```
 
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
+### Common Issues
 
-2. Using the installer
+1. **Pod Not Starting**: Check image name and resource availability
+2. **Service Not Discovered**: Verify annotations are present on the service
+3. **Gateway Routing Issues**: Ensure ODH Gateway Operator is running and watching the correct namespaces
 
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
+## Integration with ODH Gateway
 
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/notebook-operator/<tag or branch>/dist/install.yaml
-```
+This operator is designed to work with the ODH Gateway system:
 
-### By providing a Helm Chart
+1. **ODH Gateway Operator** watches for services with `odhgateway.opendatahub.io/enabled: "true"`
+2. **Notebook Operator** automatically adds these annotations when creating services
+3. **ODH Gateway** provides centralized authentication and routing for all notebooks
 
-1. Build the chart using the optional helm plugin
-
-```sh
-operator-sdk edit --plugins=helm/v1-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+See the main project README for complete setup instructions.
 
 ## License
 
