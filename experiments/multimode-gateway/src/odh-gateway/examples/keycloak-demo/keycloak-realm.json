@@ -71,6 +71,30 @@
   "webAuthnPolicyCreateTimeout": 0,
   "webAuthnPolicyAvoidSameAuthenticatorRegister": false,
   "webAuthnPolicyAcceptableAaguids": [],
+  "groups": [
+    {
+      "id": "data-scientists-group-id",
+      "name": "data-scientists",
+      "path": "/data-scientists",
+      "attributes": {
+        "description": ["Data Scientists group with access to ML tools"]
+      },
+      "realmRoles": [],
+      "clientRoles": {},
+      "subGroups": []
+    },
+    {
+      "id": "admins-group-id", 
+      "name": "admins",
+      "path": "/admins",
+      "attributes": {
+        "description": ["Administrators group with full access"]
+      },
+      "realmRoles": [],
+      "clientRoles": {},
+      "subGroups": []
+    }
+  ],
   "users": [
     {
       "id": "test-user-id",
@@ -92,7 +116,7 @@
       "requiredActions": [],
       "realmRoles": [ "default-roles-odh" ],
       "notBefore": 0,
-      "groups": []
+      "groups": [ "/data-scientists" ]
     }
   ],
   "clients": [
@@ -156,21 +180,35 @@
             "jsonType.label": "String"
           }
         },
-        {
-          "id": "email-mapper",
-          "name": "email",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-usermodel-property-mapper",
-          "consentRequired": false,
-          "config": {
-            "userinfo.token.claim": "true",
-            "user.attribute": "email",
-            "id.token.claim": "true",
-            "access.token.claim": "true",
-            "claim.name": "email",
-            "jsonType.label": "String"
-          }
-        }
+                 {
+           "id": "email-mapper",
+           "name": "email",
+           "protocol": "openid-connect",
+           "protocolMapper": "oidc-usermodel-property-mapper",
+           "consentRequired": false,
+           "config": {
+             "userinfo.token.claim": "true",
+             "user.attribute": "email",
+             "id.token.claim": "true",
+             "access.token.claim": "true",
+             "claim.name": "email",
+             "jsonType.label": "String"
+           }
+         },
+         {
+           "id": "groups-mapper",
+           "name": "groups",
+           "protocol": "openid-connect",
+           "protocolMapper": "oidc-group-membership-mapper",
+           "consentRequired": false,
+           "config": {
+             "full.path": "false",
+             "id.token.claim": "true",
+             "access.token.claim": "true",
+             "claim.name": "groups",
+             "userinfo.token.claim": "true"
+           }
+         }
       ],
       "defaultClientScopes": [
         "web-origins",
