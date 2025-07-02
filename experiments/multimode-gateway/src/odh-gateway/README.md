@@ -36,12 +36,21 @@ The gateway consists of three main components:
 
 ## Configuration
 
+### Command Line Flags
+
+| Flag | Description |
+|------|-------------|
+| `--tls-cert-file` | Path to TLS certificate file (enables HTTPS) |
+| `--tls-key-file` | Path to TLS private key file (enables HTTPS) |
+
+**Note:** Both `--tls-cert-file` and `--tls-key-file` must be provided together to enable HTTPS.
+
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GATEWAY_CONFIG` | `/etc/odh-gateway/config.yaml` | Path to the configuration file |
-| `GATEWAY_PORT` | `8080` | Port for the gateway to listen on |
+| `GATEWAY_PORT` | `8080` (HTTP) / `8443` (HTTPS) | Port for the gateway to listen on |
 
 ### Configuration File Format
 
@@ -123,10 +132,17 @@ This approach ensures configuration changes are picked up reliably, even in envi
 # Install dependencies
 go mod download
 
-# Run locally
+# Run locally with HTTP
 export GATEWAY_CONFIG=./config.yaml
 export GATEWAY_PORT=8080
 go run cmd/odh-gateway/main.go
+
+# Run locally with HTTPS
+export GATEWAY_CONFIG=./config.yaml
+export GATEWAY_PORT=8443
+go run cmd/odh-gateway/main.go \
+    --tls-cert-file=/path/to/cert.pem \
+    --tls-key-file=/path/to/cert.key
 ```
 
 ### Docker Build
@@ -148,6 +164,26 @@ The project includes a build script for automated deployment:
 ```
 
 This script builds and pushes the image to `registry.tannerjc.net/odh-proxy:latest`.
+
+### TLS Certificate Setup
+
+For development and testing, you can create self-signed certificates:
+
+```bash
+# Generate a private key
+openssl genrsa -out cert.key 2048
+
+# Generate a self-signed certificate
+openssl req -new -x509 -key cert.key -out cert.pem -days 365 \
+    -subj "/C=US/ST=State/L=City/O=Organization/CN=localhost"
+
+# Run with TLS
+./odh-gateway-server \
+    --tls-cert-file=./cert.pem \
+    --tls-key-file=./cert.key
+```
+
+For production environments, use certificates from a trusted Certificate Authority or tools like cert-manager in Kubernetes.
 
 ## Kubernetes Deployment
 
@@ -188,10 +224,22 @@ spec:
           limits:
             memory: "128Mi"
             cpu: "200m"
+        # Uncomment below for HTTPS with TLS certificates
+        # args:
+        #   - "--tls-cert-file=/etc/tls/tls.crt"
+        #   - "--tls-key-file=/etc/tls/tls.key"
+        # volumeMounts:
+        # - name: tls-certs
+        #   mountPath: /etc/tls
+        #   readOnly: true
       volumes:
       - name: config-volume
         configMap:
           name: odh-gateway-config
+      # Uncomment below for HTTPS with TLS certificates
+      # - name: tls-certs
+      #   secret:
+      #     secretName: odh-gateway-tls
 ---
 apiVersion: v1
 kind: Service

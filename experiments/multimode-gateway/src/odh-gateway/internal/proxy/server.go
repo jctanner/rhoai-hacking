@@ -23,7 +23,7 @@ var (
 )
 
 // StartServer starts the reverse proxy with hot-reload and request logging
-func StartServer() error {
+func StartServer(tlsCertFile, tlsKeyFile string) error {
 	cfgPath := os.Getenv("GATEWAY_CONFIG")
 	if cfgPath == "" {
 		cfgPath = "/etc/odh-gateway/config.yaml"
@@ -38,16 +38,30 @@ func StartServer() error {
 
 	port := os.Getenv("GATEWAY_PORT")
 	if port == "" {
-		port = "8080"
+		if tlsCertFile != "" && tlsKeyFile != "" {
+			port = "8443" // Default HTTPS port
+		} else {
+			port = "8080" // Default HTTP port
+		}
 	}
 
-	log.Printf("Listening on :%s", port)
-	return http.ListenAndServe(":"+port, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s %s %s", r.RemoteAddr, r.Method, r.URL)
 		mu.RLock()
 		defer mu.RUnlock()
 		router.ServeHTTP(w, r)
-	}))
+	})
+
+	// Start HTTPS server if TLS certificates are provided
+	if tlsCertFile != "" && tlsKeyFile != "" {
+		log.Printf("Starting HTTPS server on :%s", port)
+		log.Printf("Using TLS cert: %s", tlsCertFile)
+		log.Printf("Using TLS key: %s", tlsKeyFile)
+		return http.ListenAndServeTLS(":"+port, tlsCertFile, tlsKeyFile, handler)
+	} else {
+		log.Printf("Starting HTTP server on :%s", port)
+		return http.ListenAndServe(":"+port, handler)
+	}
 }
 
 // reloadConfig builds the routing mux and updates the global router
@@ -177,7 +191,6 @@ func watchConfig(path string) {
 		}
 	}
 }
-
 
 // pollConfig polls the config file every 2 seconds and reloads if the hash changes
 func pollConfig(path string) {

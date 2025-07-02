@@ -52,8 +52,9 @@ run:
 .PHONY: clean
 clean:
 	rm -rf $(BUILD_DIR)
+	rm -f cert.pem cert.key
 	podman rmi $(FULL_IMAGE) 2>/dev/null || true
-	@echo "Cleaned up build artifacts and local images"
+	@echo "Cleaned up build artifacts, certificates, and local images"
 
 # Download Go dependencies
 .PHONY: deps
@@ -87,6 +88,22 @@ info:
 dev: build-binary
 	$(BUILD_DIR)/$(BINARY_NAME)
 
+# Development target with TLS (requires cert files)
+.PHONY: dev-tls
+dev-tls: build-binary
+	$(BUILD_DIR)/$(BINARY_NAME) \
+		--tls-cert-file=./cert.pem \
+		--tls-key-file=./cert.key
+
+# Generate self-signed certificates for development
+.PHONY: gen-certs
+gen-certs:
+	@echo "Generating self-signed certificates..."
+	openssl genrsa -out cert.key 2048
+	openssl req -new -x509 -key cert.key -out cert.pem -days 365 \
+		-subj "/C=US/ST=State/L=City/O=ODH-Gateway/CN=localhost"
+	@echo "Generated cert.pem and cert.key"
+
 # Help target
 .PHONY: help
 help:
@@ -101,6 +118,8 @@ help:
 	@echo "  test         - Run Go tests"
 	@echo "  run          - Run the application locally with go run"
 	@echo "  dev          - Build binary and run locally"
+	@echo "  dev-tls      - Build binary and run locally with TLS"
+	@echo "  gen-certs    - Generate self-signed certificates for development"
 	@echo "  clean        - Clean up build artifacts and local images"
 	@echo "  deps         - Download and tidy Go dependencies"
 	@echo "  fmt          - Format Go code"
@@ -116,5 +135,6 @@ help:
 	@echo "Examples:"
 	@echo "  make build"
 	@echo "  make publish"
+	@echo "  make gen-certs && make dev-tls"
 	@echo "  make build REGISTRY=my-registry.com IMAGE_NAME=my-proxy TAG=v1.0.0"
 	@echo "  make publish TAG=latest" 
