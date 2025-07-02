@@ -1,4 +1,4 @@
-package proxy
+package providers
 
 import (
 	"crypto/tls"
@@ -199,7 +199,7 @@ func (p *OpenShiftProvider) getUserGroups(accessToken, username string) ([]strin
 
 	req, err := http.NewRequest("GET", groupsURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create groups request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+accessToken)
@@ -207,7 +207,7 @@ func (p *OpenShiftProvider) getUserGroups(accessToken, username string) ([]strin
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to make groups request: %w", err)
+		return nil, fmt.Errorf("failed to make request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -217,7 +217,7 @@ func (p *OpenShiftProvider) getUserGroups(accessToken, username string) ([]strin
 	}
 
 	// Parse groups response
-	var groupsResp struct {
+	var groupsResponse struct {
 		Items []struct {
 			Metadata struct {
 				Name string `json:"name"`
@@ -226,13 +226,13 @@ func (p *OpenShiftProvider) getUserGroups(accessToken, username string) ([]strin
 		} `json:"items"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&groupsResp); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&groupsResponse); err != nil {
 		return nil, fmt.Errorf("failed to decode groups: %w", err)
 	}
 
 	// Filter groups that contain the user
 	var userGroups []string
-	for _, group := range groupsResp.Items {
+	for _, group := range groupsResponse.Items {
 		for _, user := range group.Users {
 			if user == username {
 				userGroups = append(userGroups, group.Metadata.Name)

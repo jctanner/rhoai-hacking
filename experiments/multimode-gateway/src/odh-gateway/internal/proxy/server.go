@@ -14,18 +14,19 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/jctanner/odh-gateway/internal/proxy/providers"
 	"github.com/jctanner/odh-gateway/pkg/config"
 )
 
 var (
 	mu             sync.RWMutex
 	router         http.Handler
-	authProvider   AuthProvider
+	authProvider   providers.AuthProvider
 	authMiddleware *AuthMiddleware
 )
 
 // StartServer starts the reverse proxy with hot-reload and request logging
-func StartServer(tlsCertFile, tlsKeyFile string, providerConfig ProviderConfig) error {
+func StartServer(tlsCertFile, tlsKeyFile string, providerConfig providers.ProviderConfig) error {
 	cfgPath := os.Getenv("GATEWAY_CONFIG")
 	if cfgPath == "" {
 		cfgPath = "/etc/odh-gateway/config.yaml"
@@ -49,7 +50,7 @@ func StartServer(tlsCertFile, tlsKeyFile string, providerConfig ProviderConfig) 
 
 	// Initialize authentication provider
 	var err error
-	authProvider, err = CreateProvider(providerConfig, baseURL)
+	authProvider, err = providers.CreateProvider(providerConfig, baseURL)
 	if err != nil {
 		return fmt.Errorf("failed to create auth provider: %w", err)
 	}
@@ -90,7 +91,7 @@ func StartServer(tlsCertFile, tlsKeyFile string, providerConfig ProviderConfig) 
 }
 
 // reloadConfig builds the routing mux and updates the global router
-func reloadConfig(path string, fallbackProviderConfig ProviderConfig) error {
+func reloadConfig(path string, fallbackProviderConfig providers.ProviderConfig) error {
 	// Force a fresh read by resolving the symlink
 	resolvedPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -103,12 +104,12 @@ func reloadConfig(path string, fallbackProviderConfig ProviderConfig) error {
 	}
 
 	// Use provider config from file if available, otherwise use fallback (environment variables)
-	var providerConfig ProviderConfig
+	var providerConfig providers.ProviderConfig
 	if cfg.Provider != nil {
-		providerConfig = ProviderConfig{
+		providerConfig = providers.ProviderConfig{
 			Type:      cfg.Provider.Type,
-			OIDC:      (*OIDCProviderConfig)(cfg.Provider.OIDC),
-			OpenShift: (*OpenShiftProviderConfig)(cfg.Provider.OpenShift),
+			OIDC:      (*providers.OIDCProviderConfig)(cfg.Provider.OIDC),
+			OpenShift: (*providers.OpenShiftProviderConfig)(cfg.Provider.OpenShift),
 		}
 	} else {
 		providerConfig = fallbackProviderConfig
@@ -116,7 +117,7 @@ func reloadConfig(path string, fallbackProviderConfig ProviderConfig) error {
 
 	// Update auth provider if config changed
 	if authProvider == nil || shouldUpdateProvider(providerConfig) {
-		newProvider, err := CreateProvider(providerConfig, getBaseURL())
+		newProvider, err := providers.CreateProvider(providerConfig, getBaseURL())
 		if err != nil {
 			log.Printf("Failed to create new provider: %v", err)
 		} else {
@@ -231,7 +232,7 @@ func watchConfig(path string) {
 }
 */
 
-func watchConfig(path string, fallbackProviderConfig ProviderConfig) {
+func watchConfig(path string, fallbackProviderConfig providers.ProviderConfig) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Printf("watch error: %v", err)
@@ -271,7 +272,7 @@ func watchConfig(path string, fallbackProviderConfig ProviderConfig) {
 }
 
 // pollConfig polls the config file every 2 seconds and reloads if the hash changes
-func pollConfig(path string, fallbackProviderConfig ProviderConfig) {
+func pollConfig(path string, fallbackProviderConfig providers.ProviderConfig) {
 	var lastHash [32]byte
 
 	for {

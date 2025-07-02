@@ -2,10 +2,12 @@ package proxy
 
 import (
 	"os"
+
+	"github.com/jctanner/odh-gateway/internal/proxy/providers"
 )
 
 // shouldUpdateProvider determines if the provider should be updated
-func shouldUpdateProvider(newConfig ProviderConfig) bool {
+func shouldUpdateProvider(newConfig providers.ProviderConfig) bool {
 	if authProvider == nil {
 		return true
 	}

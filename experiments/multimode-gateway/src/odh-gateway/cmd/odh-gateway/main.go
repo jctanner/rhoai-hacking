@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/jctanner/odh-gateway/internal/proxy"
+	"github.com/jctanner/odh-gateway/internal/proxy/providers"
 )
 
 // getEnvOrFlag returns environment variable value if set, otherwise returns flag value
@@ -38,7 +39,7 @@ func main() {
 	}
 
 	// Handle provider configuration from environment variables (backward compatibility)
-	var providerConfig proxy.ProviderConfig
+	var providerConfig providers.ProviderConfig
 
 	// Check for OIDC environment variables first (backward compatibility)
 	oidcIssuerURLValue := getEnvOrFlag("OIDC_ISSUER_URL", *oidcIssuerURL)
@@ -47,9 +48,9 @@ func main() {
 
 	if oidcIssuerURLValue != "" && oidcClientIDValue != "" && oidcClientSecretValue != "" {
 		// Use environment variables for OIDC provider
-		providerConfig = proxy.ProviderConfig{
+		providerConfig = providers.ProviderConfig{
 			Type: "oidc",
-			OIDC: &proxy.OIDCProviderConfig{
+			OIDC: &providers.OIDCProviderConfig{
 				IssuerURL:    oidcIssuerURLValue,
 				ClientID:     oidcClientIDValue,
 				ClientSecret: oidcClientSecretValue,
@@ -59,7 +60,7 @@ func main() {
 		log.Printf("OIDC configuration: Issuer=%s, ClientID=%s", oidcIssuerURLValue, oidcClientIDValue)
 	} else {
 		// No provider configured via environment variables
-		providerConfig = proxy.ProviderConfig{
+		providerConfig = providers.ProviderConfig{
 			Type: "disabled",
 		}
 	}

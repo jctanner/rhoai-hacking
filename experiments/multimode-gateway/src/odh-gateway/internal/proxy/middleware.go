@@ -1,18 +1,31 @@
 package proxy
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"log"
 	"net/http"
 	"strings"
+
+	"github.com/jctanner/odh-gateway/internal/proxy/providers"
 )
+
+// generateRandomString generates a random string of the specified length
+func generateRandomString(length int) (string, error) {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(bytes)[:length], nil
+}
 
 // AuthMiddleware handles authentication using providers
 type AuthMiddleware struct {
-	provider AuthProvider
+	provider providers.AuthProvider
 }
 
 // NewAuthMiddleware creates a new auth middleware
-func NewAuthMiddleware(provider AuthProvider) *AuthMiddleware {
+func NewAuthMiddleware(provider providers.AuthProvider) *AuthMiddleware {
 	return &AuthMiddleware{
 		provider: provider,
 	}
@@ -54,7 +67,7 @@ func (m *AuthMiddleware) Middleware(authRequired *bool) func(http.Handler) http.
 }
 
 // validateRequest checks for valid authentication and returns user info
-func (m *AuthMiddleware) validateRequest(r *http.Request) *UserInfo {
+func (m *AuthMiddleware) validateRequest(r *http.Request) *providers.UserInfo {
 	// Try to get token from cookie first, then Authorization header
 	var tokenString string
 
