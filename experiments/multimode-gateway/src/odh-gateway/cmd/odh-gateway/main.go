@@ -1,53 +1,123 @@
 package main
 
 import (
-	"flag"
 	"log"
 	"os"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 
 	"github.com/jctanner/odh-gateway/internal/proxy"
 	"github.com/jctanner/odh-gateway/internal/proxy/providers"
 )
 
-// getEnvOrFlag returns environment variable value if set, otherwise returns flag value
-func getEnvOrFlag(envKey, flagValue string) string {
-	if env := os.Getenv(envKey); env != "" {
-		return env
-	}
-	return flagValue
+var (
+	cfgFile string
+
+	// TLS configuration
+	tlsCertFile string
+	tlsKeyFile  string
+
+	// OIDC configuration
+	oidcIssuerURL    string
+	oidcClientID     string
+	oidcClientSecret string
+)
+
+// rootCmd represents the base command when called without any subcommands
+var rootCmd = &cobra.Command{
+	Use:   "odh-gateway",
+	Short: "A configurable reverse proxy for Open Data Hub environments",
+	Long: `ODH Gateway is a lightweight, configurable reverse proxy designed for Open Data Hub (ODH) 
+and Kubernetes environments. The gateway dynamically routes incoming HTTP requests to upstream 
+services based on path prefixes defined in a YAML configuration file.
+
+Features:
+- Dynamic routing with hot-reload capability
+- OIDC and OpenShift OAuth authentication support
+- TLS/HTTPS support
+- ConfigMap integration for Kubernetes
+- Request logging and monitoring`,
+	Run: runGateway,
 }
 
-func main() {
-	var (
-		tlsCertFile = flag.String("tls-cert-file", "", "Path to TLS certificate file (enables HTTPS)")
-		tlsKeyFile  = flag.String("tls-key-file", "", "Path to TLS private key file (enables HTTPS)")
+func init() {
+	cobra.OnInitialize(initConfig)
 
-		// OIDC configuration flags
-		oidcIssuerURL    = flag.String("oidc-issuer-url", "", "OIDC issuer URL")
-		oidcClientID     = flag.String("oidc-client-id", "", "OIDC client ID")
-		oidcClientSecret = flag.String("oidc-client-secret", "", "OIDC client secret")
-	)
-	flag.Parse()
+	// Global flags for configuration
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is /etc/odh-gateway/config.yaml)")
 
-	// Handle TLS certificates
-	var certFile, keyFile string
-	if *tlsCertFile != "" && *tlsKeyFile != "" {
-		certFile = *tlsCertFile
-		keyFile = *tlsKeyFile
-	} else if *tlsCertFile != "" || *tlsKeyFile != "" {
+	// TLS flags
+	rootCmd.Flags().StringVar(&tlsCertFile, "tls-cert-file", "", "Path to TLS certificate file (enables HTTPS)")
+	rootCmd.Flags().StringVar(&tlsKeyFile, "tls-key-file", "", "Path to TLS private key file (enables HTTPS)")
+
+	// OIDC flags
+	rootCmd.Flags().StringVar(&oidcIssuerURL, "oidc-issuer-url", "", "OIDC issuer URL")
+	rootCmd.Flags().StringVar(&oidcClientID, "oidc-client-id", "", "OIDC client ID")
+	rootCmd.Flags().StringVar(&oidcClientSecret, "oidc-client-secret", "", "OIDC client secret")
+
+	// Bind flags to viper for environment variable support
+	viper.BindPFlag("tls.cert-file", rootCmd.Flags().Lookup("tls-cert-file"))
+	viper.BindPFlag("tls.key-file", rootCmd.Flags().Lookup("tls-key-file"))
+	viper.BindPFlag("oidc.issuer-url", rootCmd.Flags().Lookup("oidc-issuer-url"))
+	viper.BindPFlag("oidc.client-id", rootCmd.Flags().Lookup("oidc-client-id"))
+	viper.BindPFlag("oidc.client-secret", rootCmd.Flags().Lookup("oidc-client-secret"))
+
+	// Set environment variable prefix
+	viper.SetEnvPrefix("GATEWAY")
+	viper.AutomaticEnv()
+
+	// Bind additional environment variables for backward compatibility
+	viper.BindEnv("tls.cert-file", "TLS_CERT_FILE")
+	viper.BindEnv("tls.key-file", "TLS_KEY_FILE")
+	viper.BindEnv("oidc.issuer-url", "OIDC_ISSUER_URL")
+	viper.BindEnv("oidc.client-id", "OIDC_CLIENT_ID")
+	viper.BindEnv("oidc.client-secret", "OIDC_CLIENT_SECRET")
+}
+
+// initConfig reads in config file and ENV variables if set
+func initConfig() {
+	if cfgFile != "" {
+		viper.SetConfigFile(cfgFile)
+	} else {
+		// Set default config path
+		viper.AddConfigPath("/etc/odh-gateway")
+		viper.SetConfigType("yaml")
+		viper.SetConfigName("config")
+	}
+
+	// Set config file from environment if available
+	if configPath := os.Getenv("GATEWAY_CONFIG"); configPath != "" {
+		viper.SetConfigFile(configPath)
+	}
+
+	// Read config file (optional)
+	if err := viper.ReadInConfig(); err == nil {
+		log.Printf("Using config file: %s", viper.ConfigFileUsed())
+	}
+}
+
+// runGateway is the main gateway server function
+func runGateway(cmd *cobra.Command, args []string) {
+	// Get TLS configuration from flags/env
+	certFile := viper.GetString("tls.cert-file")
+	keyFile := viper.GetString("tls.key-file")
+
+	// Validate TLS configuration
+	if (certFile != "" && keyFile == "") || (certFile == "" && keyFile != "") {
 		log.Fatal("Both --tls-cert-file and --tls-key-file must be provided to enable TLS")
 	}
 
-	// Handle provider configuration from environment variables (backward compatibility)
+	// Build provider configuration
 	var providerConfig providers.ProviderConfig
 
-	// Check for OIDC environment variables first (backward compatibility)
-	oidcIssuerURLValue := getEnvOrFlag("OIDC_ISSUER_URL", *oidcIssuerURL)
-	oidcClientIDValue := getEnvOrFlag("OIDC_CLIENT_ID", *oidcClientID)
-	oidcClientSecretValue := getEnvOrFlag("OIDC_CLIENT_SECRET", *oidcClientSecret)
+	// Check for OIDC configuration
+	oidcIssuerURLValue := viper.GetString("oidc.issuer-url")
+	oidcClientIDValue := viper.GetString("oidc.client-id")
+	oidcClientSecretValue := viper.GetString("oidc.client-secret")
 
 	if oidcIssuerURLValue != "" && oidcClientIDValue != "" && oidcClientSecretValue != "" {
-		// Use environment variables for OIDC provider
+		// Configure OIDC provider
 		providerConfig = providers.ProviderConfig{
 			Type: "oidc",
 			OIDC: &providers.OIDCProviderConfig{
@@ -56,16 +126,23 @@ func main() {
 				ClientSecret: oidcClientSecretValue,
 			},
 		}
-		log.Printf("OIDC provider configured from environment variables")
+		log.Printf("OIDC provider configured")
 		log.Printf("OIDC configuration: Issuer=%s, ClientID=%s", oidcIssuerURLValue, oidcClientIDValue)
 	} else {
-		// No provider configured via environment variables
+		// No provider configured
 		providerConfig = providers.ProviderConfig{
 			Type: "disabled",
 		}
 	}
 
+	// Start the gateway server
 	if err := proxy.StartServer(certFile, keyFile, providerConfig); err != nil {
-		log.Fatalf("failed to start gateway: %v", err)
+		log.Fatalf("Failed to start gateway: %v", err)
+	}
+}
+
+func main() {
+	if err := rootCmd.Execute(); err != nil {
+		log.Fatal(err)
 	}
 }
