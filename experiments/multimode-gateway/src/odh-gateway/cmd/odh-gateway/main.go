@@ -22,6 +22,13 @@ var (
 	oidcIssuerURL    string
 	oidcClientID     string
 	oidcClientSecret string
+
+	// OpenShift OAuth configuration
+	openshiftClusterURL   string
+	openshiftClientID     string
+	openshiftClientSecret string
+	openshiftCABundle     string
+	openshiftScope        string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -56,12 +63,24 @@ func init() {
 	rootCmd.Flags().StringVar(&oidcClientID, "oidc-client-id", "", "OIDC client ID")
 	rootCmd.Flags().StringVar(&oidcClientSecret, "oidc-client-secret", "", "OIDC client secret")
 
+	// OpenShift OAuth flags
+	rootCmd.Flags().StringVar(&openshiftClusterURL, "openshift-cluster-url", "", "OpenShift cluster URL (e.g., https://api.cluster.example.com:6443)")
+	rootCmd.Flags().StringVar(&openshiftClientID, "openshift-client-id", "", "OpenShift OAuth client ID")
+	rootCmd.Flags().StringVar(&openshiftClientSecret, "openshift-client-secret", "", "OpenShift OAuth client secret")
+	rootCmd.Flags().StringVar(&openshiftCABundle, "openshift-ca-bundle", "", "OpenShift CA bundle (PEM format)")
+	rootCmd.Flags().StringVar(&openshiftScope, "openshift-scope", "", "OpenShift OAuth scope (default: user:info)")
+
 	// Bind flags to viper for environment variable support
 	viper.BindPFlag("tls.cert-file", rootCmd.Flags().Lookup("tls-cert-file"))
 	viper.BindPFlag("tls.key-file", rootCmd.Flags().Lookup("tls-key-file"))
 	viper.BindPFlag("oidc.issuer-url", rootCmd.Flags().Lookup("oidc-issuer-url"))
 	viper.BindPFlag("oidc.client-id", rootCmd.Flags().Lookup("oidc-client-id"))
 	viper.BindPFlag("oidc.client-secret", rootCmd.Flags().Lookup("oidc-client-secret"))
+	viper.BindPFlag("openshift.cluster-url", rootCmd.Flags().Lookup("openshift-cluster-url"))
+	viper.BindPFlag("openshift.client-id", rootCmd.Flags().Lookup("openshift-client-id"))
+	viper.BindPFlag("openshift.client-secret", rootCmd.Flags().Lookup("openshift-client-secret"))
+	viper.BindPFlag("openshift.ca-bundle", rootCmd.Flags().Lookup("openshift-ca-bundle"))
+	viper.BindPFlag("openshift.scope", rootCmd.Flags().Lookup("openshift-scope"))
 
 	// Set environment variable prefix
 	viper.SetEnvPrefix("GATEWAY")
@@ -73,6 +92,11 @@ func init() {
 	viper.BindEnv("oidc.issuer-url", "OIDC_ISSUER_URL")
 	viper.BindEnv("oidc.client-id", "OIDC_CLIENT_ID")
 	viper.BindEnv("oidc.client-secret", "OIDC_CLIENT_SECRET")
+	viper.BindEnv("openshift.cluster-url", "OPENSHIFT_CLUSTER_URL")
+	viper.BindEnv("openshift.client-id", "OPENSHIFT_CLIENT_ID")
+	viper.BindEnv("openshift.client-secret", "OPENSHIFT_CLIENT_SECRET")
+	viper.BindEnv("openshift.ca-bundle", "OPENSHIFT_CA_BUNDLE")
+	viper.BindEnv("openshift.scope", "OPENSHIFT_SCOPE")
 }
 
 // initConfig reads in config file and ENV variables if set
@@ -116,7 +140,35 @@ func runGateway(cmd *cobra.Command, args []string) {
 	oidcClientIDValue := viper.GetString("oidc.client-id")
 	oidcClientSecretValue := viper.GetString("oidc.client-secret")
 
-	if oidcIssuerURLValue != "" && oidcClientIDValue != "" && oidcClientSecretValue != "" {
+	// Check for OpenShift configuration
+	openshiftClusterURLValue := viper.GetString("openshift.cluster-url")
+	openshiftClientIDValue := viper.GetString("openshift.client-id")
+	openshiftClientSecretValue := viper.GetString("openshift.client-secret")
+	openshiftCABundleValue := viper.GetString("openshift.ca-bundle")
+	openshiftScopeValue := viper.GetString("openshift.scope")
+
+	// Provider selection logic - OpenShift takes precedence if both are configured
+	if openshiftClusterURLValue != "" && openshiftClientIDValue != "" && openshiftClientSecretValue != "" {
+		// Configure OpenShift provider
+		providerConfig = providers.ProviderConfig{
+			Type: "openshift",
+			OpenShift: &providers.OpenShiftProviderConfig{
+				ClusterURL:   openshiftClusterURLValue,
+				ClientID:     openshiftClientIDValue,
+				ClientSecret: openshiftClientSecretValue,
+				CABundle:     openshiftCABundleValue,
+				Scope:        openshiftScopeValue,
+			},
+		}
+		log.Printf("OpenShift OAuth provider configured")
+		log.Printf("OpenShift configuration: ClusterURL=%s, ClientID=%s", openshiftClusterURLValue, openshiftClientIDValue)
+		if openshiftCABundleValue != "" {
+			log.Printf("OpenShift CA bundle configured")
+		}
+		if openshiftScopeValue != "" {
+			log.Printf("OpenShift scope: %s", openshiftScopeValue)
+		}
+	} else if oidcIssuerURLValue != "" && oidcClientIDValue != "" && oidcClientSecretValue != "" {
 		// Configure OIDC provider
 		providerConfig = providers.ProviderConfig{
 			Type: "oidc",
@@ -133,6 +185,7 @@ func runGateway(cmd *cobra.Command, args []string) {
 		providerConfig = providers.ProviderConfig{
 			Type: "disabled",
 		}
+		log.Printf("No authentication provider configured - running without authentication")
 	}
 
 	// Start the gateway server

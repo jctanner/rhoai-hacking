@@ -46,10 +46,18 @@ The gateway consists of three main components:
 | `--oidc-issuer-url` | OIDC issuer URL |
 | `--oidc-client-id` | OIDC client ID |
 | `--oidc-client-secret` | OIDC client secret |
+| `--openshift-cluster-url` | OpenShift cluster URL (e.g., https://api.cluster.example.com:6443) |
+| `--openshift-client-id` | OpenShift OAuth client ID |
+| `--openshift-client-secret` | OpenShift OAuth client secret |
+| `--openshift-ca-bundle` | OpenShift CA bundle (PEM format) |
+| `--openshift-scope` | OpenShift OAuth scope (default: user:info) |
 
 **Notes:**
 - Both `--tls-cert-file` and `--tls-key-file` must be provided together to enable HTTPS
-- OIDC authentication is automatically enabled when all three OIDC configuration flags are provided
+- **Authentication Provider Selection**:
+  - OpenShift OAuth takes precedence if all required OpenShift flags are provided
+  - OIDC authentication is used if all required OIDC flags are provided and OpenShift is not configured
+  - No authentication is used if neither provider is fully configured
 - All flags can be set via environment variables (see below)
 - Use `--help` to see the full help output with descriptions
 
@@ -62,8 +70,13 @@ The gateway consists of three main components:
 | `OIDC_ISSUER_URL` | - | OIDC issuer URL |
 | `OIDC_CLIENT_ID` | - | OIDC client ID |
 | `OIDC_CLIENT_SECRET` | - | OIDC client secret |
+| `OPENSHIFT_CLUSTER_URL` | - | OpenShift cluster URL |
+| `OPENSHIFT_CLIENT_ID` | - | OpenShift OAuth client ID |
+| `OPENSHIFT_CLIENT_SECRET` | - | OpenShift OAuth client secret |
+| `OPENSHIFT_CA_BUNDLE` | - | OpenShift CA bundle (PEM format) |
+| `OPENSHIFT_SCOPE` | `user:info` | OpenShift OAuth scope |
 
-**Environment Variable Priority:** Environment variables take precedence over command line flags. OIDC authentication is automatically enabled when all three OIDC environment variables are set.
+**Environment Variable Priority:** Environment variables take precedence over command line flags. Authentication providers are automatically enabled based on which environment variables are configured (OpenShift takes precedence over OIDC if both are configured).
 
 ### Configuration File Format
 
@@ -172,6 +185,21 @@ export OIDC_ISSUER_URL=https://your-keycloak.com/auth/realms/your-realm
 export OIDC_CLIENT_ID=odh-gateway
 export OIDC_CLIENT_SECRET=your-client-secret
 go run cmd/odh-gateway/main.go
+
+# Run with OpenShift OAuth authentication (automatically enabled when all OpenShift vars are set)
+export GATEWAY_CONFIG=./config.yaml
+export OPENSHIFT_CLUSTER_URL=https://api.cluster.example.com:6443
+export OPENSHIFT_CLIENT_ID=odh-gateway
+export OPENSHIFT_CLIENT_SECRET=your-oauth-secret
+export OPENSHIFT_CA_BUNDLE="$(cat /path/to/ca-bundle.pem)"
+go run cmd/odh-gateway/main.go
+
+# Run with OpenShift OAuth using command line flags
+go run cmd/odh-gateway/main.go \
+    --openshift-cluster-url=https://api.cluster.example.com:6443 \
+    --openshift-client-id=odh-gateway \
+    --openshift-client-secret=your-oauth-secret \
+    --openshift-ca-bundle="$(cat /path/to/ca-bundle.pem)"
 ```
 
 ### Docker Build
@@ -230,14 +258,46 @@ openssl req -new -x509 -key cert.key -out cert.pem -days 365 \
 
 For production environments, use certificates from a trusted Certificate Authority or tools like cert-manager in Kubernetes.
 
-### OIDC Authentication
+### Authentication
 
-The gateway supports OpenID Connect (OIDC) authentication for securing access to upstream services.
+The gateway supports multiple authentication providers for securing access to upstream services.
 
-#### Basic OIDC Setup
+#### Provider Selection
+
+The gateway automatically selects the authentication provider based on the configuration provided:
+
+1. **OpenShift OAuth** (takes precedence): Enabled when `--openshift-cluster-url`, `--openshift-client-id`, and `--openshift-client-secret` are provided
+2. **OIDC**: Enabled when `--oidc-issuer-url`, `--oidc-client-id`, and `--oidc-client-secret` are provided
+3. **No Authentication**: Used when neither provider is fully configured
+
+#### OpenShift OAuth Setup
 
 ```bash
-# Run with OIDC authentication (automatically enabled when all flags are provided)
+# Run with OpenShift OAuth authentication
+./odh-gateway-server \
+    --openshift-cluster-url=https://api.cluster.example.com:6443 \
+    --openshift-client-id=your-oauth-client-id \
+    --openshift-client-secret=your-oauth-client-secret \
+    --openshift-ca-bundle="$(cat /path/to/ca-bundle.pem)"
+
+# Or via environment variables
+export OPENSHIFT_CLUSTER_URL=https://api.cluster.example.com:6443
+export OPENSHIFT_CLIENT_ID=your-oauth-client-id
+export OPENSHIFT_CLIENT_SECRET=your-oauth-client-secret
+export OPENSHIFT_CA_BUNDLE="$(cat /path/to/ca-bundle.pem)"
+./odh-gateway-server
+```
+
+**OpenShift OAuth Configuration Requirements:**
+- **OAuth Client**: Must be registered in OpenShift with appropriate redirect URIs
+- **Cluster URL**: Full API URL of your OpenShift cluster
+- **CA Bundle**: (Optional but recommended) PEM-encoded CA certificates for validating OpenShift API calls
+- **Scope**: (Optional) OAuth scope to request (defaults to `user:info`)
+
+#### OIDC Setup
+
+```bash
+# Run with OIDC authentication
 ./odh-gateway-server \
     --oidc-issuer-url=https://your-oidc-provider.com/auth/realms/your-realm \
     --oidc-client-id=your-client-id \
@@ -248,31 +308,35 @@ export OIDC_ISSUER_URL=https://your-oidc-provider.com/auth/realms/your-realm
 export OIDC_CLIENT_ID=your-client-id
 export OIDC_CLIENT_SECRET=your-client-secret
 ./odh-gateway-server
-
-# View help for all available options
-./odh-gateway-server --help
 ```
 
-#### OIDC Endpoints
+#### Authentication Endpoints
 
-When OIDC is enabled, the gateway provides these endpoints:
+When authentication is enabled, the gateway provides these endpoints:
 
+**For OpenShift OAuth:**
+- `/auth/callback` - OAuth callback endpoint (automatically handled)
+- `/auth/logout` - Logout endpoint to clear authentication
+
+**For OIDC:**
 - `/oidc/callback` - OIDC callback endpoint (automatically handled)
 - `/oidc/logout` - Logout endpoint to clear authentication
 
 #### Authentication Flow
 
+The authentication flow is similar for both providers:
+
 1. **Unauthenticated Request**: User accesses a protected route
-2. **Redirect to OIDC**: Gateway redirects to OIDC provider for authentication
-3. **User Login**: User authenticates with OIDC provider
-4. **Callback**: OIDC provider redirects back to `/oidc/callback` with authorization code
-5. **Token Exchange**: Gateway exchanges code for ID token and validates it
-6. **Session Cookie**: Gateway sets secure session cookie with ID token
+2. **Redirect to Provider**: Gateway redirects to authentication provider (OpenShift/OIDC)
+3. **User Login**: User authenticates with the provider
+4. **Callback**: Provider redirects back to callback endpoint with authorization code
+5. **Token Exchange**: Gateway exchanges code for access/ID token and validates it
+6. **Session Cookie**: Gateway sets secure session cookie with token
 7. **Access Granted**: User is redirected to original URL with authenticated session
 
 #### Per-Route Authentication Control
 
-- **Global Default**: OIDC is enabled when all OIDC configuration is provided
+- **Global Default**: Authentication is enabled when any provider is configured
 - **Route Override**: Use `authRequired: true/false` in route configuration to override global setting
 - **Flexible Control**: Mix authenticated and public routes as needed
 
@@ -315,6 +379,21 @@ spec:
         #     secretKeyRef:
         #       name: oidc-client-secret
         #       key: client-secret
+        # Uncomment below for OpenShift OAuth authentication (takes precedence over OIDC)
+        # - name: OPENSHIFT_CLUSTER_URL
+        #   value: "https://api.cluster.example.com:6443"
+        # - name: OPENSHIFT_CLIENT_ID
+        #   value: "odh-gateway"
+        # - name: OPENSHIFT_CLIENT_SECRET
+        #   valueFrom:
+        #     secretKeyRef:
+        #       name: openshift-oauth-secret
+        #       key: client-secret
+        # - name: OPENSHIFT_CA_BUNDLE
+        #   valueFrom:
+        #     configMapKeyRef:
+        #       name: openshift-ca-bundle
+        #       key: ca-bundle.pem
         volumeMounts:
         - name: config-volume
           mountPath: /etc/odh-gateway
@@ -407,13 +486,18 @@ odh-gateway --help
 #   odh-gateway [flags]
 #
 # Flags:
-#       --config string               config file (default is /etc/odh-gateway/config.yaml)
-#   -h, --help                        help for odh-gateway
-#       --oidc-client-id string       OIDC client ID
-#       --oidc-client-secret string   OIDC client secret
-#       --oidc-issuer-url string      OIDC issuer URL
-#       --tls-cert-file string        Path to TLS certificate file (enables HTTPS)
-#       --tls-key-file string         Path to TLS private key file (enables HTTPS)
+#       --config string                    config file (default is /etc/odh-gateway/config.yaml)
+#   -h, --help                             help for odh-gateway
+#       --oidc-client-id string            OIDC client ID
+#       --oidc-client-secret string        OIDC client secret
+#       --oidc-issuer-url string           OIDC issuer URL
+#       --openshift-ca-bundle string       OpenShift CA bundle (PEM format)
+#       --openshift-client-id string       OpenShift OAuth client ID
+#       --openshift-client-secret string   OpenShift OAuth client secret
+#       --openshift-cluster-url string     OpenShift cluster URL (e.g., https://api.cluster.example.com:6443)
+#       --openshift-scope string           OpenShift OAuth scope (default: user:info)
+#       --tls-cert-file string             Path to TLS certificate file (enables HTTPS)
+#       --tls-key-file string              Path to TLS private key file (enables HTTPS)
 ```
 
 ## Dependencies
@@ -437,13 +521,21 @@ This gateway is particularly useful for:
 
 ## Security Considerations
 
-- **OIDC Authentication**: When enabled, provides enterprise-grade authentication via OpenID Connect
-- **Secure Cookies**: ID tokens are stored in HTTP-only, secure cookies with appropriate SameSite policies
+- **Authentication Providers**: 
+  - **OIDC**: Provides enterprise-grade authentication via OpenID Connect with ID token validation
+  - **OpenShift OAuth**: Integrates with OpenShift's built-in OAuth server for seamless cluster authentication
+- **Secure Cookies**: Access/ID tokens are stored in HTTP-only, secure cookies with appropriate SameSite policies
 - **CSRF Protection**: State parameter validation prevents cross-site request forgery attacks
-- **Token Validation**: ID tokens are verified against the OIDC provider's public keys
-- **SSL/TLS**: Should be used in production environments (especially important with OIDC cookies)
-- **Network policies**: Should be used to restrict access to upstream services
-- **Secret Management**: OIDC client secrets should be stored securely (e.g., Kubernetes secrets)
+- **Token Validation**: 
+  - OIDC: ID tokens are verified against the provider's public keys
+  - OpenShift: Access tokens are validated against the OpenShift API
+- **SSL/TLS**: Should be used in production environments (especially important with authentication cookies)
+- **Certificate Validation**: 
+  - OpenShift OAuth: Use proper CA bundles to validate API server certificates
+  - Development environments may skip verification but should use proper certificates in production
+- **Network Policies**: Should be used to restrict access to upstream services
+- **Secret Management**: OAuth/OIDC client secrets should be stored securely (e.g., Kubernetes secrets)
+- **OpenShift RBAC Integration**: OpenShift OAuth respects cluster RBAC policies and group memberships
 - **Configuration Protection**: Configuration files may contain sensitive upstream URLs and should be protected accordingly
 
 ## Future Enhancements
