@@ -1,0 +1,25 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: odh-minimal
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: ClusterConfiguration
+        apiServer:
+          extraArgs:
+            oidc-issuer-url: "https://keycloak.tannerjc.net/realms/sno419"
+            oidc-client-id: "console-test"
+            oidc-username-claim: "preferred_username"
+            oidc-username-prefix: "oidc:"
+            oidc-groups-claim: "groups"
+            oidc-groups-prefix: "oidc:"
+            oidc-signing-algs: "RS256"
+            audit-log-maxage: "30"
+            audit-log-maxbackup: "3"
+            audit-log-maxsize: "100"
+            audit-log-path: "/var/log/audit.log"
+    extraMounts:
+      - hostPath: /tmp/kind-audit
+        containerPath: /var/log
+        readOnly: false

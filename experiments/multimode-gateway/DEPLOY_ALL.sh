@@ -106,10 +106,10 @@ create_cluster() {
     
     # Create KIND config with OIDC
     log_info "Creating KIND configuration with OIDC support"
-    cat > /tmp/kind-config-oidc.yaml << EOF
+    cat > /tmp/kind-config-oidc.yaml << 'EOF'
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-name: $CLUSTER_NAME
+name: odh-minimal
 nodes:
 - role: control-plane
   kubeadmConfigPatches:
@@ -117,7 +117,6 @@ nodes:
     kind: ClusterConfiguration
     apiServer:
       extraArgs:
-        # OIDC Authentication Configuration
         oidc-issuer-url: "https://keycloak.tannerjc.net/realms/sno419"
         oidc-client-id: "console-test"
         oidc-username-claim: "preferred_username"
@@ -125,15 +124,10 @@ nodes:
         oidc-groups-claim: "groups"
         oidc-groups-prefix: "oidc:"
         oidc-signing-algs: "RS256"
-        # Enable API server auditing for debugging
         audit-log-maxage: "30"
         audit-log-maxbackup: "3"
         audit-log-maxsize: "100"
         audit-log-path: "/var/log/audit.log"
-  extraPortMappings:
-  - containerPort: 6443
-    hostPort: 6443
-    protocol: TCP
   extraMounts:
   - hostPath: /tmp/kind-audit
     containerPath: /var/log
