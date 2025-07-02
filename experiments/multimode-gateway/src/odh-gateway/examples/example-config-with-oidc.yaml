@@ -1,0 +1,38 @@
+# Example ODH Gateway Configuration with OIDC Authentication
+# This file demonstrates various authentication scenarios
+
+routes:
+  # JupyterHub - requires authentication
+  - path: "/jupyter/"
+    upstream: "http://jupyterhub-service:8000"
+    authRequired: true
+
+  # MLflow - requires authentication (explicit override)
+  - path: "/mlflow/"
+    upstream: "http://mlflow-service:5000"
+    authRequired: true
+
+  # Monitoring/Grafana - requires authentication  
+  - path: "/grafana/"
+    upstream: "http://grafana-service:3000"
+    authRequired: true
+
+  # Health check endpoint - publicly accessible
+  - path: "/health/"
+    upstream: "http://health-service:8080"
+    authRequired: false
+
+  # Documentation - publicly accessible
+  - path: "/docs/"
+    upstream: "http://docs-service:8080"
+    authRequired: false
+
+  # API endpoints - uses global auth setting (usually enabled)
+  - path: "/api/"
+    upstream: "http://api-service:8080"
+    # authRequired not specified - uses global default
+
+  # Fallback route - uses global auth setting
+  - path: "/"
+    upstream: "http://default-webapp-service:8080"
+    # authRequired not specified - uses global default 
