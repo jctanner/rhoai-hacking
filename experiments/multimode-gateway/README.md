@@ -16,7 +16,7 @@ The system works by having the ODH Gateway Operator watch for services across th
 │                 │    │   (Reverse      │    │   Services      │
 │                 │    │    Proxy)       │    │   (Notebooks,   │
 └─────────────────┘    └─────────────────┘    │    etc.)        │
-                              │                └─────────────────┘
+                              │               └─────────────────┘
                               ▼
                        ┌─────────────────┐
                        │  ODH Gateway    │
