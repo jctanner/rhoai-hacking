@@ -9,9 +9,9 @@ services:
     environment:
       - GATEWAY_CONFIG=/etc/odh-gateway/config.yaml
       - GATEWAY_PORT=8080
-      - GATEWAY_OIDC_ISSUER_URL=https://fake-oidc-provider.com/auth/realms/test
-      - GATEWAY_OIDC_CLIENT_ID=odh-gateway
-      - GATEWAY_OIDC_CLIENT_SECRET=fake-secret
+      - OIDC_ISSUER_URL=https://fake-oidc-provider.com/auth/realms/test
+      - OIDC_CLIENT_ID=odh-gateway
+      - OIDC_CLIENT_SECRET=fake-secret
     volumes:
       - ./test/config-oidc.yaml:/etc/odh-gateway/config.yaml:ro
     depends_on:

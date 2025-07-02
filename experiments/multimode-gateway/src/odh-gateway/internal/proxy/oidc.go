@@ -29,42 +29,48 @@ type OIDCMiddleware struct {
 	oauth2Config oauth2.Config
 	verifier     *oidc.IDTokenVerifier
 	defaultAuth  bool // Global default for authentication requirement
+	baseURL      string
+	initialized  bool
 }
 
 // NewOIDCMiddleware creates a new OIDC middleware
 func NewOIDCMiddleware(config OIDCConfig, defaultAuth bool, baseURL string) (*OIDCMiddleware, error) {
-	if !config.Enabled {
-		return &OIDCMiddleware{
-			config:      config,
-			defaultAuth: defaultAuth,
-		}, nil
+	return &OIDCMiddleware{
+		config:      config,
+		defaultAuth: defaultAuth,
+		baseURL:     baseURL,
+		initialized: false,
+	}, nil
+}
+
+// initializeProvider initializes the OIDC provider (lazy initialization)
+func (o *OIDCMiddleware) initializeProvider() error {
+	if o.initialized || !o.config.Enabled {
+		return nil
 	}
 
 	ctx := context.Background()
-	provider, err := oidc.NewProvider(ctx, config.IssuerURL)
+	provider, err := oidc.NewProvider(ctx, o.config.IssuerURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create OIDC provider: %w", err)
+		return fmt.Errorf("failed to create OIDC provider: %w", err)
 	}
 
 	// Configure OAuth2
-	oauth2Config := oauth2.Config{
-		ClientID:     config.ClientID,
-		ClientSecret: config.ClientSecret,
-		RedirectURL:  baseURL + "/oidc/callback",
+	o.oauth2Config = oauth2.Config{
+		ClientID:     o.config.ClientID,
+		ClientSecret: o.config.ClientSecret,
+		RedirectURL:  o.baseURL + "/oidc/callback",
 		Endpoint:     provider.Endpoint(),
 		Scopes:       []string{oidc.ScopeOpenID, "profile", "email"},
 	}
 
 	// Configure ID token verifier
-	verifier := provider.Verifier(&oidc.Config{ClientID: config.ClientID})
+	o.verifier = provider.Verifier(&oidc.Config{ClientID: o.config.ClientID})
+	o.provider = provider
+	o.initialized = true
 
-	return &OIDCMiddleware{
-		config:       config,
-		provider:     provider,
-		oauth2Config: oauth2Config,
-		verifier:     verifier,
-		defaultAuth:  defaultAuth,
-	}, nil
+	log.Printf("OIDC provider initialized successfully for issuer: %s", o.config.IssuerURL)
+	return nil
 }
 
 // Middleware returns an HTTP middleware that handles OIDC authentication
@@ -80,6 +86,13 @@ func (o *OIDCMiddleware) Middleware(authRequired *bool) func(http.Handler) http.
 			// Skip auth if not required or OIDC not enabled
 			if !requireAuth || !o.config.Enabled {
 				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Initialize OIDC provider if needed
+			if err := o.initializeProvider(); err != nil {
+				log.Printf("Failed to initialize OIDC provider: %v", err)
+				http.Error(w, "Authentication service temporarily unavailable", http.StatusServiceUnavailable)
 				return
 			}
 
@@ -109,6 +122,10 @@ func (o *OIDCMiddleware) Middleware(authRequired *bool) func(http.Handler) http.
 
 // isAuthenticated checks if the request has a valid authentication token
 func (o *OIDCMiddleware) isAuthenticated(r *http.Request) bool {
+	if !o.initialized {
+		return false
+	}
+
 	cookie, err := r.Cookie("oidc_token")
 	if err != nil {
 		return false

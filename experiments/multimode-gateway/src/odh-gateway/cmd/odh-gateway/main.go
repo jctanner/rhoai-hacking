@@ -46,11 +46,18 @@ func main() {
 		ClientSecret: getEnvOrFlag("OIDC_CLIENT_SECRET", *oidcClientSecret),
 	}
 
+	// Enable OIDC automatically if environment variables are provided
+	if !oidcConfig.Enabled && oidcConfig.IssuerURL != "" && oidcConfig.ClientID != "" && oidcConfig.ClientSecret != "" {
+		oidcConfig.Enabled = true
+		log.Printf("OIDC automatically enabled due to environment variables")
+	}
+
 	// Validate OIDC configuration if enabled
 	if oidcConfig.Enabled {
 		if oidcConfig.IssuerURL == "" || oidcConfig.ClientID == "" || oidcConfig.ClientSecret == "" {
-			log.Fatal("When OIDC is enabled, --oidc-issuer-url, --oidc-client-id, and --oidc-client-secret must be provided (or set via environment variables)")
+			log.Fatal("When OIDC is enabled, --oidc-issuer-url, --oidc-client-id, and --oidc-client-secret must be provided (or set via OIDC_* environment variables)")
 		}
+		log.Printf("OIDC configuration: Issuer=%s, ClientID=%s", oidcConfig.IssuerURL, oidcConfig.ClientID)
 	}
 
 	if err := proxy.StartServer(certFile, keyFile, oidcConfig); err != nil {
