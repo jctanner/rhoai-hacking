@@ -188,7 +188,7 @@ create_sample_resources() {
     
     # Create ODH Gateway instance
     log_info "Creating ODH Gateway instance"
-    kubectl apply -f configs/gateway.yaml
+    kubectl apply -f configs/gateway-oidc.yaml
     
     # Wait a bit for the gateway to be processed
     sleep 10
