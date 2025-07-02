@@ -62,6 +62,32 @@ routes:
 - **`path`**: URL path prefix to match (automatically normalized to end with `/`)
 - **`upstream`**: Target service URL to proxy requests to
 
+#### Fallback Route Support
+
+The gateway supports using `"/"` as a catchall fallback route for any requests that don't match more specific path prefixes. This is useful for handling static assets, health checks, or providing a default service.
+
+**Example with fallback:**
+```yaml
+routes:
+  - path: "/jupyter/"
+    upstream: "http://jupyter-service:8888"
+  - path: "/mlflow/"
+    upstream: "http://mlflow-service:5000"
+  - path: "/"
+    upstream: "http://default-service:8080"  # Handles all other requests
+```
+
+**Request routing behavior:**
+- `GET /jupyter/lab` → `http://jupyter-service:8888/jupyter/lab`
+- `GET /mlflow/experiments` → `http://mlflow-service:5000/mlflow/experiments`
+- `GET /unknown/path` → `http://default-service:8080/unknown/path` (fallback)
+- `GET /favicon.ico` → `http://default-service:8080/favicon.ico` (fallback)
+
+**Important notes:**
+- List more specific routes before the `"/"` fallback in your configuration
+- The full original path is preserved when forwarding to upstream services
+- Only one `"/"` route should be configured (last one wins if multiple are defined)
+
 ### Example Kubernetes ConfigMap
 
 ```yaml
