@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% block title %}About - ODH Gateway{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-lg-8 mx-auto">
+            <h1 class="display-5 fw-bold text-primary mb-4">
+                <i class="bi bi-info-circle me-3"></i>
+                About ODH Gateway
+            </h1>
+            
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body p-4">
+                    <h2 class="h4 text-primary mb-3">What is ODH Gateway?</h2>
+                    <p class="lead">
+                        The Open Data Hub Gateway is a centralized proxy system that provides unified access 
+                        to all your data science and machine learning tools through a single entry point.
+                    </p>
+                    <p>
+                        This dashboard serves as the main landing page and service directory, automatically 
+                        discovering and listing all available services in your ODH environment.
+                    </p>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body p-4">
+                    <h2 class="h4 text-primary mb-3">Key Features</h2>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <ul class="list-unstyled">
+                                <li class="mb-2">
+                                    <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                    <strong>Centralized Authentication</strong><br>
+                                    <small class="text-muted">Single sign-on for all services</small>
+                                </li>
+                                <li class="mb-2">
+                                    <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                    <strong>Automatic Service Discovery</strong><br>
+                                    <small class="text-muted">Services are discovered automatically</small>
+                                </li>
+                                <li class="mb-2">
+                                    <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                    <strong>Dynamic Routing</strong><br>
+                                    <small class="text-muted">Smart path-based routing to services</small>
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <ul class="list-unstyled">
+                                <li class="mb-2">
+                                    <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                    <strong>OIDC & OpenShift Auth</strong><br>
+                                    <small class="text-muted">Support for multiple auth providers</small>
+                                </li>
+                                <li class="mb-2">
+                                    <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                    <strong>Hot Reload Configuration</strong><br>
+                                    <small class="text-muted">Updates without service restarts</small>
+                                </li>
+                                <li class="mb-2">
+                                    <i class="bi bi-check-circle-fill text-success me-2"></i>
+                                    <strong>Kubernetes Native</strong><br>
+                                    <small class="text-muted">Built for cloud-native environments</small>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body p-4">
+                    <h2 class="h4 text-primary mb-3">System Architecture</h2>
+                    <p>The ODH Gateway system consists of three main components:</p>
+                    
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <div class="text-center p-3 bg-light rounded">
+                                <i class="bi bi-gateway display-4 text-primary mb-2"></i>
+                                <h5>ODH Gateway</h5>
+                                <small class="text-muted">Reverse proxy with authentication</small>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="text-center p-3 bg-light rounded">
+                                <i class="bi bi-gear-wide-connected display-4 text-success mb-2"></i>
+                                <h5>Gateway Operator</h5>
+                                <small class="text-muted">Manages gateway deployments and service discovery</small>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="text-center p-3 bg-light rounded">
+                                <i class="bi bi-journal-code display-4 text-info mb-2"></i>
+                                <h5>Notebook Operator</h5>
+                                <small class="text-muted">Creates and manages Jupyter notebooks</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body p-4">
+                    <h2 class="h4 text-primary mb-3">How Service Discovery Works</h2>
+                    <div class="row">
+                        <div class="col-md-8">
+                            <ol class="list-group list-group-numbered list-group-flush">
+                                <li class="list-group-item border-0 px-0">
+                                    Services are deployed with special annotations:
+                                    <br><code class="text-muted small">odhgateway.opendatahub.io/enabled: "true"</code>
+                                </li>
+                                <li class="list-group-item border-0 px-0">
+                                    The Gateway Operator watches for these annotated services
+                                </li>
+                                <li class="list-group-item border-0 px-0">
+                                    Routing configuration is automatically updated in the gateway
+                                </li>
+                                <li class="list-group-item border-0 px-0">
+                                    Services become accessible through the centralized gateway
+                                </li>
+                                <li class="list-group-item border-0 px-0">
+                                    This dashboard displays all discovered services
+                                </li>
+                            </ol>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="bg-light p-3 rounded">
+                                <h6 class="fw-bold">Example Annotations:</h6>
+                                <pre class="small mb-0"><code>annotations:
+  odhgateway.opendatahub.io/enabled: "true"
+  odhgateway.opendatahub.io/route-path: "/notebooks"</code></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card border-0 shadow-sm">
+                <div class="card-body p-4">
+                    <h2 class="h4 text-primary mb-3">Technical Details</h2>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6 class="fw-bold">Dashboard Technology:</h6>
+                            <ul class="small text-muted">
+                                <li>Flask web framework</li>
+                                <li>Jinja2 templating</li>
+                                <li>Bootstrap 5 UI</li>
+                                <li>RESTful API endpoints</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="fw-bold">Gateway Features:</h6>
+                            <ul class="small text-muted">
+                                <li>Dynamic route configuration</li>
+                                <li>Path-based routing with fallbacks</li>
+                                <li>Authentication middleware</li>
+                                <li>Health check endpoints</li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3 p-3 bg-light rounded">
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle me-1"></i>
+                            This is an experimental project to validate the centralized gateway approach 
+                            for ODH workloads. Individual components may be moved to separate repositories 
+                            if this approach is approved.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

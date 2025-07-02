@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: odh-dashboard
+
+resources:
+  - deployment.yaml
+  - service.yaml
+
+commonLabels:
+  app.kubernetes.io/name: odh-dashboard
+  app.kubernetes.io/part-of: odh-gateway-system
+  app.kubernetes.io/managed-by: kustomize
+
+images:
+  - name: registry.example.com/odh-dashboard
+    newName: registry.example.com/odh-dashboard
+    newTag: latest 

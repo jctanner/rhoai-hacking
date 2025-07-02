@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: odh-dashboard-svc
+  namespace: default
+  labels:
+    app: odh-dashboard
+    component: dashboard
+  annotations:
+    # ODH Gateway discovery annotations - this makes it the fallback route
+    odhgateway.opendatahub.io/enabled: "true"
+    odhgateway.opendatahub.io/route-path: "/"
+    # Optional: authentication settings (inherits from gateway default if not specified)
+    # odhgateway.opendatahub.io/auth-required: "false"  # Could disable auth for dashboard if needed
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: 5000
+    protocol: TCP
+  selector:
+    app: odh-dashboard 
