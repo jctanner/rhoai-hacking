@@ -15,5 +15,5 @@ commonLabels:
 
 images:
   - name: registry.example.com/odh-dashboard
-    newName: registry.example.com/odh-dashboard
-    newTag: latest 
+    newName: registry.tannerjc.net/odh-dashboard
+    newTag: latest

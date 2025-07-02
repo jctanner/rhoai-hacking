@@ -1,191 +1,351 @@
-{% extends "base.html" %}
-
-{% block title %}Dashboard - ODH Gateway{% endblock %}
-
+{% extends "base.html" %} {% block title %}Dashboard - ODH Gateway{% endblock %}
 {% block content %}
 <div class="container">
-    <!-- Header -->
-    <div class="row mb-4">
-        <div class="col">
-            <h1 class="display-5 fw-bold text-primary">
-                <i class="bi bi-speedometer2 me-3"></i>
-                Open Data Hub Dashboard
-            </h1>
-            <p class="lead text-muted">
-                Welcome to your centralized gateway for data science and machine learning tools.
-                Access all your services through a unified interface with centralized authentication.
-            </p>
-        </div>
+  <!-- Header -->
+  <div class="row mb-4">
+    <div class="col">
+      <h1 class="display-5 fw-bold text-primary">
+        <i class="bi bi-speedometer2 me-3"></i>
+        Open Data Hub Dashboard
+      </h1>
+      <p class="lead text-muted">
+        Welcome to your centralized gateway for data science and machine
+        learning tools. Access all your services through a unified interface
+        with centralized authentication.
+      </p>
     </div>
+  </div>
 
-    <!-- Status Banner -->
-    <div class="row mb-4">
-        <div class="col">
-            <div class="alert alert-success d-flex align-items-center" role="alert">
-                <i class="bi bi-check-circle-fill me-2"></i>
-                <div>
-                    <strong>System Status:</strong> All services operational
-                    <small class="text-muted ms-2">Last updated: {{ current_time }}</small>
-                </div>
-            </div>
+  <!-- Status Banner -->
+  <div class="row mb-4">
+    <div class="col">
+      {% if k8s_error %}
+      <div class="alert alert-warning d-flex align-items-center" role="alert">
+        <i class="bi bi-exclamation-triangle-fill me-2"></i>
+        <div>
+          <strong>Kubernetes API Warning:</strong> {{ k8s_error }}
+          <small class="text-muted ms-2"
+            >Last updated: {{ current_time }}</small
+          >
         </div>
+      </div>
+      {% else %}
+      <div class="alert alert-success d-flex align-items-center" role="alert">
+        <i class="bi bi-check-circle-fill me-2"></i>
+        <div>
+          <strong>Kubernetes API:</strong> Connected successfully
+          <small class="text-muted ms-2"
+            >Last updated: {{ current_time }}</small
+          >
+        </div>
+      </div>
+      {% endif %}
     </div>
+  </div>
 
-    <!-- Services Grid -->
-    <div class="row mb-4">
-        <div class="col">
-            <h2 class="h4 mb-3">
-                <i class="bi bi-collection me-2"></i>
-                Available Services
-            </h2>
-        </div>
+  <!-- Namespaces Section -->
+  <div class="row mb-4">
+    <div class="col">
+      <h2 class="h4 mb-3">
+        <i class="bi bi-collection me-2"></i>
+        Available Namespaces ({{ namespaces|length }})
+      </h2>
     </div>
+  </div>
 
-    <div class="row g-4">
-        {% for service in services %}
-        <div class="col-md-6 col-lg-4">
-            <div class="card h-100 shadow-sm service-card">
-                <div class="card-body d-flex flex-column">
-                    <div class="d-flex align-items-center mb-3">
-                        <span class="service-icon me-3">{{ service.icon }}</span>
-                        <div>
-                            <h5 class="card-title mb-1">{{ service.name }}</h5>
-                            <span class="badge bg-success-subtle text-success-emphasis">
-                                <i class="bi bi-circle-fill me-1" style="font-size: 0.5em;"></i>
-                                {{ service.status|title }}
-                            </span>
-                        </div>
-                    </div>
-                    
-                    <p class="card-text text-muted flex-grow-1">
-                        {{ service.description }}
-                    </p>
-                    
-                    <div class="mt-auto">
-                        <a href="{{ service.path }}" class="btn btn-primary w-100">
-                            <i class="bi bi-box-arrow-up-right me-1"></i>
-                            Launch {{ service.name }}
-                        </a>
-                        <small class="text-muted d-block mt-2 text-center">
-                            Route: <code>{{ service.path }}</code>
-                        </small>
-                    </div>
-                </div>
+  {% if namespaces %}
+  <div class="row g-4 mb-5">
+    {% for namespace in namespaces %}
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm namespace-card">
+        <div class="card-body d-flex flex-column">
+          <div class="d-flex align-items-center mb-3">
+            <span class="service-icon me-3">📁</span>
+            <div>
+              <h5 class="card-title mb-1">{{ namespace.name }}</h5>
+              <span
+                class="badge bg-{% if namespace.status == 'Active' %}success{% else %}warning{% endif %}-subtle text-{% if namespace.status == 'Active' %}success{% else %}warning{% endif %}-emphasis"
+              >
+                <i class="bi bi-circle-fill me-1" style="font-size: 0.5em"></i>
+                {{ namespace.status }}
+              </span>
             </div>
-        </div>
-        {% endfor %}
-    </div>
+          </div>
 
-    <!-- Quick Stats -->
-    <div class="row mt-5">
-        <div class="col">
-            <h2 class="h4 mb-3">
-                <i class="bi bi-graph-up me-2"></i>
-                Quick Stats
-            </h2>
-        </div>
-    </div>
+          <p class="card-text text-muted flex-grow-1">
+            Kubernetes namespace for organizing resources {% if namespace.labels
+            %}
+            <br /><small
+              >Labels: {{ namespace.labels.keys()|list|join(', ') }}</small
+            >
+            {% endif %}
+          </p>
 
-    <div class="row g-4">
-        <div class="col-md-3">
-            <div class="card text-center bg-primary-subtle">
-                <div class="card-body">
-                    <i class="bi bi-servers display-6 text-primary"></i>
-                    <h3 class="mt-2">{{ services|length }}</h3>
-                    <p class="card-text text-muted">Active Services</p>
-                </div>
-            </div>
+          <div class="mt-auto">
+            <button
+              class="btn btn-outline-primary w-100"
+              onclick="filterNotebooksByNamespace('{{ namespace.name }}')"
+            >
+              <i class="bi bi-funnel me-1"></i>
+              View Notebooks
+            </button>
+            {% if namespace.creation_timestamp %}
+            <small class="text-muted d-block mt-2 text-center">
+              Created: {{ namespace.creation_timestamp[:10] }}
+            </small>
+            {% endif %}
+          </div>
         </div>
-        <div class="col-md-3">
-            <div class="card text-center bg-success-subtle">
-                <div class="card-body">
-                    <i class="bi bi-check-circle display-6 text-success"></i>
-                    <h3 class="mt-2">{{ services|selectattr('status', 'equalto', 'healthy')|list|length }}</h3>
-                    <p class="card-text text-muted">Healthy Services</p>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card text-center bg-info-subtle">
-                <div class="card-body">
-                    <i class="bi bi-shield-check display-6 text-info"></i>
-                    <h3 class="mt-2">
-                        <i class="bi bi-check-lg"></i>
-                    </h3>
-                    <p class="card-text text-muted">Auth Enabled</p>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card text-center bg-warning-subtle">
-                <div class="card-body">
-                    <i class="bi bi-clock display-6 text-warning"></i>
-                    <h3 class="mt-2 small">{{ current_time.split(' ')[1] if current_time else 'N/A' }}</h3>
-                    <p class="card-text text-muted">Current Time</p>
-                </div>
-            </div>
-        </div>
+      </div>
     </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="alert alert-info">
+    <i class="bi bi-info-circle me-2"></i>
+    No namespaces found or unable to access Kubernetes API.
+  </div>
+  {% endif %}
 
-    <!-- Instructions -->
-    <div class="row mt-5">
-        <div class="col">
-            <div class="card border-0 bg-light">
-                <div class="card-body">
-                    <h3 class="h5 mb-3">
-                        <i class="bi bi-lightbulb me-2"></i>
-                        Getting Started
-                    </h3>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <ul class="list-unstyled">
-                                <li class="mb-2">
-                                    <i class="bi bi-1-circle-fill text-primary me-2"></i>
-                                    Click on any service card above to launch it
-                                </li>
-                                <li class="mb-2">
-                                    <i class="bi bi-2-circle-fill text-primary me-2"></i>
-                                    All services use centralized authentication
-                                </li>
-                            </ul>
-                        </div>
-                        <div class="col-md-6">
-                            <ul class="list-unstyled">
-                                <li class="mb-2">
-                                    <i class="bi bi-3-circle-fill text-primary me-2"></i>
-                                    Services are automatically discovered by the gateway
-                                </li>
-                                <li class="mb-2">
-                                    <i class="bi bi-4-circle-fill text-primary me-2"></i>
-                                    Check the <a href="/about">About</a> page for more details
-                                </li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+  <!-- Notebooks Section -->
+  <div class="row mb-4">
+    <div class="col">
+      <h2 class="h4 mb-3">
+        <i class="bi bi-journal-code me-2"></i>
+        Jupyter Notebooks ({{ notebooks|length }})
+      </h2>
     </div>
+  </div>
+
+  {% if notebooks %}
+  <div class="row g-4" id="notebooks-container">
+    {% for notebook in notebooks %}
+    <div
+      class="col-md-6 col-lg-4 notebook-card"
+      data-namespace="{{ notebook.namespace }}"
+    >
+      <div class="card h-100 shadow-sm">
+        <div class="card-body d-flex flex-column">
+          <div class="d-flex align-items-center mb-3">
+            <span class="service-icon me-3">📓</span>
+            <div>
+              <h5 class="card-title mb-1">{{ notebook.name }}</h5>
+              <span
+                class="badge bg-{% if notebook.ready %}success{% elif notebook.status == 'Running' %}success{% elif notebook.status == 'Pending' %}warning{% else %}secondary{% endif %}-subtle text-{% if notebook.ready %}success{% elif notebook.status == 'Running' %}success{% elif notebook.status == 'Pending' %}warning{% else %}secondary{% endif %}-emphasis"
+              >
+                <i class="bi bi-circle-fill me-1" style="font-size: 0.5em"></i>
+                {{ notebook.status }}
+              </span>
+            </div>
+          </div>
+
+          <p class="card-text text-muted flex-grow-1">
+            Jupyter notebook server in namespace:
+            <strong>{{ notebook.namespace }}</strong>
+            {% if notebook.ready_replicas is defined %}
+            <br /><small
+              >Replicas: {{ notebook.ready_replicas }}/{{ notebook.replicas
+              }}</small
+            >
+            {% endif %}
+          </p>
+
+          <div class="mt-auto">
+            {% if notebook.ready %}
+            <a
+              href="/notebooks/{{ notebook.namespace }}/{{ notebook.name }}"
+              class="btn btn-success w-100"
+            >
+              <i class="bi bi-play-fill me-1"></i>
+              Open Notebook
+            </a>
+            {% else %}
+            <button class="btn btn-secondary w-100" disabled>
+              <i class="bi bi-hourglass-split me-1"></i>
+              Starting...
+            </button>
+            {% endif %} {% if notebook.creation_timestamp %}
+            <small class="text-muted d-block mt-2 text-center">
+              Created: {{ notebook.creation_timestamp[:10] }}
+            </small>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="alert alert-info">
+    <i class="bi bi-info-circle me-2"></i>
+    No Jupyter notebooks found. This could mean:
+    <ul class="mb-0 mt-2">
+      <li>No notebooks are currently running</li>
+      <li>Notebooks are in a different custom resource format</li>
+      <li>Insufficient permissions to view notebooks</li>
+    </ul>
+  </div>
+  {% endif %}
+
+  <!-- Quick Stats -->
+  <div class="row mt-5">
+    <div class="col">
+      <h2 class="h4 mb-3">
+        <i class="bi bi-graph-up me-2"></i>
+        Quick Stats
+      </h2>
+    </div>
+  </div>
+
+  <div class="row g-4">
+    <div class="col-md-3">
+      <div class="card text-center bg-primary-subtle">
+        <div class="card-body">
+          <i class="bi bi-collection display-6 text-primary"></i>
+          <h3 class="mt-2">{{ namespaces|length }}</h3>
+          <p class="card-text text-muted">Namespaces</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card text-center bg-success-subtle">
+        <div class="card-body">
+          <i class="bi bi-journal-code display-6 text-success"></i>
+          <h3 class="mt-2">{{ notebooks|length }}</h3>
+          <p class="card-text text-muted">Notebooks</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card text-center bg-info-subtle">
+        <div class="card-body">
+          <i class="bi bi-play-fill display-6 text-info"></i>
+          <h3 class="mt-2">
+            {{ notebooks|selectattr('ready', 'equalto', true)|list|length }}
+          </h3>
+          <p class="card-text text-muted">Ready Notebooks</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card text-center bg-warning-subtle">
+        <div class="card-body">
+          <i class="bi bi-clock display-6 text-warning"></i>
+          <h3 class="mt-2 small">
+            {{ current_time.split(' ')[1] if current_time else 'N/A' }}
+          </h3>
+          <p class="card-text text-muted">Current Time</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Instructions -->
+  <div class="row mt-5">
+    <div class="col">
+      <div class="card border-0 bg-light">
+        <div class="card-body">
+          <h3 class="h5 mb-3">
+            <i class="bi bi-lightbulb me-2"></i>
+            Getting Started
+          </h3>
+          <div class="row">
+            <div class="col-md-6">
+              <ul class="list-unstyled">
+                <li class="mb-2">
+                  <i class="bi bi-1-circle-fill text-primary me-2"></i>
+                  Browse available namespaces to organize your work
+                </li>
+                <li class="mb-2">
+                  <i class="bi bi-2-circle-fill text-primary me-2"></i>
+                  Launch Jupyter notebooks from the available list
+                </li>
+              </ul>
+            </div>
+            <div class="col-md-6">
+              <ul class="list-unstyled">
+                <li class="mb-2">
+                  <i class="bi bi-3-circle-fill text-primary me-2"></i>
+                  Data is retrieved live from the Kubernetes API
+                </li>
+                <li class="mb-2">
+                  <i class="bi bi-4-circle-fill text-primary me-2"></i>
+                  Check the <a href="/debug">Debug</a> page for authentication
+                  details
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
-{% endblock %}
-
-{% block scripts %}
+{% endblock %} {% block scripts %}
 <script>
-// Auto-refresh the page every 5 minutes to get updated service status
-setTimeout(function() {
+  // Auto-refresh the page every 5 minutes to get updated data
+  setTimeout(function () {
     location.reload();
-}, 300000);
+  }, 300000);
 
-// Add hover effects to service cards
-document.querySelectorAll('.service-card').forEach(card => {
-    card.addEventListener('mouseenter', function() {
-        this.style.transform = 'translateY(-2px)';
-        this.style.transition = 'transform 0.2s ease';
+  // Add hover effects to cards
+  document.querySelectorAll(".card").forEach((card) => {
+    card.addEventListener("mouseenter", function () {
+      this.style.transform = "translateY(-2px)";
+      this.style.transition = "transform 0.2s ease";
     });
-    
-    card.addEventListener('mouseleave', function() {
-        this.style.transform = 'translateY(0)';
+
+    card.addEventListener("mouseleave", function () {
+      this.style.transform = "translateY(0)";
     });
-});
+  });
+
+  // Function to filter notebooks by namespace
+  function filterNotebooksByNamespace(namespace) {
+    const notebookCards = document.querySelectorAll(".notebook-card");
+    const notebooksContainer = document.getElementById("notebooks-container");
+
+    // Show all cards first
+    notebookCards.forEach((card) => {
+      card.style.display = "block";
+    });
+
+    // Filter by namespace
+    notebookCards.forEach((card) => {
+      if (card.dataset.namespace !== namespace) {
+        card.style.display = "none";
+      }
+    });
+
+    // Scroll to notebooks section
+    notebooksContainer.scrollIntoView({ behavior: "smooth" });
+
+    // Add a temporary highlight to the section
+    notebooksContainer.style.backgroundColor = "#fff3cd";
+    setTimeout(() => {
+      notebooksContainer.style.backgroundColor = "";
+    }, 2000);
+  }
+
+  // Function to show all notebooks
+  function showAllNotebooks() {
+    const notebookCards = document.querySelectorAll(".notebook-card");
+    notebookCards.forEach((card) => {
+      card.style.display = "block";
+    });
+  }
+
+  // Add a "Show All" button
+  document.addEventListener("DOMContentLoaded", function () {
+    const notebooksSection = document.querySelector("h2:has(.bi-journal-code)");
+    if (notebooksSection) {
+      const showAllBtn = document.createElement("button");
+      showAllBtn.className = "btn btn-outline-secondary btn-sm ms-2";
+      showAllBtn.innerHTML =
+        '<i class="bi bi-arrow-clockwise me-1"></i>Show All';
+      showAllBtn.onclick = showAllNotebooks;
+      notebooksSection.appendChild(showAllBtn);
+    }
+  });
 </script>
-{% endblock %} 
+{% endblock %}

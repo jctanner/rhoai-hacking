@@ -6,6 +6,9 @@ import jwt
 import json
 from flask import Flask, render_template, request, jsonify
 from datetime import datetime
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
+import base64
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -16,6 +19,203 @@ app = Flask(__name__)
 # Configuration
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-prod')
 app.config['DEBUG'] = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+
+'''
+def get_k8s_client_from_jwt(jwt_token):
+    """Create a Kubernetes client using the JWT token for authentication"""
+    try:
+        # Create a fresh configuration without loading incluster config
+        configuration = client.Configuration()
+        
+        if os.path.exists("/var/run/secrets/kubernetes.io/serviceaccount"):
+            # We're running in-cluster, manually set up the configuration
+            k8s_host = os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')
+            k8s_port = os.environ.get('KUBERNETES_SERVICE_PORT', '443')
+            configuration.host = f"https://{k8s_host}:{k8s_port}"
+            
+            # Use cluster CA certificate
+            ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+            if os.path.exists(ca_cert_path):
+                configuration.ssl_ca_cert = ca_cert_path
+                configuration.verify_ssl = True
+            else:
+                configuration.verify_ssl = False
+        else:
+            # We're running outside cluster (development)  
+            k8s_host = os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')
+            k8s_port = os.environ.get('KUBERNETES_SERVICE_PORT', '443')
+            configuration.host = f"https://{k8s_host}:{k8s_port}"
+            configuration.verify_ssl = False
+            
+        # Set the user's JWT token for authentication
+        configuration.api_key = {"authorization": f"Bearer {jwt_token}"}
+        configuration.api_key_prefix = {"authorization": ""}
+        
+        logger.info(f"Kubernetes client configured with host: {configuration.host}")
+        logger.info(f"SSL verification: {configuration.verify_ssl}")
+        
+        return client.ApiClient(configuration)
+    except Exception as e:
+        logger.error(f"Failed to create Kubernetes client: {e}")
+        return None
+'''
+
+def get_k8s_client_from_jwt(jwt_token):
+    """Create a Kubernetes client using only the provided JWT token"""
+    try:
+        configuration = client.Configuration()
+
+        # Always use host from env (fallback to default service name)
+        k8s_host = os.environ.get('KUBERNETES_SERVICE_HOST', 'kubernetes.default.svc')
+        k8s_port = os.environ.get('KUBERNETES_SERVICE_PORT', '443')
+        configuration.host = f"https://{k8s_host}:{k8s_port}"
+
+        # Try to use cluster CA, but never use service account token
+        ca_cert_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+        if os.path.exists(ca_cert_path):
+            configuration.ssl_ca_cert = ca_cert_path
+            configuration.verify_ssl = True
+        else:
+            configuration.verify_ssl = False
+
+        # Only use the provided JWT for auth
+        configuration.api_key = {"authorization": f"Bearer {jwt_token}"}
+        configuration.api_key_prefix = {"authorization": ""}
+
+        logger.info(f"Kubernetes client configured with host: {configuration.host}")
+        logger.info(f"SSL verification: {configuration.verify_ssl}")
+        
+        return client.ApiClient(configuration)
+    except Exception as e:
+        logger.error(f"Failed to create Kubernetes client: {e}")
+        return None
+
+
+def get_jwt_token_from_request():
+    """Extract JWT token from request headers or cookies"""
+    # Try Authorization header first
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
+        return auth_header[7:]  # Remove 'Bearer ' prefix
+    
+    # Try cookie
+    auth_cookie = request.cookies.get('auth_token')
+    if auth_cookie:
+        return auth_cookie
+        
+    # Try other common headers
+    jwt_header = request.headers.get('X-Forwarded-Access-Token')
+    if jwt_header:
+        return jwt_header
+        
+    return None
+
+def get_namespaces(k8s_client):
+    """Get list of namespaces from Kubernetes API"""
+    try:
+        v1 = client.CoreV1Api(k8s_client)
+        namespaces = v1.list_namespace()
+        
+        namespace_list = []
+        for ns in namespaces.items:
+            namespace_info = {
+                'name': ns.metadata.name,
+                'status': ns.status.phase,
+                'creation_timestamp': ns.metadata.creation_timestamp.isoformat() if ns.metadata.creation_timestamp else None,
+                'labels': ns.metadata.labels or {}
+            }
+            namespace_list.append(namespace_info)
+            
+        return namespace_list
+    except ApiException as e:
+        logger.error(f"Failed to get namespaces: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Unexpected error getting namespaces: {e}")
+        return []
+
+def get_notebooks(k8s_client, namespace=None):
+    """Get list of Jupyter notebooks from Kubernetes API"""
+    try:
+        # Use CustomObjectsApi to get notebooks (assuming they're custom resources)
+        custom_api = client.CustomObjectsApi(k8s_client)
+        
+        notebooks = []
+        
+        # Try to get notebooks from the kubeflow notebooks CRD
+        try:
+            if namespace:
+                notebook_list = custom_api.list_namespaced_custom_object(
+                    group="kubeflow.org",
+                    version="v1",
+                    namespace=namespace,
+                    plural="notebooks"
+                )
+            else:
+                notebook_list = custom_api.list_cluster_custom_object(
+                    group="kubeflow.org",
+                    version="v1",
+                    plural="notebooks"
+                )
+                
+            for notebook in notebook_list.get('items', []):
+                notebook_info = {
+                    'name': notebook['metadata']['name'],
+                    'namespace': notebook['metadata']['namespace'],
+                    'status': notebook.get('status', {}).get('containerState', {}).get('state', 'Unknown'),
+                    'creation_timestamp': notebook['metadata'].get('creationTimestamp'),
+                    'spec': notebook.get('spec', {}),
+                    'ready': notebook.get('status', {}).get('readyReplicas', 0) > 0
+                }
+                notebooks.append(notebook_info)
+                
+        except ApiException as e:
+            if e.status == 404:
+                logger.info("Kubeflow notebooks CRD not found, trying alternative approaches")
+                # Try to get StatefulSets that might be notebooks
+                notebooks = get_notebook_statefulsets(k8s_client, namespace)
+            else:
+                logger.error(f"Failed to get notebooks: {e}")
+                
+        return notebooks
+    except Exception as e:
+        logger.error(f"Unexpected error getting notebooks: {e}")
+        return []
+
+def get_notebook_statefulsets(k8s_client, namespace=None):
+    """Get notebook-like StatefulSets as fallback"""
+    try:
+        apps_v1 = client.AppsV1Api(k8s_client)
+        notebooks = []
+        
+        if namespace:
+            statefulsets = apps_v1.list_namespaced_stateful_set(namespace=namespace)
+        else:
+            statefulsets = apps_v1.list_stateful_set_for_all_namespaces()
+            
+        for sts in statefulsets.items:
+            # Check if this looks like a notebook (has jupyter in name or labels)
+            name = sts.metadata.name.lower()
+            labels = sts.metadata.labels or {}
+            
+            if ('jupyter' in name or 'notebook' in name or 
+                'jupyter' in str(labels).lower() or 'notebook' in str(labels).lower()):
+                
+                notebook_info = {
+                    'name': sts.metadata.name,
+                    'namespace': sts.metadata.namespace,
+                    'status': 'Running' if sts.status.ready_replicas and sts.status.ready_replicas > 0 else 'Pending',
+                    'creation_timestamp': sts.metadata.creation_timestamp.isoformat() if sts.metadata.creation_timestamp else None,
+                    'ready': sts.status.ready_replicas and sts.status.ready_replicas > 0,
+                    'replicas': sts.status.replicas or 0,
+                    'ready_replicas': sts.status.ready_replicas or 0
+                }
+                notebooks.append(notebook_info)
+                
+        return notebooks
+    except Exception as e:
+        logger.error(f"Failed to get notebook StatefulSets: {e}")
+        return []
 
 def extract_user_info():
     """Extract user information from headers and JWT tokens"""
@@ -95,39 +295,88 @@ def extract_user_info():
     
     return user_info
 
-# Sample data - in a real implementation, this could come from the gateway config or K8s API
-SAMPLE_SERVICES = [
-    {
-        'name': 'Jupyter Notebooks',
-        'description': 'Interactive notebook environment for data science',
-        'path': '/notebooks',
-        'icon': '📓',
-        'status': 'healthy'
-    },
-    {
-        'name': 'MLflow',
-        'description': 'Machine learning lifecycle management',
-        'path': '/mlflow',
-        'icon': '🔬',
-        'status': 'healthy'
-    },
-    {
-        'name': 'TensorBoard',
-        'description': 'Visualization toolkit for machine learning',
-        'path': '/tensorboard',
-        'icon': '📊',
-        'status': 'healthy'
-    }
-]
-
 @app.route('/')
 def dashboard():
-    """Main dashboard page showing available services"""
+    """Main dashboard page showing namespaces and notebooks"""
     user_info = extract_user_info()
+    
+    # Get JWT token for K8s API calls
+    jwt_token = get_jwt_token_from_request()
+    
+    # Debug logging
+    logger.info(f"JWT token found: {'Yes' if jwt_token else 'No'}")
+    if jwt_token:
+        logger.info(f"JWT token length: {len(jwt_token)}")
+        logger.info(f"JWT token starts with: {jwt_token[:20]}...")
+    
+    # Log all headers for debugging
+    logger.info(f"Request headers: {dict(request.headers)}")
+    
+    namespaces = []
+    notebooks = []
+    k8s_error = None
+    
+    if jwt_token:
+        k8s_client = get_k8s_client_from_jwt(jwt_token)
+        if k8s_client:
+            try:
+                namespaces = get_namespaces(k8s_client)
+                notebooks = get_notebooks(k8s_client)
+                logger.info(f"Retrieved {len(namespaces)} namespaces and {len(notebooks)} notebooks")
+            except Exception as e:
+                k8s_error = f"Failed to query Kubernetes API: {str(e)}"
+                logger.error(k8s_error)
+        else:
+            k8s_error = "Failed to create Kubernetes client"
+    else:
+        k8s_error = "No JWT token found in request"
+    
     return render_template('dashboard.html', 
-                         services=SAMPLE_SERVICES,
+                         namespaces=namespaces,
+                         notebooks=notebooks,
                          current_time=datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                         user_info=user_info)
+                         user_info=user_info,
+                         k8s_error=k8s_error)
+
+@app.route('/api/namespaces')
+def api_namespaces():
+    """API endpoint to get namespaces"""
+    jwt_token = get_jwt_token_from_request()
+    
+    if not jwt_token:
+        return jsonify({'error': 'No JWT token found'}), 401
+    
+    k8s_client = get_k8s_client_from_jwt(jwt_token)
+    if not k8s_client:
+        return jsonify({'error': 'Failed to create Kubernetes client'}), 500
+    
+    namespaces = get_namespaces(k8s_client)
+    return jsonify({
+        'namespaces': namespaces,
+        'count': len(namespaces),
+        'timestamp': datetime.now().isoformat()
+    })
+
+@app.route('/api/notebooks')
+@app.route('/api/notebooks/<namespace>')
+def api_notebooks(namespace=None):
+    """API endpoint to get notebooks"""
+    jwt_token = get_jwt_token_from_request()
+    
+    if not jwt_token:
+        return jsonify({'error': 'No JWT token found'}), 401
+    
+    k8s_client = get_k8s_client_from_jwt(jwt_token)
+    if not k8s_client:
+        return jsonify({'error': 'Failed to create Kubernetes client'}), 500
+    
+    notebooks = get_notebooks(k8s_client, namespace)
+    return jsonify({
+        'notebooks': notebooks,
+        'namespace': namespace,
+        'count': len(notebooks),
+        'timestamp': datetime.now().isoformat()
+    })
 
 @app.route('/health')
 def health_check():
@@ -136,14 +385,6 @@ def health_check():
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
         'service': 'odh-dashboard'
-    })
-
-@app.route('/api/services')
-def api_services():
-    """API endpoint to get available services (for future AJAX updates)"""
-    return jsonify({
-        'services': SAMPLE_SERVICES,
-        'timestamp': datetime.now().isoformat()
     })
 
 @app.route('/about')
