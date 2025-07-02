@@ -12,6 +12,7 @@ metadata:
     odhgateway.opendatahub.io/route-path: "/"
     # Optional: authentication settings (inherits from gateway default if not specified)
     # odhgateway.opendatahub.io/auth-required: "false"  # Could disable auth for dashboard if needed
+    odhgateway.opendatahub.io/auth-required: "true"
 spec:
   type: ClusterIP
   ports:

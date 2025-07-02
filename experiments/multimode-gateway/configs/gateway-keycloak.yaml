@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oidc-client-secret
+  namespace: default
+type: Opaque
+stringData:
+  client-secret: "jcJLIVNBax39TmtC3tNVpOoVKHdv3fE4"
+---
+apiVersion: gateway.opendatahub.io/v1alpha1
+kind: ODHGateway
+metadata:
+  labels:
+    app.kubernetes.io/name: odh-gateway-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: odhgateway-keycloak
+  namespace: default
+spec:
+  mode: "oidc" # Authentication mode: "oidc" or "openshift"
+  hostname: "gateway.example.com" # External hostname for the gateway
+  configMapName: "odh-proxy-config" # Name of the main proxy ConfigMap
+  image: "registry.tannerjc.net/odh-proxy:latest" # Proxy container image
+
+  # OIDC Authentication Configuration (example - not functional without real OIDC)
+  oidc:
+    issuerURL: "https://keycloak.tannerjc.net/realms/sno419"
+    clientID: "console-test"
+    clientSecretRef:
+      name: "oidc-client-secret"
+      key: "client-secret"
+
+  # Route ConfigMap Configuration (optional - auto-generated if not specified)
+  routeConfigMap:
+    name: "odh-routes"
+    managed: true
+    key: "config.yaml"
+
+  # Namespace selector to limit service discovery (optional)
+  namespaceSelector:
+    include:
+      - "default"

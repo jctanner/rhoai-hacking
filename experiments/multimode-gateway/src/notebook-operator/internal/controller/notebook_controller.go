@@ -50,6 +50,8 @@ type NotebookReconciler struct {
 // +kubebuilder:rbac:groups=ds.example.com,resources=notebooks,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=ds.example.com,resources=notebooks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=ds.example.com,resources=notebooks/finalizers,verbs=update
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -143,8 +145,9 @@ func (r *NotebookReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 				Name:      svcName,
 				Namespace: notebook.Namespace,
 				Annotations: map[string]string{
-					"odhgateway.opendatahub.io/enabled":    "true",
-					"odhgateway.opendatahub.io/route-path": path,
+					"odhgateway.opendatahub.io/enabled":      "true",
+					"odhgateway.opendatahub.io/route-path":   path,
+					"odhgateway.opendatahub.io/auth-required": "true",
 				},
 			},
 			Spec: corev1.ServiceSpec{

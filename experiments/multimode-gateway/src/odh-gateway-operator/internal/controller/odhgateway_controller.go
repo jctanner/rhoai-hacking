@@ -54,8 +54,9 @@ type ODHGatewayReconciler struct {
 }
 
 type RouteEntry struct {
-	Path     string
-	Upstream string
+	Path         string
+	Upstream     string
+	AuthRequired *bool
 }
 
 // sortRoutes sorts routes by specificity (longest path first) then alphabetically
@@ -136,10 +137,21 @@ func (r *ODHGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 				}
 			}
 
-			path := svc.Annotations["odhgateway.opendatahub.io/route-path"]
-			//upstream := fmt.Sprintf("%s.%s.svc.cluster.local", svc.Name, svc.Namespace)
-			upstream := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, port)
-			routes = append(routes, RouteEntry{Path: path, Upstream: upstream})
+					path := svc.Annotations["odhgateway.opendatahub.io/route-path"]
+		//upstream := fmt.Sprintf("%s.%s.svc.cluster.local", svc.Name, svc.Namespace)
+		upstream := fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", svc.Name, svc.Namespace, port)
+		
+		// Check for auth-required annotation
+		var authRequired *bool
+		if authVal, ok := svc.Annotations["odhgateway.opendatahub.io/auth-required"]; ok {
+			if authVal == "true" {
+				authRequired = ptr.To(true)
+			} else if authVal == "false" {
+				authRequired = ptr.To(false)
+			}
+		}
+		
+		routes = append(routes, RouteEntry{Path: path, Upstream: upstream, AuthRequired: authRequired})
 		}
 	}
 
@@ -282,6 +294,7 @@ func generateDeployment(cr *gatewayv1alpha1.ODHGateway) *appsv1.Deployment {
 								},
 							},
 							VolumeMounts: volumeMounts,
+							Env:          generateEnvironmentVariables(cr),
 						},
 					},
 				},
@@ -316,6 +329,42 @@ func generateService(cr *gatewayv1alpha1.ODHGateway) *corev1.Service {
 	}
 }
 
+func generateEnvironmentVariables(cr *gatewayv1alpha1.ODHGateway) []corev1.EnvVar {
+	var envVars []corev1.EnvVar
+
+	// Add OIDC environment variables if OIDC is configured
+	if cr.Spec.Mode == "oidc" && cr.Spec.OIDC != nil {
+		// OIDC Issuer URL
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "OIDC_ISSUER_URL",
+			Value: cr.Spec.OIDC.IssuerURL,
+		})
+
+		// OIDC Client ID
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "OIDC_CLIENT_ID",
+			Value: cr.Spec.OIDC.ClientID,
+		})
+
+		// OIDC Client Secret from secret reference
+		if cr.Spec.OIDC.ClientSecretRef.Name != "" {
+			envVars = append(envVars, corev1.EnvVar{
+				Name: "OIDC_CLIENT_SECRET",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: cr.Spec.OIDC.ClientSecretRef.Name,
+						},
+						Key: cr.Spec.OIDC.ClientSecretRef.Key,
+					},
+				},
+			})
+		}
+	}
+
+	return envVars
+}
+
 func generateRouteConfigMap(cr *gatewayv1alpha1.ODHGateway, routes []RouteEntry) *corev1.ConfigMap {
 	cfg := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -336,6 +385,9 @@ func generateRouteConfigMap(cr *gatewayv1alpha1.ODHGateway, routes []RouteEntry)
 	yamlContent := "routes:\n"
 	for _, r := range routes {
 		yamlContent += fmt.Sprintf("  - path: %s\n    upstream: %s\n", r.Path, r.Upstream)
+		if r.AuthRequired != nil {
+			yamlContent += fmt.Sprintf("    authRequired: %v\n", *r.AuthRequired)
+		}
 	}
 
 	cfg.Data[key] = yamlContent
