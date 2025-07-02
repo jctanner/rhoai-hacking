@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -108,8 +109,13 @@ func (o *OIDCMiddleware) Middleware(authRequired *bool) func(http.Handler) http.
 				return
 			}
 
-			// Check for existing valid session
-			if o.isAuthenticated(r) {
+			// Check for existing valid session and inject user headers
+			if authenticated, username, groups := o.checkAuthAndExtractClaims(r); authenticated {
+				// Inject user context headers for downstream services
+				r.Header.Set("X-Forwarded-User", username)
+				if len(groups) > 0 {
+					r.Header.Set("X-Forwarded-Groups", strings.Join(groups, ","))
+				}
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -120,21 +126,79 @@ func (o *OIDCMiddleware) Middleware(authRequired *bool) func(http.Handler) http.
 	}
 }
 
-// isAuthenticated checks if the request has a valid authentication token
-func (o *OIDCMiddleware) isAuthenticated(r *http.Request) bool {
+// checkAuthAndExtractClaims checks authentication and extracts user claims
+func (o *OIDCMiddleware) checkAuthAndExtractClaims(r *http.Request) (bool, string, []string) {
 	if !o.initialized {
-		return false
+		return false, "", nil
 	}
 
-	cookie, err := r.Cookie("oidc_token")
-	if err != nil {
-		return false
+	// Try to get JWT token from cookie first, then Authorization header
+	var tokenString string
+
+	// Check OIDC cookie
+	if cookie, err := r.Cookie("oidc_token"); err == nil {
+		tokenString = cookie.Value
+	} else {
+		// Check Authorization header
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			tokenString = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if tokenString == "" {
+		return false, "", nil
 	}
 
 	// Verify the ID token
 	ctx := context.Background()
-	_, err = o.verifier.Verify(ctx, cookie.Value)
-	return err == nil
+	idToken, err := o.verifier.Verify(ctx, tokenString)
+	if err != nil {
+		log.Printf("Token verification failed: %v", err)
+		return false, "", nil
+	}
+
+	// Extract claims
+	var claims map[string]interface{}
+	if err := idToken.Claims(&claims); err != nil {
+		log.Printf("Failed to extract claims: %v", err)
+		return true, "", nil // Token is valid but claims extraction failed
+	}
+
+	// Extract username (try preferred_username first, then sub)
+	username := ""
+	if preferred, ok := claims["preferred_username"].(string); ok {
+		username = preferred
+	} else if sub, ok := claims["sub"].(string); ok {
+		username = sub
+	}
+
+	// Extract groups
+	var groups []string
+	if groupsClaim, ok := claims["groups"]; ok {
+		switch v := groupsClaim.(type) {
+		case []interface{}:
+			for _, group := range v {
+				if groupStr, ok := group.(string); ok {
+					groups = append(groups, groupStr)
+				}
+			}
+		case []string:
+			groups = v
+		case string:
+			// Single group as string
+			groups = []string{v}
+		}
+	}
+
+	log.Printf("Authenticated user: %s, groups: %v", username, groups)
+	return true, username, groups
+}
+
+// isAuthenticated checks if the request has a valid authentication token (legacy method)
+func (o *OIDCMiddleware) isAuthenticated(r *http.Request) bool {
+	authenticated, _, _ := o.checkAuthAndExtractClaims(r)
+	return authenticated
 }
 
 // redirectToAuth redirects the user to the OIDC provider for authentication
