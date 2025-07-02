@@ -142,19 +142,19 @@ def get_notebooks(k8s_client, namespace=None):
         
         notebooks = []
         
-        # Try to get notebooks from the kubeflow notebooks CRD
+        # Try to get notebooks from the ds.example.com notebooks CRD
         try:
             if namespace:
                 notebook_list = custom_api.list_namespaced_custom_object(
-                    group="kubeflow.org",
-                    version="v1",
+                    group="ds.example.com",
+                    version="v1alpha1",
                     namespace=namespace,
                     plural="notebooks"
                 )
             else:
                 notebook_list = custom_api.list_cluster_custom_object(
-                    group="kubeflow.org",
-                    version="v1",
+                    group="ds.example.com",
+                    version="v1alpha1",
                     plural="notebooks"
                 )
                 
@@ -171,7 +171,7 @@ def get_notebooks(k8s_client, namespace=None):
                 
         except ApiException as e:
             if e.status == 404:
-                logger.info("Kubeflow notebooks CRD not found, trying alternative approaches")
+                logger.info("ds.example.com notebooks CRD not found, trying alternative approaches")
                 # Try to get StatefulSets that might be notebooks
                 notebooks = get_notebook_statefulsets(k8s_client, namespace)
             else:
