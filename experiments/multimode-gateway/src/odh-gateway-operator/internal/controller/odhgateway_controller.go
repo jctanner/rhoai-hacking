@@ -399,6 +399,14 @@ func generateEnvironmentVariables(cr *gatewayv1alpha1.ODHGateway) []corev1.EnvVa
 			Name:  "OPENSHIFT_SERVICE_ACCOUNT",
 			Value: cr.Name + "-sa",
 		})
+		
+		// For CRC and development environments, skip TLS verification
+		if cr.Spec.Hostname != "" && strings.Contains(cr.Spec.Hostname, "apps-crc.testing") {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "OPENSHIFT_SKIP_TLS_VERIFY",
+				Value: "true",
+			})
+		}
 	}
 
 	// Add OIDC environment variables if OIDC is configured

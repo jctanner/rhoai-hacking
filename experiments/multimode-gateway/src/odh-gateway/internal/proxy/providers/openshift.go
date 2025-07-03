@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -19,10 +20,11 @@ import (
 
 // OpenShiftProvider implements the AuthProvider interface for OpenShift OAuth
 type OpenShiftProvider struct {
-	config       config.OpenShiftProviderConfig
-	oauth2Config oauth2.Config
-	httpClient   *http.Client
-	baseURL      string
+	config          config.OpenShiftProviderConfig
+	oauth2Config    oauth2.Config
+	httpClient      *http.Client
+	baseURL         string
+	groupsPermLoggedOnce bool
 }
 
 // OpenShiftUserInfo represents user information from OpenShift API
@@ -55,7 +57,14 @@ func NewOpenShiftProvider(config config.OpenShiftProviderConfig, baseURL string)
 	if err != nil {
 		log.Printf("Warning: failed to discover OAuth endpoints, using defaults: %v", err)
 		authURL = strings.TrimSuffix(config.ClusterURL, "/") + "/oauth/authorize"
-		tokenURL = strings.TrimSuffix(config.ClusterURL, "/") + "/oauth/token"
+		
+		// For token endpoint, use internal service address if we're running inside the cluster
+		if isRunningInCluster() {
+			tokenURL = "https://oauth-openshift.openshift-authentication.svc.cluster.local/oauth/token"
+			log.Printf("Using internal OAuth token endpoint (fallback): %s", tokenURL)
+		} else {
+			tokenURL = strings.TrimSuffix(config.ClusterURL, "/") + "/oauth/token"
+		}
 	}
 
 	// Configure OAuth2
@@ -115,7 +124,10 @@ func (p *OpenShiftProvider) GetLoginURL(state, redirectURL string) string {
 func (p *OpenShiftProvider) HandleCallback(w http.ResponseWriter, r *http.Request) (*UserInfo, error) {
 	// Exchange authorization code for tokens
 	code := r.URL.Query().Get("code")
-	token, err := p.oauth2Config.Exchange(r.Context(), code)
+	
+	// Create a context with the custom HTTP client to ensure TLS configuration is used
+	ctx := context.WithValue(r.Context(), oauth2.HTTPClient, p.httpClient)
+	token, err := p.oauth2Config.Exchange(ctx, code)
 	if err != nil {
 		return nil, fmt.Errorf("failed to exchange code: %w", err)
 	}
@@ -235,6 +247,18 @@ func (p *OpenShiftProvider) getUserGroups(accessToken, username string) ([]strin
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		
+		// Handle permission errors more gracefully
+		if resp.StatusCode == http.StatusForbidden {
+			// This is expected when OAuth scope doesn't include group permissions
+			// Log this once to inform the user, then return empty groups silently
+			if !p.groupsPermLoggedOnce {
+				log.Printf("Info: User groups unavailable - OAuth scope 'user:info' does not include group permissions. Users will have no groups assigned.")
+				p.groupsPermLoggedOnce = true
+			}
+			return []string{}, nil
+		}
+		
 		return nil, fmt.Errorf("groups API request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -311,7 +335,9 @@ func autoConfigureServiceAccount(config *config.OpenShiftProviderConfig) error {
 	}
 
 	// Auto-configure CA bundle if not provided
-	if config.CABundle == "" {
+	// For development environments (like CRC), skip CA bundle to use InsecureSkipVerify
+	skipTLSVerify := os.Getenv("OPENSHIFT_SKIP_TLS_VERIFY")
+	if config.CABundle == "" && skipTLSVerify != "true" {
 		if caBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"); err == nil {
 			config.CABundle = string(caBytes)
 		}
@@ -359,5 +385,19 @@ func discoverOAuthEndpoints(clusterURL string) (string, string, error) {
 		return "", "", fmt.Errorf("OAuth endpoints not found in discovery response")
 	}
 
-	return discovery.AuthorizationEndpoint, discovery.TokenEndpoint, nil
+	// For token endpoint, use internal service address if we're running inside the cluster
+	// This avoids going out of cluster and back in through external ingress
+	tokenEndpoint := discovery.TokenEndpoint
+	if isRunningInCluster() {
+		tokenEndpoint = "https://oauth-openshift.openshift-authentication.svc.cluster.local/oauth/token"
+		log.Printf("Using internal OAuth token endpoint: %s", tokenEndpoint)
+	}
+
+	return discovery.AuthorizationEndpoint, tokenEndpoint, nil
+}
+
+// isRunningInCluster checks if we're running inside a Kubernetes cluster
+func isRunningInCluster() bool {
+	_, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	return err == nil
 }
