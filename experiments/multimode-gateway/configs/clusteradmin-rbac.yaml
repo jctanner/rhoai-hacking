@@ -21,3 +21,32 @@ subjects:
     name: "oidc:clusteradmin"
     apiGroup: rbac.authorization.k8s.io
 
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: notebook-reader
+rules:
+- apiGroups: [""]
+  resources: ["namespaces", "services"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["ds.example.com"]
+  resources: ["notebooks"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["statefulsets"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: clusteradmin-notebook-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: notebook-reader
+subjects:
+- kind: User
+  name: oidc:clusteradmin
+  apiGroup: rbac.authorization.k8s.io

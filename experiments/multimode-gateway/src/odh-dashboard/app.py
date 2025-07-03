@@ -134,6 +134,102 @@ def get_namespaces(k8s_client):
         logger.error(f"Unexpected error getting namespaces: {e}")
         return []
 
+def get_notebook_service_url(k8s_client, notebook_name, notebook_namespace):
+    """Get the service URL for a notebook from service annotations"""
+    try:
+        v1 = client.CoreV1Api(k8s_client)
+        services = v1.list_namespaced_service(namespace=notebook_namespace)
+        
+        logger.debug(f"Looking for service URL for notebook {notebook_name} in namespace {notebook_namespace}")
+        
+        for service in services.items:
+            service_name = service.metadata.name
+            
+            # Method 1: Check if this service is owned by the notebook
+            if service.metadata.owner_references:
+                for owner_ref in service.metadata.owner_references:
+                    if (owner_ref.kind == 'Notebook' and 
+                        owner_ref.name == notebook_name and
+                        owner_ref.api_version == 'ds.example.com/v1alpha1'):
+                        
+                        logger.debug(f"Found service {service_name} owned by notebook {notebook_name}")
+                        
+                        # Extract URL from annotations
+                        annotations = service.metadata.annotations or {}
+                        route_path = annotations.get('odhgateway.opendatahub.io/route-path')
+                        enabled = annotations.get('odhgateway.opendatahub.io/enabled', 'false').lower() == 'true'
+                        
+                        logger.debug(f"Service {service_name} - route_path: {route_path}, enabled: {enabled}")
+                        
+                        if route_path and enabled:
+                            return route_path
+            
+            # Method 2: Check if service name matches notebook name pattern (fallback)
+            if (notebook_name.lower() in service_name.lower() or 
+                service_name.lower().endswith('-svc') and 
+                service_name.lower().replace('-svc', '') == notebook_name.lower()):
+                
+                logger.debug(f"Found service {service_name} matching notebook name pattern")
+                
+                annotations = service.metadata.annotations or {}
+                route_path = annotations.get('odhgateway.opendatahub.io/route-path')
+                enabled = annotations.get('odhgateway.opendatahub.io/enabled', 'false').lower() == 'true'
+                
+                logger.debug(f"Service {service_name} - route_path: {route_path}, enabled: {enabled}")
+                
+                if route_path and enabled:
+                    return route_path
+                            
+        logger.debug(f"No service URL found for notebook {notebook_name}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get service URL for notebook {notebook_name}: {e}")
+        return None
+
+def get_notebook_pod_status(k8s_client, notebook_name, notebook_namespace):
+    """Get the actual pod status for a notebook"""
+    try:
+        v1 = client.CoreV1Api(k8s_client)
+        
+        # Try to find pod by notebook name (exact match first)
+        try:
+            pod = v1.read_namespaced_pod(name=notebook_name, namespace=notebook_namespace)
+            pod_status = pod.status.phase
+            ready = False
+            if pod.status.conditions:
+                for condition in pod.status.conditions:
+                    if condition.type == 'Ready' and condition.status == 'True':
+                        ready = True
+                        break
+            return pod_status, ready
+        except ApiException as e:
+            if e.status != 404:
+                logger.error(f"Error reading pod {notebook_name}: {e}")
+        
+        # Fallback: try to find pod by label selector
+        try:
+            pods = v1.list_namespaced_pod(
+                namespace=notebook_namespace,
+                label_selector=f"notebook={notebook_name}"
+            )
+            if pods.items:
+                pod = pods.items[0]  # Take the first matching pod
+                pod_status = pod.status.phase
+                ready = False
+                if pod.status.conditions:
+                    for condition in pod.status.conditions:
+                        if condition.type == 'Ready' and condition.status == 'True':
+                            ready = True
+                            break
+                return pod_status, ready
+        except ApiException as e:
+            logger.error(f"Error listing pods for notebook {notebook_name}: {e}")
+        
+        return 'Unknown', False
+    except Exception as e:
+        logger.error(f"Failed to get pod status for notebook {notebook_name}: {e}")
+        return 'Unknown', False
+
 def get_notebooks(k8s_client, namespace=None):
     """Get list of Jupyter notebooks from Kubernetes API"""
     try:
@@ -159,14 +255,25 @@ def get_notebooks(k8s_client, namespace=None):
                 )
                 
             for notebook in notebook_list.get('items', []):
+                notebook_name = notebook['metadata']['name']
+                notebook_namespace = notebook['metadata']['namespace']
+                
+                # Get the service URL for this notebook
+                service_url = get_notebook_service_url(k8s_client, notebook_name, notebook_namespace)
+                
+                # Get the actual pod status instead of relying on notebook CR status
+                pod_status, pod_ready = get_notebook_pod_status(k8s_client, notebook_name, notebook_namespace)
+                
                 notebook_info = {
-                    'name': notebook['metadata']['name'],
-                    'namespace': notebook['metadata']['namespace'],
-                    'status': notebook.get('status', {}).get('containerState', {}).get('state', 'Unknown'),
+                    'name': notebook_name,
+                    'namespace': notebook_namespace,
+                    'status': pod_status,  # Use actual pod status
                     'creation_timestamp': notebook['metadata'].get('creationTimestamp'),
                     'spec': notebook.get('spec', {}),
-                    'ready': notebook.get('status', {}).get('readyReplicas', 0) > 0
+                    'ready': pod_ready,  # Use actual pod ready status
+                    'url': service_url  # Add the service URL
                 }
+                logger.info(f"Notebook info: {notebook_info}")
                 notebooks.append(notebook_info)
                 
         except ApiException as e:
@@ -201,6 +308,9 @@ def get_notebook_statefulsets(k8s_client, namespace=None):
             if ('jupyter' in name or 'notebook' in name or 
                 'jupyter' in str(labels).lower() or 'notebook' in str(labels).lower()):
                 
+                # Try to find a service URL (but this is less reliable for StatefulSets)
+                service_url = get_notebook_service_url(k8s_client, sts.metadata.name, sts.metadata.namespace)
+                
                 notebook_info = {
                     'name': sts.metadata.name,
                     'namespace': sts.metadata.namespace,
@@ -208,7 +318,8 @@ def get_notebook_statefulsets(k8s_client, namespace=None):
                     'creation_timestamp': sts.metadata.creation_timestamp.isoformat() if sts.metadata.creation_timestamp else None,
                     'ready': sts.status.ready_replicas and sts.status.ready_replicas > 0,
                     'replicas': sts.status.replicas or 0,
-                    'ready_replicas': sts.status.ready_replicas or 0
+                    'ready_replicas': sts.status.ready_replicas or 0,
+                    'url': service_url  # Add the service URL (may be None)
                 }
                 notebooks.append(notebook_info)
                 
