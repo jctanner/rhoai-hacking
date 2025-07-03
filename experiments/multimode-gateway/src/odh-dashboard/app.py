@@ -489,6 +489,129 @@ def api_notebooks(namespace=None):
         'timestamp': datetime.now().isoformat()
     })
 
+@app.route('/api/notebooks/<namespace>/<notebook_name>', methods=['DELETE'])
+def api_delete_notebook(namespace, notebook_name):
+    """API endpoint to delete a notebook"""
+    jwt_token = get_jwt_token_from_request()
+    
+    if not jwt_token:
+        return jsonify({'error': 'No JWT token found'}), 401
+    
+    k8s_client = get_k8s_client_from_jwt(jwt_token)
+    if not k8s_client:
+        return jsonify({'error': 'Failed to create Kubernetes client'}), 500
+    
+    try:
+        custom_api = client.CustomObjectsApi(k8s_client)
+        
+        # Delete the notebook custom resource
+        custom_api.delete_namespaced_custom_object(
+            group="ds.example.com",
+            version="v1alpha1",
+            namespace=namespace,
+            plural="notebooks",
+            name=notebook_name
+        )
+        
+        logger.info(f"Deleted notebook {notebook_name} in namespace {namespace}")
+        
+        return jsonify({
+            'message': f'Notebook {notebook_name} deleted successfully',
+            'notebook_name': notebook_name,
+            'namespace': namespace,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except ApiException as e:
+        logger.error(f"Failed to delete notebook {notebook_name}: {e}")
+        return jsonify({'error': f'Failed to delete notebook: {e.reason}'}), e.status
+    except Exception as e:
+        logger.error(f"Unexpected error deleting notebook {notebook_name}: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/notebooks/<namespace>', methods=['POST'])
+def api_create_notebook(namespace):
+    """API endpoint to create a new notebook"""
+    jwt_token = get_jwt_token_from_request()
+    
+    if not jwt_token:
+        return jsonify({'error': 'No JWT token found'}), 401
+    
+    k8s_client = get_k8s_client_from_jwt(jwt_token)
+    if not k8s_client:
+        return jsonify({'error': 'Failed to create Kubernetes client'}), 500
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        notebook_name = data.get('name')
+        image = data.get('image', 'jupyter/scipy-notebook:latest')
+        cpu_limit = data.get('cpu_limit', '500m')
+        memory_limit = data.get('memory_limit', '1Gi')
+        cpu_request = data.get('cpu_request', '100m')
+        memory_request = data.get('memory_request', '512Mi')
+        
+        if not notebook_name:
+            return jsonify({'error': 'Notebook name is required'}), 400
+        
+        # Create notebook custom resource
+        notebook_spec = {
+            "apiVersion": "ds.example.com/v1alpha1",
+            "kind": "Notebook",
+            "metadata": {
+                "name": notebook_name,
+                "namespace": namespace,
+                "labels": {
+                    "app.kubernetes.io/name": "notebook-operator",
+                    "app.kubernetes.io/managed-by": "odh-dashboard"
+                }
+            },
+            "spec": {
+                "image": image,
+                "port": 8888,
+                "resources": {
+                    "limits": {
+                        "cpu": cpu_limit,
+                        "memory": memory_limit
+                    },
+                    "requests": {
+                        "cpu": cpu_request,
+                        "memory": memory_request
+                    }
+                }
+            }
+        }
+        
+        custom_api = client.CustomObjectsApi(k8s_client)
+        
+        # Create the notebook custom resource
+        result = custom_api.create_namespaced_custom_object(
+            group="ds.example.com",
+            version="v1alpha1",
+            namespace=namespace,
+            plural="notebooks",
+            body=notebook_spec
+        )
+        
+        logger.info(f"Created notebook {notebook_name} in namespace {namespace}")
+        
+        return jsonify({
+            'message': f'Notebook {notebook_name} created successfully',
+            'notebook_name': notebook_name,
+            'namespace': namespace,
+            'spec': notebook_spec['spec'],
+            'timestamp': datetime.now().isoformat()
+        }), 201
+        
+    except ApiException as e:
+        logger.error(f"Failed to create notebook {notebook_name}: {e}")
+        return jsonify({'error': f'Failed to create notebook: {e.reason}'}), e.status
+    except Exception as e:
+        logger.error(f"Unexpected error creating notebook: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @app.route('/health')
 def health_check():
     """Health check endpoint for Kubernetes probes"""
