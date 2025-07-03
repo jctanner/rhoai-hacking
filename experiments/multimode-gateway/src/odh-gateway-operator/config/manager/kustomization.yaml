@@ -4,5 +4,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 images:
 - name: controller
-  newName: registry.tannerjc.net/odh-gateway-operator
+  newName: registry.tannerjc.net/odh/odh-gateway-operator
   newTag: latest

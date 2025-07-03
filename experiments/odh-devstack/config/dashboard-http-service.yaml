@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: odh-dashboard-http
+  namespace: opendatahub
+  annotations:
+    odhgateway.opendatahub.io/enabled: "true"
+    odhgateway.opendatahub.io/route-path: "/"
+    odhgateway.opendatahub.io/auth-required: "true"
+  labels:
+    app: odh-dashboard
+    app.kubernetes.io/part-of: dashboard
+    service-type: gateway-http
+spec:
+  selector:
+    app: odh-dashboard
+    app.kubernetes.io/part-of: dashboard
+    app.opendatahub.io/dashboard: "true"
+    deployment: odh-dashboard
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: ClusterIP 

@@ -46,8 +46,8 @@ type OIDCConfig struct {
 
 type OpenShiftConfig struct {
 	ClientID    string `json:"clientID"`
-	UserInfoURL string `json:"userInfoURL"`
-	OAuthURL    string `json:"oauthURL"`
+	ClusterURL  string `json:"clusterURL"`
+	ClientSecret string `json:"clientSecret,omitempty"`
 }
 
 type NamespaceSelector struct {

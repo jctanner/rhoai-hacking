@@ -93,14 +93,13 @@ spec:
                 properties:
                   clientID:
                     type: string
-                  oauthURL:
+                  clientSecret:
                     type: string
-                  userInfoURL:
+                  clusterURL:
                     type: string
                 required:
                 - clientID
-                - oauthURL
-                - userInfoURL
+                - clusterURL
                 type: object
               routeConfigMap:
                 properties:

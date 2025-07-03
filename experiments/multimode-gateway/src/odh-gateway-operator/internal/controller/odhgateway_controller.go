@@ -105,7 +105,7 @@ func (r *ODHGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	defaultImage := "registry.tannerjc.net/odh-proxy:latest"
+	defaultImage := "registry.tannerjc.net/odh/odh-gateway:latest"
 	if cr.Spec.Image == nil || *cr.Spec.Image == "" {
 		cr.Spec.Image = ptr.To(defaultImage)
 	}
@@ -382,7 +382,31 @@ func generateRouteConfigMap(cr *gatewayv1alpha1.ODHGateway, routes []RouteEntry)
 		key = cr.Spec.RouteConfigMap.Key
 	}
 
-	yamlContent := "routes:\n"
+	yamlContent := ""
+
+	// Add authentication provider configuration
+	if cr.Spec.Mode == "openshift" && cr.Spec.OpenShift != nil {
+		yamlContent += "provider:\n"
+		yamlContent += "  type: openshift\n"
+		yamlContent += "  openshift:\n"
+		yamlContent += fmt.Sprintf("    clientId: %s\n", cr.Spec.OpenShift.ClientID)
+		yamlContent += fmt.Sprintf("    clusterUrl: %s\n", cr.Spec.OpenShift.ClusterURL)
+		if cr.Spec.OpenShift.ClientSecret != "" {
+			yamlContent += fmt.Sprintf("    clientSecret: %s\n", cr.Spec.OpenShift.ClientSecret)
+		}
+		yamlContent += "\n"
+	} else if cr.Spec.Mode == "oidc" && cr.Spec.OIDC != nil {
+		yamlContent += "provider:\n"
+		yamlContent += "  type: oidc\n"
+		yamlContent += "  oidc:\n"
+		yamlContent += fmt.Sprintf("    issuerUrl: %s\n", cr.Spec.OIDC.IssuerURL)
+		yamlContent += fmt.Sprintf("    clientId: %s\n", cr.Spec.OIDC.ClientID)
+		yamlContent += "    clientSecret: ${OIDC_CLIENT_SECRET}\n"
+		yamlContent += "\n"
+	}
+
+	// Add routes configuration
+	yamlContent += "routes:\n"
 	for _, r := range routes {
 		yamlContent += fmt.Sprintf("  - path: %s\n    upstream: %s\n", r.Path, r.Upstream)
 		if r.AuthRequired != nil {
@@ -396,8 +420,8 @@ func generateRouteConfigMap(cr *gatewayv1alpha1.ODHGateway, routes []RouteEntry)
 
 func (r *ODHGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	//const gatewayName = "odhgateway"
-	const gatewayName = "odhgateway-sample"
-	const gatewayNamespace = "default"
+	const gatewayName = "odh-gateway"
+	const gatewayNamespace = "opendatahub"
 
 	return builder.
 		ControllerManagedBy(mgr).

@@ -1,0 +1,25 @@
+apiVersion: gateway.opendatahub.io/v1alpha1
+kind: ODHGateway
+metadata:
+  name: odh-gateway
+  namespace: opendatahub
+spec:
+  mode: "openshift"
+  configMapName: "odh-gateway-config"
+  image: "registry.tannerjc.net/odh/odh-gateway:latest"
+  hostname: "odh-gateway.apps-crc.testing"
+  
+  openshift:
+    clientID: "odh-gateway"
+    clusterURL: "https://api.crc.testing:6443"
+    clientSecret: "dummy-secret"
+  
+  namespaceSelector:
+    include:
+      - "opendatahub"
+      - "rhods-notebooks"
+  
+  routeConfigMap:
+    name: "odh-gateway-routes"
+    managed: true
+    key: "config.yaml" 
