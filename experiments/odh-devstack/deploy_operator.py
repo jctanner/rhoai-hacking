@@ -124,12 +124,17 @@ def build_operator_image(tag=DEFAULT_TAG, use_local_manifests=True):
     env.update({
         'IMG': f"{OPERATOR_IMAGE}:{tag}",
         'IMAGE_BUILDER': CONTAINER_BUILDER,
-        'PLATFORM': PLATFORM,
-        'USE_LOCAL': str(use_local_manifests).lower()
+        'PLATFORM': PLATFORM
     })
     
+    # Pass USE_LOCAL as a make variable, not just environment variable
+    make_cmd = [
+        "make", "image-build",
+        f"USE_LOCAL={str(use_local_manifests).lower()}"
+    ]
+    
     return run_command(
-        ["make", "image-build"],
+        make_cmd,
         cwd=OPERATOR_DIR,
         env=env
     )
