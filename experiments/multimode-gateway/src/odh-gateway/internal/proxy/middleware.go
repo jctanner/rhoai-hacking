@@ -48,11 +48,16 @@ func (m *AuthMiddleware) Middleware(authRequired *bool) func(http.Handler) http.
 			}
 
 			// Check for existing valid session and inject user headers
-			if userInfo := m.validateRequest(r); userInfo != nil {
+			if tokenString, userInfo := m.validateRequest(r); userInfo != nil {
 				// Inject user context headers for downstream services
 				r.Header.Set("X-Forwarded-User", userInfo.Username)
 				if len(userInfo.Groups) > 0 {
 					r.Header.Set("X-Forwarded-Groups", strings.Join(userInfo.Groups, ","))
+				}
+				
+				// Forward the access token for backend services to authenticate with APIs
+				if tokenString != "" {
+					r.Header.Set("X-Forwarded-Access-Token", tokenString)
 				}
 
 				log.Printf("Authenticated user: %s, groups: %v", userInfo.Username, userInfo.Groups)
@@ -66,8 +71,8 @@ func (m *AuthMiddleware) Middleware(authRequired *bool) func(http.Handler) http.
 	}
 }
 
-// validateRequest checks for valid authentication and returns user info
-func (m *AuthMiddleware) validateRequest(r *http.Request) *providers.UserInfo {
+// validateRequest checks for valid authentication and returns token string and user info
+func (m *AuthMiddleware) validateRequest(r *http.Request) (string, *providers.UserInfo) {
 	// Try to get token from cookie first, then Authorization header
 	var tokenString string
 
@@ -83,17 +88,17 @@ func (m *AuthMiddleware) validateRequest(r *http.Request) *providers.UserInfo {
 	}
 
 	if tokenString == "" {
-		return nil
+		return "", nil
 	}
 
 	// Validate token with provider
 	userInfo, err := m.provider.ValidateToken(tokenString)
 	if err != nil {
 		log.Printf("Token validation failed: %v", err)
-		return nil
+		return "", nil
 	}
 
-	return userInfo
+	return tokenString, userInfo
 }
 
 // redirectToAuth redirects the user to the authentication provider
