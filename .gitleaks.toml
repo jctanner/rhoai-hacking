@@ -1,0 +1,5 @@
+[allowlist]
+  description = "Ignore specific files"
+  files = [
+    "experiments/multimode-gateway/configs/gateway.yaml"
+  ]
