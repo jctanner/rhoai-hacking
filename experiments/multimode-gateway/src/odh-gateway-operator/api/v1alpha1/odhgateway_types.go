@@ -45,9 +45,14 @@ type OIDCConfig struct {
 }
 
 type OpenShiftConfig struct {
-	ClientID    string `json:"clientID"`
-	ClusterURL  string `json:"clusterURL"`
+	// Manual mode (optional - for backward compatibility)
+	ClientID     string `json:"clientID,omitempty"`
+	ClusterURL   string `json:"clusterURL,omitempty"`   // Only needed for manual override
 	ClientSecret string `json:"clientSecret,omitempty"`
+	
+	// Service account mode (recommended)
+	ServiceAccount bool   `json:"serviceAccount,omitempty"`
+	CABundle       string `json:"caBundle,omitempty"`
 }
 
 type NamespaceSelector struct {

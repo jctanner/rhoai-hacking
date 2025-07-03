@@ -2,6 +2,8 @@ package providers
 
 import (
 	"net/http"
+	
+	"github.com/jctanner/odh-gateway/pkg/config"
 )
 
 // AuthProvider defines the interface that all authentication providers must implement
@@ -42,7 +44,7 @@ type ProviderConfig struct {
 	OIDC *OIDCProviderConfig `yaml:"oidc,omitempty"`
 
 	// OpenShift Provider configuration
-	OpenShift *OpenShiftProviderConfig `yaml:"openshift,omitempty"`
+	OpenShift *config.OpenShiftProviderConfig `yaml:"openshift,omitempty"`
 }
 
 // OIDCProviderConfig holds OIDC-specific configuration
@@ -52,23 +54,7 @@ type OIDCProviderConfig struct {
 	ClientSecret string `yaml:"clientSecret"`
 }
 
-// OpenShiftProviderConfig holds OpenShift-specific configuration
-type OpenShiftProviderConfig struct {
-	// OpenShift cluster URL (e.g., https://api.cluster.example.com:6443)
-	ClusterURL string `yaml:"clusterUrl"`
 
-	// Client ID for OpenShift OAuth
-	ClientID string `yaml:"clientId"`
-
-	// Client Secret for OpenShift OAuth
-	ClientSecret string `yaml:"clientSecret"`
-
-	// CA Bundle for validating OpenShift API certificates
-	CABundle string `yaml:"caBundle,omitempty"`
-
-	// Scope to request (default: "user:info")
-	Scope string `yaml:"scope,omitempty"`
-}
 
 // CreateProvider creates an authentication provider based on configuration
 func CreateProvider(config ProviderConfig, baseURL string) (AuthProvider, error) {

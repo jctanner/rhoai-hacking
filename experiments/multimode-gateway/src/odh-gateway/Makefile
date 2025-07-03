@@ -2,7 +2,7 @@
 
 # Configuration variables
 REGISTRY ?= registry.tannerjc.net
-IMAGE_NAME ?= odh-proxy
+IMAGE_NAME ?= odh/odh-gateway
 TAG ?= latest
 FULL_IMAGE := $(REGISTRY)/$(IMAGE_NAME):$(TAG)
 

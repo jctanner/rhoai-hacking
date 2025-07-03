@@ -109,7 +109,7 @@ func reloadConfig(path string, fallbackProviderConfig providers.ProviderConfig) 
 		providerConfig = providers.ProviderConfig{
 			Type:      cfg.Provider.Type,
 			OIDC:      (*providers.OIDCProviderConfig)(cfg.Provider.OIDC),
-			OpenShift: (*providers.OpenShiftProviderConfig)(cfg.Provider.OpenShift),
+			OpenShift: cfg.Provider.OpenShift,
 		}
 	} else {
 		providerConfig = fallbackProviderConfig

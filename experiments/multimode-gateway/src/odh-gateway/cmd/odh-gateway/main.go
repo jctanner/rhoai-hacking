@@ -9,6 +9,7 @@ import (
 
 	"github.com/jctanner/odh-gateway/internal/proxy"
 	"github.com/jctanner/odh-gateway/internal/proxy/providers"
+	"github.com/jctanner/odh-gateway/pkg/config"
 )
 
 var (
@@ -152,7 +153,7 @@ func runGateway(cmd *cobra.Command, args []string) {
 		// Configure OpenShift provider
 		providerConfig = providers.ProviderConfig{
 			Type: "openshift",
-			OpenShift: &providers.OpenShiftProviderConfig{
+			OpenShift: &config.OpenShiftProviderConfig{
 				ClusterURL:   openshiftClusterURLValue,
 				ClientID:     openshiftClientIDValue,
 				ClientSecret: openshiftClientSecretValue,

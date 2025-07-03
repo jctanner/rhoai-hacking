@@ -39,20 +39,15 @@ type OIDCProviderConfig struct {
 
 // OpenShiftProviderConfig holds OpenShift-specific configuration
 type OpenShiftProviderConfig struct {
-	// OpenShift cluster URL (e.g., https://api.cluster.example.com:6443)
-	ClusterURL string `yaml:"clusterUrl"`
-
-	// Client ID for OpenShift OAuth
-	ClientID string `yaml:"clientId"`
-
-	// Client Secret for OpenShift OAuth
-	ClientSecret string `yaml:"clientSecret"`
-
-	// CA Bundle for validating OpenShift API certificates
-	CABundle string `yaml:"caBundle,omitempty"`
-
-	// Scope to request (default: "user:info")
-	Scope string `yaml:"scope,omitempty"`
+	// Manual configuration mode
+	ClusterURL   string `yaml:"clusterUrl,omitempty"`
+	ClientID     string `yaml:"clientId,omitempty"`
+	ClientSecret string `yaml:"clientSecret,omitempty"`
+	CABundle     string `yaml:"caBundle,omitempty"`
+	Scope        string `yaml:"scope,omitempty"`
+	
+	// Service account mode (automatic configuration)
+	ServiceAccount bool `yaml:"serviceAccount,omitempty"`
 }
 
 func LoadConfig(path string) (*Config, error) {

@@ -10,9 +10,7 @@ spec:
   hostname: "odh-gateway.apps-crc.testing"
   
   openshift:
-    clientID: "odh-gateway"
-    clusterURL: "https://api.crc.testing:6443"
-    clientSecret: "dummy-secret"
+    serviceAccount: true
   
   namespaceSelector:
     include:

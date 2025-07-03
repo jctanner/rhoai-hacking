@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -82,6 +83,7 @@ func sortRoutes(routes []RouteEntry) {
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -190,6 +192,24 @@ func (r *ODHGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 	}
 
+	// Create ServiceAccount if using OpenShift service account mode
+	if cr.Spec.Mode == "openshift" && cr.Spec.OpenShift != nil && cr.Spec.OpenShift.ServiceAccount {
+		sa := generateServiceAccount(&cr)
+		if err := controllerutil.SetControllerReference(&cr, sa, r.Scheme); err != nil {
+			return ctrl.Result{}, err
+		}
+		var existingSA corev1.ServiceAccount
+		err := r.Get(ctx, types.NamespacedName{Name: sa.Name, Namespace: sa.Namespace}, &existingSA)
+		if errors.IsNotFound(err) {
+			log.Info("Creating ServiceAccount", "name", sa.Name)
+			if err := r.Create(ctx, sa); err != nil {
+				return ctrl.Result{}, err
+			}
+		} else if err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	deploy := generateDeployment(&cr)
 	if err := controllerutil.SetControllerReference(&cr, deploy, r.Scheme); err != nil {
 		return ctrl.Result{}, err
@@ -281,7 +301,8 @@ func generateDeployment(cr *gatewayv1alpha1.ODHGateway) *appsv1.Deployment {
 					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
-					Volumes: volumes,
+					Volumes:            volumes,
+					ServiceAccountName: getServiceAccountName(cr),
 					Containers: []corev1.Container{
 						{
 							Name:  "proxy",
@@ -329,8 +350,35 @@ func generateService(cr *gatewayv1alpha1.ODHGateway) *corev1.Service {
 	}
 }
 
+func generateServiceAccount(cr *gatewayv1alpha1.ODHGateway) *corev1.ServiceAccount {
+	return &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cr.Name + "-sa",
+			Namespace: cr.Namespace,
+			Labels: map[string]string{
+				"app": cr.Name,
+			},
+		},
+	}
+}
+
+func getServiceAccountName(cr *gatewayv1alpha1.ODHGateway) string {
+	if cr.Spec.Mode == "openshift" && cr.Spec.OpenShift != nil && cr.Spec.OpenShift.ServiceAccount {
+		return cr.Name + "-sa"
+	}
+	return ""
+}
+
 func generateEnvironmentVariables(cr *gatewayv1alpha1.ODHGateway) []corev1.EnvVar {
 	var envVars []corev1.EnvVar
+
+	// Add OpenShift service account environment variable if in service account mode
+	if cr.Spec.Mode == "openshift" && cr.Spec.OpenShift != nil && cr.Spec.OpenShift.ServiceAccount {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "OPENSHIFT_SERVICE_ACCOUNT",
+			Value: cr.Name + "-sa",
+		})
+	}
 
 	// Add OIDC environment variables if OIDC is configured
 	if cr.Spec.Mode == "oidc" && cr.Spec.OIDC != nil {
@@ -389,10 +437,24 @@ func generateRouteConfigMap(cr *gatewayv1alpha1.ODHGateway, routes []RouteEntry)
 		yamlContent += "provider:\n"
 		yamlContent += "  type: openshift\n"
 		yamlContent += "  openshift:\n"
-		yamlContent += fmt.Sprintf("    clientId: %s\n", cr.Spec.OpenShift.ClientID)
-		yamlContent += fmt.Sprintf("    clusterUrl: %s\n", cr.Spec.OpenShift.ClusterURL)
-		if cr.Spec.OpenShift.ClientSecret != "" {
-			yamlContent += fmt.Sprintf("    clientSecret: %s\n", cr.Spec.OpenShift.ClientSecret)
+		
+		if cr.Spec.OpenShift.ServiceAccount {
+			// Service account mode - auto-configuration
+			yamlContent += "    serviceAccount: true\n"
+			if cr.Spec.OpenShift.CABundle != "" {
+				yamlContent += fmt.Sprintf("    caBundle: |\n%s\n", indentText(cr.Spec.OpenShift.CABundle, "      "))
+			}
+		} else {
+			// Manual mode - backward compatibility
+			if cr.Spec.OpenShift.ClientID != "" {
+				yamlContent += fmt.Sprintf("    clientId: %s\n", cr.Spec.OpenShift.ClientID)
+			}
+			if cr.Spec.OpenShift.ClusterURL != "" {
+				yamlContent += fmt.Sprintf("    clusterUrl: %s\n", cr.Spec.OpenShift.ClusterURL)
+			}
+			if cr.Spec.OpenShift.ClientSecret != "" {
+				yamlContent += fmt.Sprintf("    clientSecret: %s\n", cr.Spec.OpenShift.ClientSecret)
+			}
 		}
 		yamlContent += "\n"
 	} else if cr.Spec.Mode == "oidc" && cr.Spec.OIDC != nil {
@@ -418,6 +480,19 @@ func generateRouteConfigMap(cr *gatewayv1alpha1.ODHGateway, routes []RouteEntry)
 	return cfg
 }
 
+func indentText(text, indent string) string {
+	lines := strings.Split(text, "\n")
+	var indented []string
+	for _, line := range lines {
+		if line != "" {
+			indented = append(indented, indent+line)
+		} else {
+			indented = append(indented, line)
+		}
+	}
+	return strings.Join(indented, "\n")
+}
+
 func (r *ODHGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	//const gatewayName = "odhgateway"
 	const gatewayName = "odh-gateway"
@@ -429,6 +504,7 @@ func (r *ODHGatewayReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.ServiceAccount{}).
 		Watches(
 			&corev1.Service{},
 			handler.EnqueueRequestsFromMapFunc(

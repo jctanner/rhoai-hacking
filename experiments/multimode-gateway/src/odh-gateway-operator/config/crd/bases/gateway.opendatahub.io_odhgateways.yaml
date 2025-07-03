@@ -91,15 +91,18 @@ spec:
                 type: object
               openshift:
                 properties:
+                  caBundle:
+                    type: string
                   clientID:
+                    description: Manual mode (optional - for backward compatibility)
                     type: string
                   clientSecret:
                     type: string
                   clusterURL:
                     type: string
-                required:
-                - clientID
-                - clusterURL
+                  serviceAccount:
+                    description: Service account mode (recommended)
+                    type: boolean
                 type: object
               routeConfigMap:
                 properties:

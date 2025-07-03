@@ -9,15 +9,17 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/jctanner/odh-gateway/pkg/config"
 	"golang.org/x/oauth2"
 )
 
 // OpenShiftProvider implements the AuthProvider interface for OpenShift OAuth
 type OpenShiftProvider struct {
-	config       OpenShiftProviderConfig
+	config       config.OpenShiftProviderConfig
 	oauth2Config oauth2.Config
 	httpClient   *http.Client
 	baseURL      string
@@ -34,11 +36,26 @@ type OpenShiftUserInfo struct {
 }
 
 // NewOpenShiftProvider creates a new OpenShift provider
-func NewOpenShiftProvider(config OpenShiftProviderConfig, baseURL string) (*OpenShiftProvider, error) {
+func NewOpenShiftProvider(config config.OpenShiftProviderConfig, baseURL string) (*OpenShiftProvider, error) {
+	// Auto-configure if using service account mode
+	if config.ServiceAccount {
+		if err := autoConfigureServiceAccount(&config); err != nil {
+			return nil, fmt.Errorf("failed to auto-configure service account: %w", err)
+		}
+	}
+
 	// Set default scope if not provided
 	scope := config.Scope
 	if scope == "" {
 		scope = "user:info"
+	}
+
+	// Discover OAuth endpoints
+	authURL, tokenURL, err := discoverOAuthEndpoints(config.ClusterURL)
+	if err != nil {
+		log.Printf("Warning: failed to discover OAuth endpoints, using defaults: %v", err)
+		authURL = strings.TrimSuffix(config.ClusterURL, "/") + "/oauth/authorize"
+		tokenURL = strings.TrimSuffix(config.ClusterURL, "/") + "/oauth/token"
 	}
 
 	// Configure OAuth2
@@ -47,8 +64,8 @@ func NewOpenShiftProvider(config OpenShiftProviderConfig, baseURL string) (*Open
 		ClientSecret: config.ClientSecret,
 		RedirectURL:  baseURL + "/auth/callback",
 		Endpoint: oauth2.Endpoint{
-			AuthURL:  strings.TrimSuffix(config.ClusterURL, "/") + "/oauth/authorize",
-			TokenURL: strings.TrimSuffix(config.ClusterURL, "/") + "/oauth/token",
+			AuthURL:  authURL,
+			TokenURL: tokenURL,
 		},
 		Scopes: []string{scope},
 	}
@@ -139,6 +156,11 @@ func (p *OpenShiftProvider) GetLogoutURL(redirectURL string) string {
 
 // IsEnabled returns whether this provider is enabled
 func (p *OpenShiftProvider) IsEnabled() bool {
+	if p.config.ServiceAccount {
+		// In service account mode, only cluster URL is required (auto-configured)
+		return p.config.ClusterURL != ""
+	}
+	// In manual mode, all three are required
 	return p.config.ClusterURL != "" && p.config.ClientID != "" && p.config.ClientSecret != ""
 }
 
@@ -242,4 +264,100 @@ func (p *OpenShiftProvider) getUserGroups(accessToken, username string) ([]strin
 	}
 
 	return userGroups, nil
+}
+
+// autoConfigureServiceAccount configures OpenShift OAuth using service account credentials
+func autoConfigureServiceAccount(config *config.OpenShiftProviderConfig) error {
+	// Get service account namespace
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		namespace = "default"
+		if nsBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); err == nil {
+			namespace = strings.TrimSpace(string(nsBytes))
+		}
+	}
+
+	// Get service account name from environment variable
+	serviceAccount := os.Getenv("OPENSHIFT_SERVICE_ACCOUNT")
+	if serviceAccount == "" {
+		return fmt.Errorf("service account name not found in OPENSHIFT_SERVICE_ACCOUNT environment variable")
+	}
+
+	// Auto-configure OAuth client credentials
+	config.ClientID = fmt.Sprintf("system:serviceaccount:%s:%s", namespace, serviceAccount)
+	
+	// Read service account token
+	tokenBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	if err != nil {
+		return fmt.Errorf("failed to read service account token: %w", err)
+	}
+	config.ClientSecret = strings.TrimSpace(string(tokenBytes))
+
+	// Auto-configure cluster URL if not provided
+	if config.ClusterURL == "" {
+		kubeHost := os.Getenv("KUBERNETES_SERVICE_HOST")
+		kubePort := os.Getenv("KUBERNETES_SERVICE_PORT_HTTPS")
+		if kubePort == "" {
+			kubePort = os.Getenv("KUBERNETES_SERVICE_PORT")
+		}
+		if kubePort == "" {
+			kubePort = "443"
+		}
+		if kubeHost != "" {
+			config.ClusterURL = fmt.Sprintf("https://%s:%s", kubeHost, kubePort)
+		} else {
+			config.ClusterURL = "https://kubernetes.default.svc.cluster.local"
+		}
+	}
+
+	// Auto-configure CA bundle if not provided
+	if config.CABundle == "" {
+		if caBytes, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"); err == nil {
+			config.CABundle = string(caBytes)
+		}
+	}
+
+	log.Printf("Auto-configured OpenShift provider with service account: %s", config.ClientID)
+	return nil
+}
+
+// discoverOAuthEndpoints discovers OpenShift OAuth endpoints using the well-known endpoint
+func discoverOAuthEndpoints(clusterURL string) (string, string, error) {
+	// Use well-known OAuth authorization server endpoint
+	wellKnownURL := strings.TrimSuffix(clusterURL, "/") + "/.well-known/oauth-authorization-server"
+	
+	// Create HTTP client that skips certificate verification for discovery
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+
+	resp, err := client.Get(wellKnownURL)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to fetch OAuth discovery: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("OAuth discovery returned status %d", resp.StatusCode)
+	}
+
+	var discovery struct {
+		AuthorizationEndpoint string `json:"authorization_endpoint"`
+		TokenEndpoint         string `json:"token_endpoint"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
+		return "", "", fmt.Errorf("failed to decode OAuth discovery: %w", err)
+	}
+
+	if discovery.AuthorizationEndpoint == "" || discovery.TokenEndpoint == "" {
+		return "", "", fmt.Errorf("OAuth endpoints not found in discovery response")
+	}
+
+	return discovery.AuthorizationEndpoint, discovery.TokenEndpoint, nil
 }
