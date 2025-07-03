@@ -42,15 +42,9 @@ func StartServer(tlsCertFile, tlsKeyFile string, providerConfig providers.Provid
 		}
 	}
 
-	scheme := "http"
-	if tlsCertFile != "" && tlsKeyFile != "" {
-		scheme = "https"
-	}
-	baseURL := fmt.Sprintf("%s://localhost:%s", scheme, port)
-
 	// Initialize authentication provider
 	var err error
-	authProvider, err = providers.CreateProvider(providerConfig, baseURL)
+	authProvider, err = providers.CreateProvider(providerConfig, getBaseURL())
 	if err != nil {
 		return fmt.Errorf("failed to create auth provider: %w", err)
 	}

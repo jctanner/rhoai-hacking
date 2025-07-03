@@ -208,6 +208,8 @@ func (r *ODHGatewayReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		} else if err != nil {
 			return ctrl.Result{}, err
 		}
+
+		// Note: No need to create separate OAuth client - service account acts as OAuth client
 	}
 
 	deploy := generateDeployment(&cr)
@@ -351,10 +353,19 @@ func generateService(cr *gatewayv1alpha1.ODHGateway) *corev1.Service {
 }
 
 func generateServiceAccount(cr *gatewayv1alpha1.ODHGateway) *corev1.ServiceAccount {
+	annotations := map[string]string{}
+	
+	// Add OAuth redirect URI annotation for service account OAuth client
+	if cr.Spec.Hostname != "" {
+		redirectURI := fmt.Sprintf("https://%s/auth/callback", cr.Spec.Hostname)
+		annotations["serviceaccounts.openshift.io/oauth-redirecturi.gateway"] = redirectURI
+	}
+	
 	return &corev1.ServiceAccount{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      cr.Name + "-sa",
-			Namespace: cr.Namespace,
+			Name:        cr.Name + "-sa",
+			Namespace:   cr.Namespace,
+			Annotations: annotations,
 			Labels: map[string]string{
 				"app": cr.Name,
 			},
@@ -369,8 +380,18 @@ func getServiceAccountName(cr *gatewayv1alpha1.ODHGateway) string {
 	return ""
 }
 
+
+
 func generateEnvironmentVariables(cr *gatewayv1alpha1.ODHGateway) []corev1.EnvVar {
 	var envVars []corev1.EnvVar
+
+	// Add gateway hostname for OAuth callbacks
+	if cr.Spec.Hostname != "" {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "GATEWAY_HOSTNAME",
+			Value: cr.Spec.Hostname,
+		})
+	}
 
 	// Add OpenShift service account environment variable if in service account mode
 	if cr.Spec.Mode == "openshift" && cr.Spec.OpenShift != nil && cr.Spec.OpenShift.ServiceAccount {
