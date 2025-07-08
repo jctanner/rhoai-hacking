@@ -93,6 +93,14 @@ helm install tinylb tinylb/tinylb -n tinylb-system --create-namespace
 helm status tinylb -n tinylb-system
 ```
 
+### Custom Image Installation
+
+```bash
+# Using custom registry
+kubectl apply -f https://raw.githubusercontent.com/jctanner/tinylb/main/dist/install.yaml
+kubectl patch deployment tinylb-controller-manager -n tinylb-system -p '{"spec":{"template":{"spec":{"containers":[{"name":"manager","image":"registry.tannerjc.net/odh/tinylb:latest"}]}}}}'
+```
+
 ## 🔧 Configuration
 
 TinyLB is configured via environment variables in the deployment:
@@ -116,6 +124,113 @@ env:
   value: "info"
 ```
 
+### Hostname Pattern Configuration
+
+TinyLB uses a configurable hostname pattern for external access. The default pattern is:
+```
+{service}-{namespace}.apps-crc.testing
+```
+
+**Available Variables:**
+- `{service}`: Service name
+- `{namespace}`: Service namespace  
+- `{cluster}`: Cluster domain (if available)
+
+**Examples:**
+```yaml
+# CRC/SNO environments
+HOSTNAME_PATTERN: "{service}-{namespace}.apps-crc.testing"
+
+# OpenShift AI/OpenDataHub
+HOSTNAME_PATTERN: "{service}-{namespace}.apps.your-cluster.com"
+
+# Custom domain
+HOSTNAME_PATTERN: "{service}.{namespace}.tinylb.example.com"
+```
+
+## ⚙️ Controller Implementation Details
+
+### Service Processing Logic
+
+TinyLB processes services with the following criteria:
+
+1. **Service Type Filtering**: Only `LoadBalancer` services are processed
+2. **Status Checking**: Services with existing `status.loadBalancer.ingress` are skipped
+3. **Port Selection**: Uses priority-based port selection algorithm
+4. **Route Creation**: Creates OpenShift Routes with passthrough TLS termination
+5. **Status Update**: Updates service status with external hostname
+
+### Port Selection Algorithm
+
+TinyLB uses a sophisticated port selection algorithm for optimal Gateway API compatibility:
+
+```go
+// Priority 1: Standard HTTPS ports (for passthrough mode)
+// - 443, 8443
+
+// Priority 2: Standard HTTP ports (fallback)  
+// - 80, 8080
+
+// Priority 3: Ports with "https" in the name
+// - Any port with "https" substring
+
+// Priority 4: Ports with "http" in the name
+// - Any port with "http" substring
+
+// Priority 5: Avoid known management/status ports
+// - Skips: 15021, 15090, 9090, 8181 (Istio/Service Mesh)
+
+// Fallback: First available port
+```
+
+This ensures Gateway API controllers receive the most appropriate port for external access.
+
+### Route Configuration
+
+For OpenShift environments, TinyLB creates Routes with the following configuration:
+
+```yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: tinylb-{service-name}
+  namespace: {service-namespace}
+  labels:
+    tinylb.io/managed: "true"
+    tinylb.io/service: {service-name}
+    tinylb.io/service-uid: {service-uid}
+spec:
+  host: {service-name}-{namespace}.apps-crc.testing
+  to:
+    kind: Service
+    name: {service-name}
+  port:
+    targetPort: {selected-port}
+  tls:
+    termination: passthrough  # Preserves end-to-end TLS
+```
+
+**Key Features:**
+- **Passthrough TLS**: Maintains end-to-end encryption for Service Mesh
+- **Owner References**: Routes are automatically cleaned up when services are deleted
+- **Label Management**: Enables service discovery and management
+- **Port Mapping**: Uses intelligent port selection for optimal routing
+
+### Reconciliation Flow
+
+```go
+1. Watch LoadBalancer services across all namespaces
+2. Filter services without external IPs
+3. Select optimal port using priority algorithm
+4. Create/update OpenShift Route with:
+   - Passthrough TLS termination
+   - Calculated hostname
+   - Owner references
+   - Management labels
+5. Update service status with route hostname
+6. Log success and continue watching
+```
+
 ## 🎯 Use Cases
 
 ### Service Mesh + Gateway API
@@ -134,6 +249,30 @@ spec:
     port: 80
     protocol: HTTP
 ```
+
+### OpenShift AI / OpenDataHub Integration
+Perfect for enabling Gateway API functionality in ODH environments:
+
+```yaml
+# Example ODH service configuration
+apiVersion: v1
+kind: Service
+metadata:
+  name: jupyter-gateway
+  namespace: opendatahub
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 443
+    name: https
+  selector:
+    app: jupyter-gateway
+```
+
+TinyLB will automatically create:
+- Route: `jupyter-gateway-opendatahub.apps-crc.testing`
+- TLS: Passthrough termination
+- Status: Updates service with external hostname
 
 ### Development Environments
 - **CodeReady Containers (CRC)**: OpenShift development
@@ -158,9 +297,15 @@ metadata:
 spec:
   host: my-service-default.apps-crc.testing
   tls:
-    termination: edge
+    termination: passthrough  # Preserves Service Mesh mTLS
     insecureEdgeTerminationPolicy: Redirect
 ```
+
+**Security Benefits:**
+- **End-to-End TLS**: Passthrough termination preserves Service Mesh encryption
+- **Certificate Management**: Leverages existing Service Mesh certificates
+- **mTLS Compatibility**: Works with Istio PeerAuthentication policies
+- **Automatic Redirect**: HTTP traffic redirected to HTTPS
 
 ### RBAC
 TinyLB requires minimal RBAC permissions:
@@ -204,6 +349,15 @@ kubectl auth can-i create routes.route.openshift.io --as=system:serviceaccount:t
 kubectl get configmap tinylb-config -n tinylb-system -o yaml
 ```
 
+**Port selection issues**
+```bash
+# Check service ports
+kubectl get svc my-service -o yaml
+
+# Verify route port mapping
+kubectl get route tinylb-my-service -o yaml
+```
+
 ### Debug Mode
 Enable debug logging:
 ```bash
@@ -222,7 +376,7 @@ cd tinylb
 make build
 
 # Build container image
-make docker-build IMG=tinylb:latest
+make docker-build IMG=registry.tannerjc.net/odh/tinylb:latest
 ```
 
 ### Testing
@@ -243,7 +397,7 @@ make test-e2e
 make run
 
 # Deploy to cluster
-make deploy IMG=tinylb:latest
+make deploy IMG=registry.tannerjc.net/odh/tinylb:latest
 ```
 
 ## 🤝 Contributing
@@ -276,6 +430,7 @@ This project adheres to the [Contributor Covenant Code of Conduct](CODE_OF_CONDU
 TinyLB has enabled Gateway API functionality in:
 - **Red Hat OpenShift Service Mesh 3.0** on CRC environments
 - **Istio Gateway API** deployments on kind clusters
+- **OpenShift AI/OpenDataHub** development environments
 - **CI/CD pipelines** requiring Gateway API testing
 - **Edge computing** scenarios with Single Node OpenShift
 
@@ -293,6 +448,8 @@ TinyLB has enabled Gateway API functionality in:
 - [Istio](https://istio.io/)
 - [OpenShift Service Mesh](https://docs.openshift.com/container-platform/latest/service_mesh/v2x/ossm-about.html)
 - [OpenShift Routes](https://docs.openshift.com/container-platform/latest/networking/routes/route-configuration.html)
+- [OpenShift AI](https://docs.redhat.com/en/documentation/red_hat_openshift_ai_self-managed)
+- [OpenDataHub](https://opendatahub.io/)
 
 ## 📄 License
 
@@ -316,6 +473,7 @@ limitations under the License.
 - **OpenShift** for the Route API inspiration
 - **Istio** for Gateway API leadership
 - **Kubernetes SIG-Network** for the Gateway API specification
+- **Red Hat** for OpenShift AI and OpenDataHub innovation
 
 ---
 
