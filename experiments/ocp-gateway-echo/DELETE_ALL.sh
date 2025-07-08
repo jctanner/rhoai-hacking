@@ -183,12 +183,14 @@ remove_namespace() {
 cleanup_dns_info() {
     echo_info "🌐 DNS Cleanup Information"
     
-    echo_warning "⚠️  If you added DNS entries to /etc/hosts, you may want to remove them:"
+    echo_warning "⚠️  If you manually added DNS entries to /etc/hosts, you may want to remove them:"
     echo_warning "   Lines containing: $HOST"
-    echo_warning "   Lines containing: echo-gateway-istio-echo-test.apps-crc.testing"
+    echo_warning "   Lines containing TinyLB hostnames: *-$NAMESPACE.apps-crc.testing"
     echo_warning ""
-    echo_warning "   To remove: sudo sed -i '/$HOST/d' /etc/hosts"
-    echo_warning "   To remove: sudo sed -i '/echo-gateway-istio-echo-test.apps-crc.testing/d' /etc/hosts"
+    echo_warning "   To remove main hostname: sudo sed -i '/$HOST/d' /etc/hosts"
+    echo_warning "   To list TinyLB entries: grep '$NAMESPACE.apps-crc.testing' /etc/hosts"
+    echo_warning ""
+    echo_info "ℹ️  Note: TinyLB routes used passthrough TLS termination"
 }
 
 # Clean up temporary files
@@ -257,8 +259,9 @@ main() {
     echo_warning "   - TinyLB controller will be stopped"
     echo_warning "   - Namespace '$NAMESPACE' will be deleted"
     echo_warning "   - All Gateway API resources will be removed"
-    echo_warning "   - All certificates will be removed"
-    echo_warning "   - Service Mesh configuration will be cleaned up"
+    echo_warning "   - All TLS certificates will be removed"
+    echo_warning "   - All TinyLB passthrough routes will be removed"
+    echo_warning "   - Service Mesh mTLS configuration will be cleaned up"
     echo_warning "   - All temporary files will be removed"
     echo_warning ""
     
@@ -308,8 +311,14 @@ main() {
     echo_info "==================="
     echo_info "All Gateway API and TinyLB resources have been removed."
     echo_info ""
-    echo_info "Note: If you manually modified /etc/hosts, you may want to clean up DNS entries."
-    echo_info "Service Mesh 3.0 control plane is left running (not removed)."
+    echo_info "🔒 Removed components:"
+    echo_info "   - TinyLB passthrough TLS routes"
+    echo_info "   - Gateway API HTTPS listeners and certificates"
+    echo_info "   - Service Mesh mTLS policies and sidecar injection"
+    echo_info "   - LoadBalancer services and status updates"
+    echo_info ""
+    echo_info "📝 Note: If you manually modified /etc/hosts, you may want to clean up DNS entries."
+    echo_info "📝 Note: Service Mesh 3.0 control plane is left running (not removed)."
 }
 
 # Handle script interruption
