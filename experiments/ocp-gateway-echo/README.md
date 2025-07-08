@@ -154,12 +154,26 @@ docker build -t tinylb:latest .
 go test ./pkg/...
 
 # Integration test with Service Mesh 3.0
-kubectl apply -f examples/echo-test.yaml
+./DEPLOY_ALL.sh
 ```
 
-## Examples
+## Complete Example Deployment
 
-See `examples/` directory for working Gateway API deployments that use TinyLB.
+The `DEPLOY_ALL.sh` script provides a complete working example that demonstrates:
+
+- **Gateway API setup** with HTTPRoute and Gateway resources
+- **TinyLB deployment** and automatic LoadBalancer service bridging  
+- **Multi-layer security** with TLS termination and Service Mesh mTLS
+- **End-to-end validation** of the complete stack
+
+```bash
+# Deploy complete example with TinyLB + Gateway API + Security
+./DEPLOY_ALL.sh
+
+# Verify deployment
+curl -k https://echo.apps-crc.testing/
+# Expected: "Hello from Gateway API"
+```
 
 ## Features & Capabilities
 
