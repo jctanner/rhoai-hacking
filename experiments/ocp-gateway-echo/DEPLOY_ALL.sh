@@ -178,28 +178,39 @@ EOF
     echo_success "✅ HTTPS Gateway created"
 }
 
-# Create OpenShift Routes with passthrough mode
+# Wait for TinyLB to create routes and optionally create Gateway API route
 create_routes() {
-    echo_info "🛤️  Creating OpenShift Routes..."
+    echo_info "🛤️  Waiting for TinyLB to create routes..."
     
-    # Wait for TinyLB to create the LoadBalancer route
+    # Wait for TinyLB to create the LoadBalancer route with passthrough mode
     echo_info "⏳ Waiting for TinyLB to create LoadBalancer route..."
-    sleep 5
+    sleep 10
     
-    # Create the Gateway API route for echo.apps-crc.testing
-    echo_info "🌐 Creating Gateway API route..."
-    oc expose service echo-gateway-istio --hostname=$HOST --name=echo-gateway-route --port=80 -n $NAMESPACE || true
+    # Check if TinyLB created the route successfully
+    if oc get route -n $NAMESPACE -l tinylb.io/managed=true >/dev/null 2>&1; then
+        echo_success "✅ TinyLB route created successfully"
+        
+        # Get the TinyLB route name and hostname
+        TINYLB_ROUTE=$(oc get route -n $NAMESPACE -l tinylb.io/managed=true -o jsonpath='{.items[0].metadata.name}')
+        TINYLB_HOSTNAME=$(oc get route -n $NAMESPACE -l tinylb.io/managed=true -o jsonpath='{.items[0].spec.host}')
+        
+        echo_info "TinyLB route: $TINYLB_ROUTE"
+        echo_info "TinyLB hostname: $TINYLB_HOSTNAME"
+        
+        # Create additional Gateway API route for echo.apps-crc.testing if needed
+        if [ "$TINYLB_HOSTNAME" != "$HOST" ]; then
+            echo_info "🌐 Creating additional Gateway API route for $HOST..."
+            oc expose service echo-gateway-istio --hostname=$HOST --name=echo-gateway-route -n $NAMESPACE || true
+            
+            # Configure the additional route for passthrough mode
+            oc patch route echo-gateway-route -n $NAMESPACE --type='merge' \
+                -p='{"spec":{"tls":{"termination":"passthrough"},"port":{"targetPort":"443"}}}' || true
+        fi
+    else
+        echo_warning "⚠️  TinyLB route not found - check TinyLB controller logs"
+    fi
     
-    # Configure route for passthrough mode (Gateway API handles TLS)
-    echo_info "🔄 Configuring route passthrough mode..."
-    oc patch route echo-gateway-route -n $NAMESPACE --type='merge' \
-        -p='{"spec":{"tls":{"termination":"passthrough","insecureEdgeTerminationPolicy":null}}}' || true
-    
-    # Update route to point to HTTPS port
-    oc patch route echo-gateway-route -n $NAMESPACE --type='merge' \
-        -p='{"spec":{"port":{"targetPort":"443"}}}' || true
-    
-    echo_success "✅ OpenShift Routes configured"
+    echo_success "✅ Route configuration complete"
 }
 
 # Restart deployments to get sidecars
@@ -216,19 +227,36 @@ restart_deployments() {
     echo_success "✅ Deployments restarted with sidecars"
 }
 
-# Add DNS entry for TinyLB generated hostname
+# Add DNS entries for generated hostnames
 setup_dns() {
-    echo_info "🌐 Setting up DNS for TinyLB hostname..."
+    echo_info "🌐 Setting up DNS information..."
+    
+    # Get all routes in the namespace
+    echo_info "📋 Routes created:"
+    oc get routes -n $NAMESPACE --no-headers | while read route host path admitted age; do
+        echo_info "   $route -> $host"
+    done
     
     # Get the TinyLB generated hostname
     TINYLB_HOSTNAME=$(oc get route -n $NAMESPACE -o jsonpath='{.items[?(@.metadata.labels.tinylb\.io/managed=="true")].spec.host}' 2>/dev/null || echo "")
     
     if [ -n "$TINYLB_HOSTNAME" ]; then
-        echo_info "📝 TinyLB hostname found: $TINYLB_HOSTNAME"
-        echo_warning "⚠️  Add this to your /etc/hosts file:"
-        echo_warning "   echo '127.0.0.1 $TINYLB_HOSTNAME' | sudo tee -a /etc/hosts"
+        echo_info "📝 TinyLB hostname: $TINYLB_HOSTNAME"
+        
+        # Check if hostname already resolves
+        if nslookup "$TINYLB_HOSTNAME" >/dev/null 2>&1; then
+            echo_success "✅ TinyLB hostname resolves automatically"
+        else
+            echo_warning "⚠️  Add TinyLB hostname to your /etc/hosts file:"
+            echo_warning "   echo '127.0.0.1 $TINYLB_HOSTNAME' | sudo tee -a /etc/hosts"
+        fi
+    fi
+    
+    # Check main hostname resolution
+    if nslookup "$HOST" >/dev/null 2>&1; then
+        echo_success "✅ Main hostname $HOST resolves automatically"
     else
-        echo_warning "⚠️  TinyLB hostname not found yet - check routes later"
+        echo_info "🌐 Main hostname: $HOST (should resolve via *.apps-crc.testing)"
     fi
 }
 
@@ -277,18 +305,34 @@ validate_deployment() {
 test_connectivity() {
     echo_info "🧪 Testing connectivity..."
     
+    # Test main Gateway API hostname
     echo_info "Testing HTTPS access to $HOST..."
     if curl -k -s --max-time 10 https://$HOST/ | grep -q "Hello from Gateway API"; then
         echo_success "✅ HTTPS access working!"
     else
-        echo_warning "⚠️  HTTPS access test failed - may need DNS setup"
+        echo_warning "⚠️  HTTPS access to $HOST failed - may need DNS setup"
     fi
     
-    echo_info "Testing HTTP access to $HOST..."
-    if curl -s --max-time 10 http://$HOST/ | grep -q "Hello from Gateway API"; then
-        echo_success "✅ HTTP access working!"
+    # Test TinyLB hostname if different
+    TINYLB_HOSTNAME=$(oc get route -n $NAMESPACE -o jsonpath='{.items[?(@.metadata.labels.tinylb\.io/managed=="true")].spec.host}' 2>/dev/null || echo "")
+    if [ -n "$TINYLB_HOSTNAME" ] && [ "$TINYLB_HOSTNAME" != "$HOST" ]; then
+        echo_info "Testing HTTPS access to TinyLB hostname: $TINYLB_HOSTNAME..."
+        if curl -k -s --max-time 10 https://$TINYLB_HOSTNAME/ | grep -q "Hello from Gateway API"; then
+            echo_success "✅ TinyLB HTTPS access working!"
+        else
+            echo_warning "⚠️  TinyLB HTTPS access failed - check DNS setup"
+        fi
+    fi
+    
+    # Test HTTP redirect behavior
+    echo_info "Testing HTTP to HTTPS redirect..."
+    HTTP_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 http://$HOST/ 2>/dev/null || echo "000")
+    if [ "$HTTP_RESPONSE" = "301" ] || [ "$HTTP_RESPONSE" = "302" ]; then
+        echo_success "✅ HTTP redirects to HTTPS (${HTTP_RESPONSE})"
+    elif [ "$HTTP_RESPONSE" = "200" ]; then
+        echo_info "ℹ️  HTTP access works directly (${HTTP_RESPONSE})"
     else
-        echo_warning "⚠️  HTTP access test failed - check routing"
+        echo_warning "⚠️  HTTP test failed (${HTTP_RESPONSE})"
     fi
 }
 
@@ -442,21 +486,27 @@ EOF
     # Step 15: Test connectivity
     test_connectivity
     
-    echo_success "✅ Complete Gateway API Deployment Finished!"
-    echo_info "=============================================="
+    echo_success "✅ Complete Gateway API + TinyLB Deployment Finished!"
+    echo_info "======================================================="
     echo_info "🌐 Access your application:"
     echo_info "   HTTPS: curl -k https://$HOST"
-    echo_info "   HTTP:  curl http://$HOST"
+    echo_info "   TinyLB: Check routes output above for additional hostnames"
     echo_info ""
     echo_info "🔍 Debug commands:"
     echo_info "   oc describe gateway echo-gateway -n $NAMESPACE"
     echo_info "   oc describe httproute echo-route -n $NAMESPACE"
     echo_info "   oc get routes -n $NAMESPACE"
+    echo_info "   oc get services -n $NAMESPACE"
     echo_info "   tail -f /tmp/tinylb.log"
     echo_info ""
     echo_info "🧹 To cleanup:"
-    echo_info "   oc delete project $NAMESPACE"
-    echo_info "   kill \$(cat /tmp/tinylb.pid) # Stop TinyLB controller"
+    echo_info "   ./DELETE_ALL.sh"
+    echo_info ""
+    echo_info "🎉 TinyLB Controller Features:"
+    echo_info "   - Automatic passthrough TLS routes"
+    echo_info "   - Smart HTTPS port selection (443 > 80)"
+    echo_info "   - LoadBalancer service status updates"
+    echo_info "   - Gateway API enablement on CRC/SNO"
 }
 
 # Run main function

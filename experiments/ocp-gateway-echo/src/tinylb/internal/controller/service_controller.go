@@ -42,23 +42,38 @@ type ServiceReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// selectHTTPPort selects the best port for HTTP traffic from a service's ports
+// selectHTTPPort selects the best port for HTTP/HTTPS traffic from a service's ports
+// Since we use passthrough TLS termination, we prioritize HTTPS ports
 func selectHTTPPort(ports []corev1.ServicePort) *corev1.ServicePort {
-	// Priority 1: Standard HTTP/HTTPS ports
+	// Priority 1: Standard HTTPS ports (for passthrough mode)
 	for _, port := range ports {
-		if port.Port == 80 || port.Port == 443 || port.Port == 8080 || port.Port == 8443 {
+		if port.Port == 443 || port.Port == 8443 {
 			return &port
 		}
 	}
 
-	// Priority 2: Ports with "http" in the name
+	// Priority 2: Standard HTTP ports (fallback)
+	for _, port := range ports {
+		if port.Port == 80 || port.Port == 8080 {
+			return &port
+		}
+	}
+
+	// Priority 3: Ports with "https" in the name
+	for _, port := range ports {
+		if strings.Contains(strings.ToLower(port.Name), "https") {
+			return &port
+		}
+	}
+
+	// Priority 4: Ports with "http" in the name
 	for _, port := range ports {
 		if strings.Contains(strings.ToLower(port.Name), "http") {
 			return &port
 		}
 	}
 
-	// Priority 3: Avoid known management/status ports
+	// Priority 5: Avoid known management/status ports
 	for _, port := range ports {
 		// Skip common management ports
 		if port.Port == 15021 || port.Port == 15090 || port.Port == 9090 || port.Port == 8181 {
@@ -125,6 +140,9 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			To: routev1.RouteTargetReference{
 				Kind: "Service",
 				Name: service.Name,
+			},
+			TLS: &routev1.TLSConfig{
+				Termination: routev1.TLSTerminationPassthrough,
 			},
 		},
 	}
