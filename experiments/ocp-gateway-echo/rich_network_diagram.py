@@ -288,6 +288,17 @@ class RichNetworkDiagram:
                 mtls_mode = policy['mtls_mode']
                 break
         
+        # Find LoadBalancer service info
+        lb_services = [s for s in self.services if s['type'] == 'LoadBalancer']
+        lb_service_info = ""
+        if lb_services:
+            lb_service = lb_services[0]  # Usually there's one Gateway LB service
+            ports_info = []
+            for port in lb_service['ports']:
+                if port['port'] in [80, 443]:
+                    ports_info.append(f"{port['port']}→{port['target_port']}")
+            lb_service_info = f" ({', '.join(ports_info)})" if ports_info else ""
+        
         tls_cert_info = ""
         if self.secrets:
             tls_cert_info = f"\n🔑 TLS Certificates: {', '.join(s['name'] for s in self.secrets)}"
@@ -299,8 +310,10 @@ class RichNetworkDiagram:
 📡 External Client
     ↓ HTTPS/HTTP (Port 80/443)
 🛣️  OpenShift Router (HAProxy/Envoy)
-    ↓ TLS Passthrough (No termination)
-🚪 Gateway API Gateway
+    ↓ TLS Passthrough (No termination) 
+⚡ LoadBalancer Service (echo-gateway-istio{lb_service_info})
+    ↓ Port forwarding (TinyLB managed)
+🚪 Gateway API Gateway (Istio Gateway pods)
     ↓ {"🔒 HTTPS Termination" if gateway_tls else "🔓 HTTP Only"} 
 🔀 HTTPRoute Rules
     ↓ Path-based Routing + Port Selection
@@ -310,6 +323,12 @@ class RichNetworkDiagram:
     ↓ Istio Proxy (15001) + App Container (8080)
 🔒 {"STRICT mTLS" if mtls_mode == "STRICT" else "Optional mTLS"} Communication
 ```{tls_cert_info}
+
+**🔗 TinyLB Architecture:**
+• TinyLB detects LoadBalancer services in <pending> state
+• Creates OpenShift Route pointing to LoadBalancer service
+• LoadBalancer service forwards to Gateway API Gateway pods
+• Gateway implements actual routing logic via HTTPRoutes
         """
         return Panel(
             Markdown(flow_text),
@@ -428,48 +447,68 @@ class RichNetworkDiagram:
         """Create services and pods tree"""
         tree = Tree("🎯 Services & Pods")
         
-        for service in self.services:
-            service_icon = "⚡" if service['type'] == 'LoadBalancer' else "🎯"
-            service_node = tree.add(f"{service_icon} [bold cyan]{service['name']}[/bold cyan] ({service['type']})")
-            
-            # Add port information with TLS details
-            ports_info = []
-            for port in service['ports']:
-                if port['port'] == 443:
-                    ports_info.append(f"🔒 {port['port']}→{port['target_port']}/{port['protocol']} (HTTPS)")
-                elif port['port'] == 80:
-                    ports_info.append(f"🔓 {port['port']}→{port['target_port']}/{port['protocol']} (HTTP)")
-                elif port['port'] == 15021:
-                    ports_info.append(f"🔧 {port['port']}→{port['target_port']}/{port['protocol']} (Istio Health)")
-                else:
-                    ports_info.append(f"📋 {port['port']}→{port['target_port']}/{port['protocol']}")
-            
-            if ports_info:
-                service_node.add(f"📋 Ports: {', '.join(ports_info)}")
-            
-            # Add pods with security info
-            service_pods = self.find_service_pods(service['name'])
-            if service_pods:
-                pods_node = service_node.add(f"🐳 Pods ({len(service_pods)})")
-                for pod in service_pods:
-                    status_icon = "✅" if pod['status'] == 'Running' else "❌"
-                    istio_icon = "🔒" if pod.get('has_istio', False) else "🔓"
-                    pod_node = pods_node.add(f"{status_icon} {istio_icon} [bold green]{pod['name']}[/bold green] ({pod['ready']})")
-                    
-                    # Add containers with detailed info
-                    for container in pod['containers']:
-                        if container['name'] == 'istio-proxy':
-                            container_icon = "🔒"
-                            image_name = "istio-proxy"
-                            pod_node.add(f"{container_icon} {container['name']} ({image_name}) - mTLS Sidecar")
-                        else:
-                            container_icon = "🎯"
-                            image_name = container['image'].split('/')[-1].split(':')[0]
-                            pod_node.add(f"{container_icon} {container['name']} ({image_name}) - Application")
-            else:
-                service_node.add("❌ No pods found")
+        # Separate Gateway infrastructure from backend services
+        lb_services = [s for s in self.services if s['type'] == 'LoadBalancer']
+        backend_services = [s for s in self.services if s['type'] != 'LoadBalancer']
+        
+        # Add Gateway Infrastructure section
+        if lb_services:
+            gateway_node = tree.add("⚡ [bold yellow]Gateway Infrastructure[/bold yellow]")
+            for service in lb_services:
+                service_node = gateway_node.add(f"⚡ [bold cyan]{service['name']}[/bold cyan] ({service['type']})")
+                self._add_service_details(service, service_node)
+        
+        # Add Backend Services section
+        if backend_services:
+            backend_node = tree.add("🎯 [bold green]Backend Services[/bold green]")
+            for service in backend_services:
+                service_node = backend_node.add(f"🎯 [bold cyan]{service['name']}[/bold cyan] ({service['type']})")
+                self._add_service_details(service, service_node)
         
         return tree
+    
+    def _add_service_details(self, service, service_node):
+        """Add port and pod details to a service node"""
+        # Add port information with TLS details
+        ports_info = []
+        for port in service['ports']:
+            if port['port'] == 443:
+                ports_info.append(f"🔒 {port['port']}→{port['target_port']}/{port['protocol']} (HTTPS)")
+            elif port['port'] == 80:
+                ports_info.append(f"🔓 {port['port']}→{port['target_port']}/{port['protocol']} (HTTP)")
+            elif port['port'] == 15021:
+                ports_info.append(f"🔧 {port['port']}→{port['target_port']}/{port['protocol']} (Istio Health)")
+            else:
+                ports_info.append(f"📋 {port['port']}→{port['target_port']}/{port['protocol']}")
+        
+        if ports_info:
+            service_node.add(f"📋 Ports: {', '.join(ports_info)}")
+        
+        # Add special note for LoadBalancer services
+        if service['type'] == 'LoadBalancer':
+            service_node.add("🔗 TinyLB managed (Route → LoadBalancer → Gateway pods)")
+        
+        # Add pods with security info
+        service_pods = self.find_service_pods(service['name'])
+        if service_pods:
+            pods_node = service_node.add(f"🐳 Pods ({len(service_pods)})")
+            for pod in service_pods:
+                status_icon = "✅" if pod['status'] == 'Running' else "❌"
+                istio_icon = "🔒" if pod.get('has_istio', False) else "🔓"
+                pod_node = pods_node.add(f"{status_icon} {istio_icon} [bold green]{pod['name']}[/bold green] ({pod['ready']})")
+                
+                # Add containers with detailed info
+                for container in pod['containers']:
+                    if container['name'] == 'istio-proxy':
+                        container_icon = "🔒"
+                        image_name = "istio-proxy"
+                        pod_node.add(f"{container_icon} {container['name']} ({image_name}) - mTLS Sidecar")
+                    else:
+                        container_icon = "🎯"
+                        image_name = container['image'].split('/')[-1].split(':')[0]
+                        pod_node.add(f"{container_icon} {container['name']} ({image_name}) - Application")
+        else:
+            service_node.add("❌ No pods found")
     
     def create_security_panel(self):
         """Create security information panel"""
