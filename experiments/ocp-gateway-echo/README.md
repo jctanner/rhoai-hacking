@@ -23,7 +23,7 @@ TinyLB provides a **production-ready Gateway API bridge** with full security:
 4. **Gateway Programming**: Enables Istio to complete Gateway configuration
 
 ### **Complete Security Stack:**
-1. **Layer 1 - Edge TLS**: OpenShift Router provides HTTPS termination with automatic certificates
+1. **Layer 1 - Router Passthrough**: OpenShift Router provides HTTPS routing in passthrough mode
 2. **Layer 2 - Service Mesh mTLS**: Istio provides automatic mutual TLS for all service-to-service communication
 3. **Layer 3 - Gateway API HTTPS**: Native Gateway API TLS termination with self-managed certificates
 
@@ -32,10 +32,10 @@ TinyLB provides a **production-ready Gateway API bridge** with full security:
 ```
                         🔒 Complete Security Stack 🔒
                         
-Client → [TLS 1.3] → OpenShift Router → [mTLS] → Istio Gateway → [mTLS] → Service
+Client → [TLS 1.3] → OpenShift Router → [TLS 1.3] → Istio Gateway → [mTLS] → Service
   ↓                         ↓                        ↓                      ↓
-HTTPS               Edge TLS Termination      Gateway API/Istio       App Traffic
-Request             (Layer 1 Security)       (Layer 2 & 3 Security)  (Encrypted)
+HTTPS               Passthrough Mode          Gateway API TLS Term    App Traffic
+Request             (Layer 1 Routing)        (Layer 3 Security)      (Encrypted)
                            ↓
                     TinyLB Integration:
                     LoadBalancer Service → OpenShift Route
@@ -163,7 +163,7 @@ The `DEPLOY_ALL.sh` script provides a complete working example that demonstrates
 
 - **Gateway API setup** with HTTPRoute and Gateway resources
 - **TinyLB deployment** and automatic LoadBalancer service bridging  
-- **Multi-layer security** with TLS termination and Service Mesh mTLS
+- **Multi-layer security** with Gateway API TLS termination and Service Mesh mTLS
 - **End-to-end validation** of the complete stack
 
 ```bash
@@ -179,9 +179,9 @@ curl -k https://echo.apps-crc.testing/
 
 ### ✅ **Production-Ready Security**
 - **Complete TLS/mTLS Stack**: End-to-end encryption at all layers
-- **Automatic Certificate Management**: OpenShift-managed TLS certificates
+- **Gateway API Native TLS**: Self-managed certificates with TLS termination at Gateway API
 - **Service Mesh Integration**: Istio mTLS for service-to-service communication
-- **Gateway API HTTPS**: Native TLS termination support
+- **Passthrough Architecture**: Router passes TLS through to Gateway API for native termination
 
 ### ✅ **Gateway API Excellence**
 - **Full Gateway API Compatibility**: Complete Kubernetes Gateway API support
