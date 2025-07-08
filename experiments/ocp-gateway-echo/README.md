@@ -88,6 +88,7 @@ This project uses a **structured documentation approach** for complex problem-so
 - **`PROBLEM_X.md`**: Individual problem breakdowns with solutions
   - `PROBLEM_1.md`: Initial Gateway API enablement 
   - `PROBLEM_2.md`: Port configuration and routing fixes
+  - `PROBLEM_3.md`: TinyLB port mapping and DNS resolution issues
   - `PROBLEM_4.md`: Complete security analysis and TLS/mTLS implementation
 - **`SOLUTION.md`**: Final implementation summary and deployment guides
 
