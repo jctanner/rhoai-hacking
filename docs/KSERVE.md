@@ -193,6 +193,134 @@ graph TB
     Istio --> IstioProxy
 ```
 
+## What KServe Hosts and Runtime Engines
+
+### Model Types Supported
+
+KServe is a **comprehensive model serving platform** that supports both traditional ML models and large language models (LLMs):
+
+#### **Traditional ML/Predictive Models**
+- **Scikit-learn** models (classification, regression, clustering)
+- **XGBoost** models (gradient boosting)
+- **LightGBM** models (gradient boosting)
+- **TensorFlow** models (deep learning)
+- **PyTorch** models (deep learning)
+- **ONNX** models (cross-platform ML)
+- **PMML** models (Predictive Model Markup Language)
+- **Paddle** models (PaddlePaddle)
+- **Triton** models (NVIDIA's inference server)
+
+#### **Large Language Models (LLMs)**
+- **HuggingFace** models (transformers, LLMs)
+- **OpenAI API compatible** models
+- **Custom LLM** implementations
+- **Multi-modal models** (text, embeddings, reranking)
+
+### Runtime Engines
+
+KServe uses multiple runtime engines depending on the model type and deployment requirements:
+
+#### **1. vLLM - High-Performance LLM Engine**
+- **Purpose**: High-performance LLM inference engine with GPU acceleration
+- **GPU Support**: CUDA (NVIDIA), ROCm (AMD), Intel Gaudi, Spyre
+- **Features**: Multi-node deployments, dynamic batching, streaming responses
+- **APIs**: OpenAI-compatible chat, completion, embedding, reranking
+- **Templates Available**:
+  - `vllm-cuda-template.yaml` - NVIDIA GPU support
+  - `vllm-rocm-template.yaml` - AMD GPU support  
+  - `vllm-gaudi-template.yaml` - Intel Gaudi accelerator
+  - `vllm-spyre-template.yaml` - Spyre accelerator
+  - `vllm-multinode-template.yaml` - Multi-node distributed inference
+
+#### **2. CAIKIT + TGIS (Text Generation Inference Server)**
+- **Purpose**: Enterprise LLM serving with IBM's CAIKIT framework
+- **Focus**: Production-ready LLM deployments with enterprise features
+- **Integration**: Two-container setup (TGIS + CAIKIT transformer)
+
+#### **3. OpenVINO Model Server (OVMS)**
+- **Purpose**: Intel's optimized inference for traditional ML models
+- **Supports**: TensorFlow, PyTorch, ONNX, OpenVINO IR, Paddle formats
+- **Hardware**: CPU optimization and Intel hardware acceleration
+- **Protocols**: REST and gRPC (v2)
+
+#### **4. TensorFlow Serving**
+- **Purpose**: Google's production TensorFlow model serving
+- **Focus**: High-performance TensorFlow model inference
+- **Versions**: TensorFlow 1.x and 2.x support
+
+#### **5. TorchServe**
+- **Purpose**: PyTorch's official model serving framework
+- **Focus**: PyTorch model deployment and management
+- **Features**: Model versioning, metrics, custom handlers
+
+#### **6. MLServer (Seldon)**
+- **Purpose**: Multi-framework model serving
+- **Supports**: SKLearn, XGBoost, LightGBM, MLflow
+- **Protocol**: V2 inference protocol
+
+#### **7. HuggingFace Server**
+- **Purpose**: Direct HuggingFace transformers serving
+- **Integration**: Built-in vLLM support for LLM acceleration
+- **Features**: Chat completion, embedding, reranking APIs
+
+### vLLM Integration Deep Dive
+
+vLLM is **heavily integrated** into KServe for high-performance LLM serving:
+
+```python
+# KServe VLLMModel provides OpenAI-compatible APIs:
+class VLLMModel(OpenAIEncoderModel, OpenAIGenerativeModel):
+    async def create_chat_completion(...)      # Chat API
+    async def create_completion(...)           # Completion API  
+    async def create_embedding(...)            # Embedding API
+    async def create_rerank(...)               # Reranking API
+```
+
+**Key vLLM Features in KServe:**
+- **Automatic GPU Detection**: Scales to available CUDA devices
+- **Multi-node Support**: Distributed inference across multiple nodes
+- **Tool Integration**: Function calling and reasoning support
+- **LoRA Adapters**: Fine-tuned model support
+- **Streaming**: Real-time response streaming
+- **Batching**: Dynamic request batching for efficiency
+
+### Runtime Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      KServe Platform                       │
+├─────────────────────────────────────────────────────────────┤
+│  Model Types:                                               │
+│  • Traditional ML (SKLearn, XGBoost, TensorFlow, PyTorch)  │
+│  • LLMs (HuggingFace, OpenAI-compatible)                   │
+│  • Multi-modal (Text, Embeddings, Reranking)               │
+├─────────────────────────────────────────────────────────────┤
+│  Runtime Engines:                                           │
+│  • vLLM (LLM inference + GPU acceleration)                 │
+│  • CAIKIT-TGIS (Enterprise LLM serving)                    │
+│  • OVMS (Intel-optimized inference)                        │
+│  • TensorFlow Serving (TF models)                          │
+│  • TorchServe (PyTorch models)                             │
+│  • MLServer (Multi-framework)                              │
+├─────────────────────────────────────────────────────────────┤
+│  Deployment Modes:                                          │
+│  • Serverless (KNative + Istio + Auto-scaling)             │
+│  • RawDeployment (Standard K8s + Manual scaling)           │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Model Format Support Matrix
+
+| Runtime | TensorFlow | PyTorch | ONNX | SKLearn | XGBoost | HuggingFace | LLMs |
+|---------|------------|---------|------|---------|---------|-------------|------|
+| vLLM | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| CAIKIT-TGIS | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| OVMS | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| TensorFlow Serving | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| TorchServe | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| MLServer | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| HuggingFace Server | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+
 ## Resources Created by KServe
 
 ### Core KServe Resources
