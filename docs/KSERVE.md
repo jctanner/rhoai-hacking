@@ -355,17 +355,66 @@ KServe provides extensive monitoring capabilities:
 
 ### Security Features
 
-1. **Service Mesh Integration**
-   - mTLS between all components
-   - Traffic encryption and authentication
+#### Serverless Mode Security (with ServiceMesh)
 
-2. **Authorization Policies**
-   - Fine-grained access control
-   - Integration with OpenShift RBAC
+When KServe is configured in **Serverless mode** with ServiceMesh enabled:
 
-3. **Network Policies**
-   - Secure pod-to-pod communication
-   - Isolated model serving environments
+**Istio Service Mesh Features:**
+- **mTLS encryption** between all services
+- **AuthorizationPolicy** resources for fine-grained access control
+- **EnvoyFilter** for request/response manipulation
+- **Gateway** configurations for ingress traffic
+- **Sidecar injection** for all workloads
+
+**Authorino Integration:**
+- **External authorization** via Authorino operator
+- **Custom authorization policies** for predictors and inference graphs
+- **Token-based authentication** and authorization
+- **Request context evaluation** for access decisions
+
+#### RawDeployment Mode Security (no ServiceMesh/Authorino)
+
+When KServe is configured in **RawDeployment mode** (serving.managementState: Removed):
+
+**What's NOT Available:**
+- ❌ No Istio Service Mesh (no mTLS, no sidecars)
+- ❌ No Authorino authorization policies
+- ❌ No AuthorizationPolicy resources
+- ❌ No EnvoyFilter request manipulation
+- ❌ No Istio Gateway configurations
+- ❌ No automatic service mesh security
+
+**Access Control Mechanisms:**
+- ✅ **Standard Kubernetes RBAC** - ServiceAccount permissions
+- ✅ **OpenShift Routes/Ingresses** - External access control
+- ✅ **Network Policies** - Pod-to-pod communication controls
+- ✅ **Pod Security Standards** - Container security contexts
+- ✅ **Application-level authentication** - Model server authentication
+- ✅ **Namespace isolation** - Resource separation
+
+**Key Configuration Changes:**
+```yaml
+# In RawDeployment mode, KServe ConfigMap sets:
+ingress:
+  disableIngressCreation: true  # No automatic ingress creation
+deploy:
+  defaultDeploymentMode: "RawDeployment"  # Standard K8s deployments
+```
+
+**Security Recommendations for RawDeployment:**
+1. **Implement Network Policies** to control pod-to-pod communication
+2. **Use OpenShift Routes** with proper TLS and authentication
+3. **Configure Pod Security Standards** for container security
+4. **Implement application-level authentication** in model servers
+5. **Use Kubernetes Secrets** for sensitive configuration
+6. **Enable audit logging** for access tracking
+7. **Implement proper RBAC** for service accounts and users
+
+#### Network Policies
+
+- **Pod-to-pod communication** controls
+- **Namespace isolation** when required
+- **Ingress/egress traffic** filtering
 
 ### Scaling and Performance
 
