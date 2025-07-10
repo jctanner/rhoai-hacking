@@ -10,3 +10,5 @@ experiments/kind-kube-rbac-proxy/tls.key
 experiments/kind-dex-kube-rbac-prox/certs/*
 experiments/kind-dex-kube-rbac-prox/certs
 experiments/kind-dex-kube-rbac-proxy/certs/
+
+docs/src
