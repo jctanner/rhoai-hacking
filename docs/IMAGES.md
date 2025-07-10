@@ -174,7 +174,153 @@ Images for supporting infrastructure and services.
 | **ML Metadata Envoy** | `quay.io/opendatahub/ds-pipelines-metadata-envoy:vX.X.X` | `RELATED_IMAGE_DSP_PROXYV2_IMAGE` | Metadata service proxy |
 | **OAuth Proxy** | `registry.redhat.io/openshift4/ose-oauth-proxy:vX.X` | `RELATED_IMAGE_OSE_OAUTH_PROXY_IMAGE` | Authentication proxy |
 
-### 11. **Utility Images**
+### 11. **Sidecar Container Images**
+Images used as sidecar containers for authentication, networking, and monitoring.
+
+#### **OAuth Authentication Sidecars**
+| Sidecar | Image Repository | RELATED_IMAGE Parameter | Usage |
+|---------|------------------|-------------------------|-------|
+| **OAuth Proxy** | `registry.redhat.io/openshift4/ose-oauth-proxy:vX.X` | `RELATED_IMAGE_OSE_OAUTH_PROXY_IMAGE` | OpenShift OAuth authentication proxy |
+
+**Where OAuth Proxy Sidecars are Used:**
+- **Notebook Containers**: Every Jupyter notebook gets an OAuth proxy sidecar for authentication
+- **Data Science Pipelines**: API server, UI, and metadata services have OAuth proxy sidecars
+- **Model Serving**: ModelMesh serving runtimes include OAuth proxy sidecars
+- **Monitoring**: Prometheus and Alertmanager have OAuth proxy sidecars
+- **TrustyAI Service**: Includes OAuth proxy sidecar for secure access
+- **Model Registry**: Uses OAuth proxy for authentication
+- **Dashboard**: Protected by OAuth proxy sidecar
+
+#### **Istio Service Mesh Sidecars**
+| Sidecar | Image Repository | Usage |
+|---------|------------------|-------|
+| **Istio Proxy (Envoy)** | `Automatically injected by Istio` | Service mesh proxy for mTLS, traffic management, and observability |
+
+**Istio Sidecar Injection Control:**
+```yaml
+# Enable Istio sidecar injection
+annotations:
+  sidecar.istio.io/inject: "true"
+  sidecar.istio.io/rewriteAppHTTPProbers: "true"
+
+# Disable Istio sidecar injection
+annotations:
+  sidecar.istio.io/inject: "false"
+```
+
+**Where Istio Sidecars are Used:**
+- **KServe Model Serving**: InferenceService pods automatically get Istio sidecars when ServiceMesh is enabled
+- **TrustyAI Service**: Uses Istio sidecars for secure communication
+- **Model Serving Runtime Pods**: All model serving pods in Serverless mode get Istio sidecars
+- **Authorino**: Authorization service can be injected with Istio sidecars
+
+**Where Istio Sidecars are Explicitly Disabled:**
+- **Data Science Pipelines**: ML metadata services disable Istio injection
+- **Training Jobs**: PyTorch and other training workloads disable Istio injection
+- **Database Pods**: PostgreSQL, MariaDB, and Redis disable Istio injection
+- **KServe Controller**: The controller itself disables Istio injection
+- **Performance Testing**: Benchmark workloads disable Istio injection
+
+#### **Envoy Proxy Sidecars**
+| Sidecar | Image Repository | Usage |
+|---------|------------------|-------|
+| **ML Metadata Envoy** | `quay.io/opendatahub/ds-pipelines-metadata-envoy:vX.X.X` | Proxy for ML metadata services in Data Science Pipelines |
+
+**Multi-Container Model Serving Examples:**
+
+**CAIKIT + TGIS Runtime (2 main containers):**
+```yaml
+containers:
+  - name: kserve-container  # TGIS inference engine
+    image: $(tgis-image)
+  - name: transformer-container  # CAIKIT framework
+    image: $(caikit-tgis-image)
+```
+
+**vLLM Multi-node (2 main containers + sidecars):**
+```yaml
+containers:
+  - name: vllm-launcher  # Head node
+    image: $(vllm-cuda-image)
+  - name: vllm-worker    # Worker node
+    image: $(vllm-cuda-image)
+```
+
+#### **Monitoring Sidecars**
+Complex monitoring deployments use multiple containers and sidecars:
+
+**Prometheus Deployment (4-container setup):**
+| Container | Image Repository | Purpose |
+|-----------|------------------|---------|
+| **prometheus-proxy** | `registry.redhat.io/openshift4/ose-oauth-proxy:vX.X` | OAuth proxy for Prometheus UI access |
+| **prometheus** | `registry.redhat.io/openshift4/ose-prometheus:vX.X` | Main Prometheus monitoring service |
+| **alertmanager-proxy** | `registry.redhat.io/openshift4/ose-oauth-proxy:vX.X` | OAuth proxy for Alertmanager UI access |
+| **alertmanager** | `registry.redhat.io/openshift4/ose-prometheus-alertmanager:vX.X` | Alertmanager notification service |
+
+**Data Science Pipelines ML Metadata (2-container setup):**
+| Container | Image Repository | Purpose |
+|-----------|------------------|---------|
+| **envoy-proxy** | `quay.io/opendatahub/ds-pipelines-metadata-envoy:vX.X` | Envoy proxy for metadata service |
+| **oauth-proxy** | `registry.redhat.io/openshift4/ose-oauth-proxy:vX.X` | OAuth authentication proxy |
+
+### **Sidecar Injection Patterns**
+
+#### **1. Automatic Injection (Istio)**
+Istio sidecars are automatically injected when:
+- Namespace has `istio-injection=enabled` label
+- Pod has `sidecar.istio.io/inject: "true"` annotation
+- ServiceMesh is configured in DSCI
+
+#### **2. Manual Injection (OAuth Proxy)**
+OAuth proxy sidecars are manually added by controllers:
+- **Notebook Controller**: Adds OAuth proxy to every notebook pod
+- **Data Science Pipelines Controller**: Adds OAuth proxy to API servers and UI
+- **ModelMesh Controller**: Adds OAuth proxy to serving runtime pods
+- **TrustyAI Controller**: Adds OAuth proxy to TrustyAI service pods
+
+#### **3. Template-Based Injection (Multi-Container Runtimes)**
+Model serving runtimes use templates to define multiple containers:
+- **CAIKIT-TGIS**: Two cooperating containers for LLM serving
+- **vLLM Multi-node**: Distributed inference across multiple containers
+- **ML Metadata**: Envoy proxy + OAuth proxy for metadata services
+
+### **Sidecar Configuration Examples**
+
+#### **Jupyter Notebook with OAuth Proxy Sidecar:**
+```yaml
+containers:
+  - name: jupyter-nb-user
+    image: "workbench-image:latest"
+    ports:
+      - containerPort: 8888
+  - name: oauth-proxy
+    image: "registry.redhat.io/openshift4/ose-oauth-proxy:v4.10"
+    args:
+      - --provider=openshift
+      - --https-address=:8443
+      - --upstream=http://localhost:8888
+    ports:
+      - containerPort: 8443
+        name: oauth-proxy
+```
+
+#### **InferenceService with Istio Sidecar (Automatic):**
+```yaml
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  annotations:
+    sidecar.istio.io/inject: "true"
+    sidecar.istio.io/rewriteAppHTTPProbers: "true"
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: pytorch
+# Istio automatically injects envoy proxy sidecar
+```
+
+### 12. **Utility Images**
 Images for utility and operational tasks.
 
 | Utility | Image Repository | Usage |
@@ -268,6 +414,35 @@ The operator resolves RELATED_IMAGE environment variables at runtime:
 - **Base Image Updates**: Regular updates to base images (UBI, Alpine)
 - **Compliance**: Images meet enterprise security requirements
 
+## Sidecar Architecture Impact
+
+### **Security and Authentication**
+The extensive use of OAuth proxy sidecars provides:
+- **Unified Authentication**: All services use OpenShift OAuth for consistent access control
+- **Zero-Trust Architecture**: Every component requires authentication
+- **Session Management**: Centralized session handling across all ODH services
+- **RBAC Integration**: Fine-grained access control using OpenShift RBAC
+
+### **Service Mesh Integration**
+Istio sidecars enable:
+- **mTLS Encryption**: Automatic encryption between all mesh services
+- **Traffic Management**: Sophisticated routing, load balancing, and failover
+- **Observability**: Distributed tracing and metrics collection
+- **Security Policies**: Network-level security enforcement
+
+### **Resource Overhead**
+Each sidecar adds resource overhead:
+- **OAuth Proxy**: ~100m CPU, ~64-256Mi memory per pod
+- **Istio Proxy**: ~100m CPU, ~128Mi memory per pod
+- **Monitoring Proxies**: Variable based on traffic and configuration
+
+### **Network Architecture**
+```
+[User] → [OAuth Proxy] → [Istio Proxy] → [Application Container]
+   ↓            ↓              ↓              ↓
+[HTTPS]    [Auth Check]   [mTLS + Routing]  [HTTP]
+```
+
 ## Usage Examples
 
 ### Finding Image Information
@@ -277,6 +452,12 @@ oc get deployment opendatahub-operator-controller-manager -o yaml | grep RELATED
 
 # Check image parameters in component manifests
 oc get servingruntime vllm-cuda-runtime -o yaml | grep image
+
+# Check sidecar configurations in notebook pods
+oc get notebook -o yaml | grep -A 5 -B 5 oauth-proxy
+
+# Check Istio sidecar injection status
+oc get pods -o jsonpath='{.items[*].metadata.annotations.sidecar\.istio\.io/status}'
 ```
 
 ### Customizing Images
@@ -284,6 +465,28 @@ oc get servingruntime vllm-cuda-runtime -o yaml | grep image
 # Override images via environment variables
 oc set env deployment/opendatahub-operator-controller-manager \
   RELATED_IMAGE_ODH_DASHBOARD_IMAGE=quay.io/myorg/custom-dashboard:v1.0.0
+
+# Override OAuth proxy image globally
+oc set env deployment/opendatahub-operator-controller-manager \
+  RELATED_IMAGE_OSE_OAUTH_PROXY_IMAGE=registry.redhat.io/openshift4/ose-oauth-proxy:v4.15
+
+# Disable Istio injection for specific deployment
+oc patch deployment my-deployment -p '{"spec":{"template":{"metadata":{"annotations":{"sidecar.istio.io/inject":"false"}}}}}'
+```
+
+### Troubleshooting Sidecars
+```bash
+# Check OAuth proxy logs
+oc logs <pod-name> -c oauth-proxy
+
+# Check Istio proxy logs
+oc logs <pod-name> -c istio-proxy
+
+# Check sidecar resource usage
+oc top pod <pod-name> --containers
+
+# Debug OAuth proxy configuration
+oc exec <pod-name> -c oauth-proxy -- cat /etc/proxy/secrets/session_secret
 ```
 
 ## References
