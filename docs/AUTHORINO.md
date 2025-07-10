@@ -279,6 +279,380 @@ Expect(envoyExtAuthzGrpc["service"]).To(Equal("authorino-authorino-authorization
 
 **File Reference:** `src/opendatahub-operator/tests/integration/features/servicemesh_feature_test.go:287`
 
+## OIDC Authentication Scenarios
+
+### Current ODH Integration: Kubernetes TokenReview
+
+OpenDataHub currently uses Authorino primarily for **Kubernetes TokenReview** authentication rather than full OIDC flows. The existing AuthConfig templates show:
+
+**Current Authentication Method:**
+```yaml
+authentication:
+  kubernetes-user:
+    credentials:
+      authorizationHeader: {}
+    kubernetesTokenReview:
+      audiences:
+      - "https://my-inference-service.example.com"
+```
+
+**Purpose:** Validates Kubernetes service account tokens and user tokens issued by the OpenShift/Kubernetes API server.
+
+### OIDC Configuration Capabilities
+
+Authorino has comprehensive **OpenID Connect (OIDC)** support through JWT verification with automatic discovery. Here are the key OIDC scenarios possible:
+
+#### 1. **OpenID Connect Discovery (Recommended)**
+
+Authorino can automatically discover OIDC configuration from identity providers:
+
+```yaml
+apiVersion: authorino.kuadrant.io/v1beta2
+kind: AuthConfig
+metadata:
+  name: oidc-protection
+  labels:
+    security.opendatahub.io/authorization-group: default
+spec:
+  hosts:
+  - "my-inference-service.example.com"
+  authentication:
+    "oidc-provider":
+      jwt:
+        issuerUrl: "https://keycloak.example.com/realms/opendatahub"
+        ttl: 300  # Auto-refresh OIDC config every 5 minutes
+```
+
+**How it works:**
+1. Authorino discovers configuration from `https://keycloak.example.com/realms/opendatahub/.well-known/openid-configuration`
+2. Extracts `jwks_uri` from the discovery document
+3. Fetches JSON Web Key Sets (JWKS) from the `jwks_uri`
+4. Validates JWT signatures and claims
+
+#### 2. **Direct JWKS URL Configuration**
+
+For identity providers that don't support OpenID Connect Discovery:
+
+```yaml
+authentication:
+  "jwt-provider":
+    jwt:
+      # Note: This would require extending the current ODH AuthConfig templates
+      jwksUrl: "https://auth.example.com/.well-known/jwks.json"
+      ttl: 300
+```
+
+#### 3. **Multiple Identity Providers**
+
+Authorino supports multiple authentication sources with priorities:
+
+```yaml
+authentication:
+  "openshift-tokens":
+    priority: 1
+    kubernetesTokenReview:
+      audiences: ["https://my-service.example.com"]
+  
+  "external-oidc":
+    priority: 2
+    jwt:
+      issuerUrl: "https://corporate-sso.example.com/auth/realms/company"
+  
+  "fallback-anonymous":
+    priority: 3
+    anonymous: {}
+```
+
+#### 4. **RBAC with OIDC Claims**
+
+Combine OIDC authentication with role-based authorization:
+
+```yaml
+authentication:
+  "keycloak-oidc":
+    jwt:
+      issuerUrl: "https://keycloak.example.com/realms/opendatahub"
+
+authorization:
+  "rbac-data-scientists":
+    when:
+    - selector: context.request.http.path
+      operator: matches
+      value: ^/v1/models/.*
+    patternMatching:
+      patterns:
+      - selector: auth.identity.realm_access.roles
+        operator: incl
+        value: "data-scientist"
+  
+  "rbac-admin-access":
+    when:
+    - selector: context.request.http.path
+      operator: matches
+      value: ^/admin/.*
+    patternMatching:
+      patterns:
+      - selector: auth.identity.realm_access.roles
+        operator: incl
+        value: "admin"
+```
+
+#### 5. **OIDC UserInfo Metadata**
+
+Fetch additional user information from OIDC UserInfo endpoint:
+
+```yaml
+authentication:
+  "oidc-jwt":
+    jwt:
+      issuerUrl: "https://keycloak.example.com/realms/opendatahub"
+
+metadata:
+  "user-info":
+    userInfo:
+      identitySource: "oidc-jwt"  # References the JWT authentication above
+```
+
+### Integration with OpenDataHub Components
+
+#### KServe InferenceService OIDC Protection
+
+To enable OIDC authentication for KServe model serving:
+
+```yaml
+apiVersion: authorino.kuadrant.io/v1beta2
+kind: AuthConfig
+metadata:
+  name: kserve-oidc-protection
+  labels:
+    security.opendatahub.io/authorization-group: default
+spec:
+  hosts:
+  - "sklearn-iris-predictor.example.com"
+  authentication:
+    "corporate-sso":
+      jwt:
+        issuerUrl: "https://corporate-sso.example.com/auth/realms/company"
+  authorization:
+    "model-access":
+      patternMatching:
+        patterns:
+        - selector: auth.identity.preferred_username
+          operator: matches
+          value: "^(data-scientist|ml-engineer).*"
+```
+
+#### Notebook Authentication with OIDC
+
+For protecting Jupyter notebooks with OIDC:
+
+```yaml
+apiVersion: authorino.kuadrant.io/v1beta2
+kind: AuthConfig
+metadata:
+  name: notebook-oidc-protection
+  labels:
+    security.opendatahub.io/authorization-group: default
+spec:
+  hosts:
+  - "jupyter-notebook.example.com"
+  authentication:
+    "github-oauth":
+      jwt:
+        issuerUrl: "https://github.com/login/oauth"
+  authorization:
+    "org-member":
+      patternMatching:
+        patterns:
+        - selector: auth.identity.orgs
+          operator: incl
+          value: "my-data-science-org"
+```
+
+### Advanced OIDC Features
+
+#### 1. **Token Normalization**
+
+Normalize tokens from different identity providers:
+
+```yaml
+authentication:
+  "keycloak-users":
+    jwt:
+      issuerUrl: "https://keycloak.example.com/realms/opendatahub"
+    defaults:
+      username: 
+        selector: auth.identity.preferred_username
+      email:
+        selector: auth.identity.email
+      groups:
+        selector: auth.identity.realm_access.roles
+  
+  "github-users":
+    jwt:
+      issuerUrl: "https://github.com/login/oauth"
+    defaults:
+      username:
+        selector: auth.identity.login
+      email:
+        selector: auth.identity.email
+      groups:
+        value: ["external-users"]
+```
+
+#### 2. **Conditional OIDC**
+
+Apply different OIDC rules based on request context:
+
+```yaml
+authentication:
+  "internal-oidc":
+    when:
+    - selector: context.request.http.headers.x-forwarded-for
+      operator: matches
+      value: "^10\\."  # Internal network
+    jwt:
+      issuerUrl: "https://internal-sso.company.com/auth/realms/employees"
+  
+  "external-oidc":
+    when:
+    - selector: context.request.http.headers.x-forwarded-for
+      operator: matches
+      value: "^(?!10\\.)"  # External network
+    jwt:
+      issuerUrl: "https://external-sso.company.com/auth/realms/partners"
+```
+
+#### 3. **Custom Claims Validation**
+
+Validate specific JWT claims:
+
+```yaml
+authentication:
+  "oidc-with-custom-claims":
+    jwt:
+      issuerUrl: "https://keycloak.example.com/realms/opendatahub"
+
+authorization:
+  "project-access":
+    patternMatching:
+      patterns:
+      - selector: auth.identity.project_access.current_project
+        operator: eq
+        value: "ml-platform"
+      - selector: auth.identity.aud
+        operator: incl
+        value: "ml-inference-api"
+```
+
+### Implementation Path for OpenDataHub
+
+To enable OIDC authentication in OpenDataHub, the following changes would be needed:
+
+#### 1. **Extend AuthConfig Templates**
+
+Add OIDC-specific templates:
+
+```yaml
+# New template: authconfig_oidc_userdefined.yaml
+apiVersion: authorino.kuadrant.io/v1beta2
+kind: AuthConfig
+metadata:
+  labels:
+    {{ .AuthorinoLabel }}
+spec:
+  hosts:
+  - "UPDATED.RUNTIME"
+  authentication:
+    oidc-provider:
+      jwt:
+        issuerUrl: "{{ .OIDCIssuerURL }}"
+        ttl: {{ .OIDCRefreshTTL }}
+  authorization:
+    resource-access:
+      kubernetesSubjectAccessReview:
+        resourceAttributes:
+          verb: { value: get }
+          group: { value: "serving.kserve.io" }
+          resource: { value: inferenceservices }
+          namespace: { value: "{{ .Namespace }}" }
+          name: { value: "{{ .ResourceName }}" }
+        user:
+          selector: auth.identity.preferred_username
+```
+
+#### 2. **Configuration Options**
+
+Add OIDC configuration to component specs:
+
+```yaml
+# Example: Enhanced KServe configuration
+apiVersion: datasciencecluster.opendatahub.io/v1
+kind: DataScienceCluster
+spec:
+  components:
+    kserve:
+      authentication:
+        method: "oidc"  # vs "kubernetes-token"
+        oidc:
+          issuerUrl: "https://keycloak.example.com/realms/opendatahub"
+          clientId: "kserve-client"
+          refreshTTL: 300
+          requiredClaims:
+            - "email_verified"
+          roleClaimPath: "realm_access.roles"
+```
+
+#### 3. **Service Mesh Integration**
+
+The existing Service Mesh integration would work seamlessly with OIDC:
+
+```yaml
+# ServiceMeshControlPlane with OIDC-enabled Authorino
+spec:
+  techPreview:
+    meshConfig:
+      extensionProviders:
+      - name: odh-oidc-auth
+        envoyExtAuthzGrpc:
+          service: authorino-authorino-authorization.odh-auth-provider.svc.cluster.local
+          port: 50051
+```
+
+#### 4. **Multi-tenancy Support**
+
+Support different OIDC providers per namespace/project:
+
+```yaml
+# Per-namespace OIDC configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oidc-config
+  namespace: data-science-project-1
+data:
+  issuer_url: "https://tenant1-sso.example.com/auth/realms/tenant1"
+  client_id: "odh-tenant1"
+  required_roles: "data-scientist,ml-engineer"
+```
+
+### Benefits of OIDC Integration
+
+1. **Enterprise SSO Integration**: Seamless integration with corporate identity providers
+2. **Fine-grained Authorization**: Role-based access control using OIDC claims
+3. **Multi-tenancy**: Different OIDC providers per tenant/namespace
+4. **Audit Trail**: Comprehensive audit logs with user identity information
+5. **Standards Compliance**: Industry-standard OAuth2/OIDC protocols
+6. **Token Lifecycle Management**: Automatic token refresh and validation
+
+### Security Considerations
+
+1. **Token Validation**: Authorino validates JWT signatures and temporal claims
+2. **Audience Validation**: Ensures tokens are intended for the specific service
+3. **Issuer Validation**: Verifies tokens come from trusted identity providers
+4. **Claim Validation**: Validates required claims and custom attributes
+5. **Transport Security**: Requires TLS for all OIDC communications
+
 ## Key Takeaways
 
 1. **Optional Feature:** Authorino is not a required component - it's only deployed when the Authorino operator is available
