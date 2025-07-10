@@ -496,4 +496,4 @@ oc exec <pod-name> -c oauth-proxy -- cat /etc/proxy/secrets/session_secret
 - [Runtime Templates](./src/odh-model-controller/config/runtimes/)
 - [Notebook Images](./src/notebooks/)
 - [Build Pipelines](./src/*/tekton/)
-- [Quay.io OpenDataHub Organization](https://quay.io/organization/opendatahub) 
+- [Quay.io OpenDataHub Organization](https://quay.io/organization/opendatahub)
