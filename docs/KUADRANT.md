@@ -4,19 +4,100 @@ This document provides a comprehensive overview of how the Kuadrant components w
 
 ## Overview
 
-**Kuadrant** is a Kubernetes-native API security platform that extends Gateway API providers (like Istio and Envoy Gateway) with additional security features through policy attachment. The platform consists of four main components that work together to provide comprehensive API protection:
+**Kuadrant** is a Kubernetes-native API security platform that extends Gateway API providers (like Istio Gateway and Envoy Gateway) with additional security features through policy attachment. The platform consists of four main components that work together to provide comprehensive API protection:
 
 1. **Kuadrant Operator** - The main orchestrator that manages the entire platform
 2. **Authorino** - Authentication and authorization service
 3. **Limitador** - Rate limiting service  
 4. **WASM Shim** - Envoy proxy extension that bridges Gateway API and services
 
-## Architecture Overview
+## Gateway API Providers vs Service Mesh
+
+**Important Note**: Kuadrant works with any Gateway API provider and does **NOT require a full service mesh**:
+
+- **Gateway API Providers** (Choose one):
+  - **Istio Gateway** - Just the gateway component, not the full service mesh
+  - **Envoy Gateway** - Standalone Gateway API implementation
+  - **Other Gateway API implementations** - Kong, Contour, etc.
+
+- **Service Mesh** (Optional):
+  - **Istio Service Mesh** - Full mesh with sidecars or ambient mode
+  - **Linkerd** - Alternative service mesh
+  - **None** - Kuadrant works fine without any service mesh
+
+## Understanding Gateway Class Names
+
+### **What `gatewayClassName: istio` Actually Means**
+
+When you specify `gatewayClassName: istio` in your Gateway resource, you are:
+
+**✅ Using**: Istio's Gateway API implementation (just the gateway)  
+**❌ NOT Using**: Istio service mesh (sidecars between services)
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: my-gateway
+spec:
+  gatewayClassName: istio  # <-- Uses Istio's Gateway controller
+  # This creates an Istio gateway pod with Envoy proxy
+  # Your application pods remain unchanged (no sidecars)
+```
+
+### **Gateway Class Comparison**
+
+| **Gateway Class** | **What It Provides** | **Service Mesh?** | **Use Case** |
+|-------------------|----------------------|-------------------|--------------|
+| `istio` | Istio Gateway API controller + advanced traffic features | No | Want Istio gateway features without mesh complexity |
+| `envoy-gateway-system` | Standalone Envoy Gateway | No | Simple, lightweight, CNCF-native solution |
+| `kong` | Kong Gateway API implementation | No | Enterprise API gateway features |
+| `contour` | Contour Gateway API implementation | No | VMware Tanzu ecosystem |
+
+### **What You Get vs Don't Get with `gatewayClassName: istio`**
+
+| **✅ What You GET** | **❌ What You DON'T GET** |
+|---------------------|---------------------------|
+| Istio's advanced gateway features | Service mesh between pods |
+| Rich traffic management (timeouts, retries, circuit breakers) | Automatic mTLS between services |
+| Advanced load balancing algorithms | Sidecar proxies in application pods |
+| Istio's observability for gateway traffic | Service-to-service traffic management |
+| Integration with Istio's security model | Istio's distributed tracing between services |
+| Support for Istio VirtualService and DestinationRule | Zero-trust networking between services |
+
+### **Architecture with `gatewayClassName: istio` (No Service Mesh)**
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                                 Kuadrant Platform                                   │
-├─────────────────────────────────────────────────────────────────────────────────────┤
+│                        Istio Gateway Infrastructure                                 │
+│                                                                                     │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
+│  │ Istio Gateway   │    │ Authorino       │    │ Limitador       │                  │
+│  │ (Envoy Proxy)   │────│ (External)      │    │ (External)      │                  │
+│  │ + WASM Shim     │    │                 │    │                 │                  │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘                  │
+│           │                                                                         │
+│           │ No Service Mesh - Direct Pod Communication                              │
+│           │                                                                         │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│           │                   Your Application Pods                                │
+│           │                  (Plain Kubernetes)                                    │
+│           ▼                                                                         │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
+│  │ Service A       │    │ Service B       │    │ Service C       │                  │
+│  │ (No Sidecars)   │    │ (No Sidecars)   │    │ (No Sidecars)   │                  │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘                  │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key Point**: The gateway class name determines which Gateway API controller manages your gateway, but doesn't automatically imply a full service mesh deployment.
+
+## Architecture Overview
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                                 Kuadrant Platform                                  │
+├────────────────────────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                 │
 │  │ Kuadrant        │    │ AuthPolicy      │    │ RateLimitPolicy │                 │
 │  │ Operator        │────│ (CRD)           │    │ (CRD)           │                 │
@@ -47,7 +128,7 @@ This document provides a comprehensive overview of how the Kuadrant components w
 │                                        │                                           │
 │                                        ▼                                           │
 │                           ┌─────────────────────────────┐                          │
-│                           │     Upstream Services        │                         │
+│                           │     Upstream Services       │                          │
 │                           │      (Your APIs)            │                          │
 │                           └─────────────────────────────┘                          │
 └────────────────────────────────────────────────────────────────────────────────────┘
@@ -330,11 +411,14 @@ Kuadrant supports policy hierarchy where policies can be attached at different l
 
 ## Deployment Topologies
 
-### 1. Centralized Gateway Topology
+### 1. Centralized Gateway Topology (No Service Mesh Required)
 
+**Gateway API Provider Options**: Istio Gateway, Envoy Gateway, or other Gateway API implementations
+
+**Option A: With Envoy Gateway**
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                               Kuadrant Gateway                                      │
+│                           Kuadrant Centralized Gateway                              │
 │                                                                                     │
 │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
 │  │ Envoy Gateway   │    │ Authorino       │    │ Limitador       │                  │
@@ -343,8 +427,8 @@ Kuadrant supports policy hierarchy where policies can be attached at different l
 │           │                                                                         │
 │           │                                                                         │
 ├───────────┼─────────────────────────────────────────────────────────────────────────┤
-│           │                     Cluster Services                                    │
-│           │                                                                         │
+│           │                   Plain Kubernetes Services                            │
+│           │                 (No Service Mesh Required)                             │
 │           ▼                                                                         │
 │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
 │  │ Service A       │    │ Service B       │    │ Service C       │                  │
@@ -353,11 +437,39 @@ Kuadrant supports policy hierarchy where policies can be attached at different l
 └─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2. Sidecar Topology
+**Option B: With Istio Gateway (Not Service Mesh)**
+```
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           Kuadrant Centralized Gateway                              │
+│                                                                                     │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
+│  │ Istio Gateway   │    │ Authorino       │    │ Limitador       │                  │
+│  │ (with WASM)     │────│ (Centralized)   │    │ (Centralized)   │                  │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘                  │
+│           │                                                                         │
+│           │                                                                         │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│           │                   Plain Kubernetes Services                            │
+│           │                 (No Service Mesh Required)                             │
+│           ▼                                                                         │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
+│  │ Service A       │    │ Service B       │    │ Service C       │                  │
+│  │                 │    │                 │    │                 │                  │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘                  │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+```
 
+**Use Case**: Traditional north-south traffic protection through a gateway
+**Service Mesh**: Not required - services communicate directly without mesh
+**Benefits**: Simple deployment, minimal overhead, centralized policy enforcement
+
+### 2. Sidecar Topology (Optional Service Mesh)
+
+**Option A: Standalone Envoy Sidecars (No Service Mesh)**
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
 │                                Service A Pod                                        │
+│                           (Managed by Kuadrant)                                    │
 │                                                                                     │
 │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
 │  │ Envoy Sidecar   │    │ Authorino       │    │ Limitador       │                  │
@@ -372,31 +484,112 @@ Kuadrant supports policy hierarchy where policies can be attached at different l
 └─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 3. Hybrid Topology
-
+**Option B: With Istio Service Mesh (Sidecar Mode)**
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
-│                               Kuadrant Gateway                                      │
+│                                Service A Pod                                        │
+│                          (Istio Service Mesh)                                      │
 │                                                                                     │
 │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                  │
-│  │ Envoy Gateway   │    │ Authorino       │    │ Limitador       │                  │
-│  │ (with WASM)     │────│ (Centralized)   │    │ (Centralized)   │                  │
+│  │ Istio Envoy     │    │ Authorino       │    │ Limitador       │                  │
+│  │ Sidecar         │────│ (Sidecar)       │    │ (Sidecar)       │                  │
+│  │ (with WASM)     │    │                 │    │                 │                  │
 │  └─────────────────┘    └─────────────────┘    └─────────────────┘                  │
 │           │                                                                         │
-├───────────┼─────────────────────────────────────────────────────────────────────────┤
-│           │                     Service Mesh                                        │
-│           │                                                                         │
 │           ▼                                                                         │
-│  ┌──────────────────────────────────────────────────────────────────────────────────┤
-│  │                            Service A Pod                                         │
-│  │                                                                                  │
-│  │  ┌─────────────────┐    ┌─────────────────┐                                      │
-│  │  │ Envoy Sidecar   │    │ Service A       │                                      │
-│  │  │ (with WASM)     │────│ (Application)   │                                      │
-│  │  └─────────────────┘    └─────────────────┘                                      │
-│  └──────────────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐                                                                │
+│  │ Service A       │                                                                │
+│  │ (Application)   │                                                                │
+│  └─────────────────┘                                                                │
 └─────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+**Use Case**: Fine-grained per-service policy enforcement
+**Service Mesh**: Optional - can use standalone Envoy sidecars or full service mesh
+**Benefits**: Granular control, service-specific policies, east-west traffic protection
+
+### 3. Hybrid Topology (Gateway + Optional Service Mesh)
+
+**Option A: Gateway + Selective Sidecars (No Service Mesh)**
+```
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                         Kuadrant Gateway Layer                                    │
+│                                                                                    │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                 │
+│  │ Envoy Gateway   │    │ Authorino       │    │ Limitador       │                 │
+│  │ (with WASM)     │────│ (Centralized)   │    │ (Centralized)   │                 │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘                 │
+│           │                                                                        │
+├───────────┼────────────────────────────────────────────────────────────────────────┤
+│           │                 Application Layer                                      │
+│           │                                                                        │
+│           ▼                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┤
+│  │                   Critical Service A Pod                                        │
+│  │                 (Additional Sidecar Protection)                                 │
+│  │                                                                                 │
+│  │  ┌─────────────────┐    ┌─────────────────┐                                     │
+│  │  │ Envoy Sidecar   │    │ Service A       │                                     │
+│  │  │ (with WASM)     │────│ (Application)   │                                     │
+│  │  └─────────────────┘    └─────────────────┘                                     │
+│  └─────────────────────────────────────────────────────────────────────────────────┤
+│  │                                                                                 │
+│  │  ┌─────────────────┐    ┌─────────────────┐                                     │
+│  │  │ Service B       │    │ Service C       │                                     │
+│  │  │ (No Sidecar)    │    │ (No Sidecar)    │                                     │
+│  │  └─────────────────┘    └─────────────────┘                                     │
+└────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Option B: Gateway + Full Service Mesh**
+```
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                         Kuadrant Gateway Layer                                    │
+│                                                                                    │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐                 │
+│  │ Istio Gateway   │    │ Authorino       │    │ Limitador       │                 │
+│  │ (with WASM)     │────│ (Centralized)   │    │ (Centralized)   │                 │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘                 │
+│           │                                                                        │
+├───────────┼────────────────────────────────────────────────────────────────────────┤
+│           │                 Istio Service Mesh                                     │
+│           │                                                                        │
+│           ▼                                                                        │
+│  ┌─────────────────────────────────────────────────────────────────────────────────┤
+│  │                            Service A Pod                                        │
+│  │                                                                                 │
+│  │  ┌─────────────────┐    ┌─────────────────┐                                     │
+│  │  │ Istio Envoy     │    │ Service A       │                                     │
+│  │  │ Sidecar         │────│ (Application)   │                                     │
+│  │  │ (with WASM)     │    │                 │                                     │
+│  │  └─────────────────┘    └─────────────────┘                                     │
+│  └─────────────────────────────────────────────────────────────────────────────────┤
+└────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Use Case**: Gateway-level policies with service-specific overrides
+**Service Mesh**: Optional - can be selective sidecars or full mesh
+**Benefits**: Layered security, policy inheritance, flexibility
+
+## When Do You Actually Need a Service Mesh?
+
+### **Service Mesh NOT Required** (Most Common)
+- **Gateway-only scenarios**: All traffic enters through a gateway
+- **Simple microservices**: Services communicate via standard Kubernetes networking
+- **Cost-sensitive environments**: Minimal overhead and complexity
+- **Getting started**: Easier to deploy and manage
+
+### **Service Mesh Beneficial** (Advanced Scenarios)
+- **East-west traffic security**: Need mTLS between all services
+- **Complex traffic management**: Advanced routing, retries, circuit breaking
+- **Service-to-service policies**: Different policies for different service interactions
+- **Compliance requirements**: Need to encrypt and authorize all internal traffic
+- **Advanced observability**: Detailed service-to-service metrics and tracing
+
+### **Istio Service Mesh Options**
+- **Sidecar Mode**: Traditional approach with Envoy sidecars
+- **Ambient Mode**: New sidecar-less approach (requires Istio 1.15+)
+- **Istio Gateway Only**: Just the gateway component without the mesh
 
 ## Security Features
 
@@ -432,6 +625,8 @@ Kuadrant supports policy hierarchy where policies can be attached at different l
 
 ### Basic Authentication with Rate Limiting
 
+**Option A: With Envoy Gateway (No Service Mesh)**
+
 ```yaml
 # Gateway configuration
 apiVersion: gateway.networking.k8s.io/v1
@@ -439,7 +634,7 @@ kind: Gateway
 metadata:
   name: my-gateway
 spec:
-  gatewayClassName: istio
+  gatewayClassName: envoy-gateway-system  # Envoy Gateway
   listeners:
   - name: http
     port: 80
@@ -528,6 +723,27 @@ spec:
       rates:
       - limit: 10
         window: 60s
+```
+
+**Option B: With Istio Gateway (No Service Mesh Required)**
+
+```yaml
+# Gateway configuration
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: my-gateway
+spec:
+  gatewayClassName: istio  # Istio Gateway (not service mesh)
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    hostname: "*.example.com"
+
+---
+# Same HTTPRoute, AuthPolicy, and RateLimitPolicy as above
+# Kuadrant automatically configures the appropriate WASM filters
 ```
 
 ### Multi-Environment Configuration
@@ -696,16 +912,26 @@ kubectl get envoyfilter -n istio-system -o yaml
 
 ## Integration with Other Systems
 
-### Service Mesh
+### Service Mesh (Optional)
 
-**Istio Integration**:
-- Automatic policy attachment to Istio VirtualServices
+**Important**: Service mesh integration is optional - Kuadrant works without any service mesh.
+
+**When Using Istio Service Mesh**:
+- Automatic policy attachment to Istio VirtualServices and ServiceEntries
 - mTLS configuration for secure service communication
 - Integration with Istio's telemetry and observability
+- Support for both sidecar and ambient modes
 
-**Linkerd Integration**:
+**When Using Linkerd Service Mesh**:
 - Policy enforcement at service mesh layer
 - Integration with Linkerd's policy framework
+- mTLS between services via Linkerd
+
+**Without Service Mesh**:
+- Use any Gateway API provider (Envoy Gateway, Istio Gateway, Kong, etc.)
+- Services communicate using standard Kubernetes networking
+- Lower complexity and resource overhead
+- Still get full Kuadrant security features at the gateway level
 
 ### CI/CD Pipelines
 
@@ -761,6 +987,43 @@ kubectl get envoyfilter -n istio-system -o yaml
 - **Slack**: Join the #kuadrant channel in Kubernetes Slack
 - **Documentation**: Comprehensive docs at docs.kuadrant.io
 - **Community Calls**: Regular community meetings and demos
+
+## Summary: Service Mesh vs Gateway API
+
+### **Key Takeaway**: Kuadrant does NOT require a service mesh
+
+| **Scenario** | **Gateway API Provider** | **Service Mesh** | **Use Case** |
+|--------------|-------------------------|------------------|--------------|
+| **Simple Gateway** | Envoy Gateway | None | Cost-effective, simple setup, north-south traffic only |
+| **Istio Gateway Only** | Istio Gateway | None | Want Istio's gateway features without mesh complexity |
+| **Selective Protection** | Any Gateway API | None | Some services need sidecars, others don't |
+| **Full Service Mesh** | Istio Gateway | Istio (sidecar/ambient) | Need east-west traffic security and advanced observability |
+| **Linkerd Integration** | Any Gateway API | Linkerd | Prefer Linkerd for service mesh features |
+
+### **Common Misconceptions Clarified**
+
+❌ **Myth**: "Kuadrant requires Istio service mesh"  
+✅ **Reality**: Kuadrant works with any Gateway API provider, service mesh optional
+
+❌ **Myth**: "You need sidecars everywhere for Kuadrant"  
+✅ **Reality**: Centralized gateway deployment is the most common pattern
+
+❌ **Myth**: "Istio Gateway means you have Istio service mesh"  
+✅ **Reality**: Istio Gateway can run independently without the service mesh
+
+### **Decision Matrix**
+
+**Choose Gateway-Only** if you:
+- Want simple deployment and operation
+- Have primarily north-south traffic
+- Don't need service-to-service encryption
+- Want to minimize resource overhead
+
+**Add Service Mesh** if you:
+- Need east-west traffic encryption (mTLS)
+- Require advanced traffic management between services  
+- Need detailed service-to-service observability
+- Have compliance requirements for internal traffic
 
 ---
 
