@@ -283,6 +283,252 @@ TinyLB will automatically create:
 ### CI/CD Integration
 Use TinyLB in automated testing pipelines requiring Gateway API functionality.
 
+## 🔧 Manual Implementation (Without Controller)
+
+If you prefer to implement the LoadBalancer bridge manually without the TinyLB controller, here's how to replicate the functionality:
+
+### Step 1: Create a LoadBalancer Service
+
+First, create your LoadBalancer service that will be stuck in `<pending>` state:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-gateway-service
+  namespace: default
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 443
+    targetPort: 8443
+    name: https
+  - port: 80
+    targetPort: 8080
+    name: http
+  selector:
+    app: my-gateway
+```
+
+```bash
+kubectl apply -f service.yaml
+# Service will show <pending> external IP
+kubectl get svc my-gateway-service
+```
+
+### Step 2: Manually Create the OpenShift Route
+
+Create a Route that follows TinyLB's pattern and logic:
+
+```yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: tinylb-my-gateway-service
+  namespace: default
+  labels:
+    tinylb.io/managed: "true"
+    tinylb.io/service: my-gateway-service
+    tinylb.io/service-uid: "REPLACE_WITH_SERVICE_UID"
+  ownerReferences:
+  - apiVersion: v1
+    kind: Service
+    name: my-gateway-service
+    uid: "REPLACE_WITH_SERVICE_UID"
+    controller: true
+    blockOwnerDeletion: true
+spec:
+  host: my-gateway-service-default.apps-crc.testing
+  to:
+    kind: Service
+    name: my-gateway-service
+    weight: 100
+  port:
+    targetPort: 443  # TinyLB prioritizes HTTPS ports
+  tls:
+    termination: passthrough
+    insecureEdgeTerminationPolicy: Redirect
+```
+
+To get the service UID for owner references:
+```bash
+SERVICE_UID=$(kubectl get service my-gateway-service -o jsonpath='{.metadata.uid}')
+echo "Service UID: $SERVICE_UID"
+```
+
+### Step 3: Update Service Status with External Hostname
+
+This is the tricky part - you need to patch the service status to include the route hostname. This requires proper RBAC permissions:
+
+```bash
+# Create a service account with appropriate permissions
+kubectl create serviceaccount tinylb-manual
+kubectl create clusterrole tinylb-manual --verb=get,list,watch,update,patch --resource=services,services/status
+kubectl create clusterrolebinding tinylb-manual --clusterrole=tinylb-manual --serviceaccount=default:tinylb-manual
+
+# Get the service account token
+kubectl create token tinylb-manual --duration=1h
+```
+
+Then update the service status:
+
+```bash
+# Patch the service status to include the external hostname
+kubectl patch service my-gateway-service --subresource=status --type=merge -p='{
+  "status": {
+    "loadBalancer": {
+      "ingress": [
+        {
+          "hostname": "my-gateway-service-default.apps-crc.testing"
+        }
+      ]
+    }
+  }
+}'
+```
+
+### Step 4: Verify the Manual Implementation
+
+Check that everything is working:
+
+```bash
+# Service should now show external hostname
+kubectl get svc my-gateway-service
+# NAME                  TYPE           CLUSTER-IP       EXTERNAL-IP                                    PORT(S)
+# my-gateway-service    LoadBalancer   172.30.123.45    my-gateway-service-default.apps-crc.testing   443:32001/TCP,80:32002/TCP
+
+# Route should be accessible
+kubectl get route tinylb-my-gateway-service
+# NAME                        HOST/PORT                                      PATH   SERVICES             PORT   TERMINATION   WILDCARD
+# tinylb-my-gateway-service   my-gateway-service-default.apps-crc.testing          my-gateway-service   443    passthrough   None
+
+# Test external access
+curl -k https://my-gateway-service-default.apps-crc.testing
+```
+
+### Port Selection Algorithm (Manual)
+
+TinyLB uses this priority order when selecting ports. Apply the same logic manually:
+
+1. **Priority 1**: Standard HTTPS ports (443, 8443)
+2. **Priority 2**: Standard HTTP ports (80, 8080)  
+3. **Priority 3**: Ports with "https" in the name
+4. **Priority 4**: Ports with "http" in the name
+5. **Priority 5**: Avoid management ports (15021, 15090, 9090, 8181)
+6. **Fallback**: First available port
+
+### Cleanup (Manual)
+
+When removing the service, also clean up the route:
+
+```bash
+# The route should be auto-deleted due to owner references
+kubectl delete service my-gateway-service
+kubectl delete route tinylb-my-gateway-service  # Only if owner references didn't work
+```
+
+### Script-Based Manual Implementation
+
+For automation, create a script that replicates TinyLB's behavior:
+
+```bash
+#!/bin/bash
+# manual-tinylb.sh
+
+SERVICE_NAME="$1"
+NAMESPACE="$2"
+
+if [ -z "$SERVICE_NAME" ] || [ -z "$NAMESPACE" ]; then
+    echo "Usage: $0 <service-name> <namespace>"
+    exit 1
+fi
+
+# Get service details
+SERVICE_UID=$(kubectl get service $SERVICE_NAME -n $NAMESPACE -o jsonpath='{.metadata.uid}')
+SERVICE_TYPE=$(kubectl get service $SERVICE_NAME -n $NAMESPACE -o jsonpath='{.spec.type}')
+
+# Check if it's a LoadBalancer service
+if [ "$SERVICE_TYPE" != "LoadBalancer" ]; then
+    echo "Service $SERVICE_NAME is not a LoadBalancer service"
+    exit 1
+fi
+
+# Check if it already has external IP
+EXTERNAL_IP=$(kubectl get service $SERVICE_NAME -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+if [ -n "$EXTERNAL_IP" ]; then
+    echo "Service $SERVICE_NAME already has external IP: $EXTERNAL_IP"
+    exit 0
+fi
+
+# Create the route
+ROUTE_NAME="tinylb-$SERVICE_NAME"
+HOSTNAME="$SERVICE_NAME-$NAMESPACE.apps-crc.testing"
+
+kubectl apply -f - <<EOF
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: $ROUTE_NAME
+  namespace: $NAMESPACE
+  labels:
+    tinylb.io/managed: "true"
+    tinylb.io/service: $SERVICE_NAME
+    tinylb.io/service-uid: $SERVICE_UID
+  ownerReferences:
+  - apiVersion: v1
+    kind: Service
+    name: $SERVICE_NAME
+    uid: $SERVICE_UID
+    controller: true
+    blockOwnerDeletion: true
+spec:
+  host: $HOSTNAME
+  to:
+    kind: Service
+    name: $SERVICE_NAME
+    weight: 100
+  port:
+    targetPort: 443
+  tls:
+    termination: passthrough
+    insecureEdgeTerminationPolicy: Redirect
+EOF
+
+# Update service status
+kubectl patch service $SERVICE_NAME -n $NAMESPACE --subresource=status --type=merge -p="{
+  \"status\": {
+    \"loadBalancer\": {
+      \"ingress\": [
+        {
+          \"hostname\": \"$HOSTNAME\"
+        }
+      ]
+    }
+  }
+}"
+
+echo "Successfully created route and updated service status for $SERVICE_NAME"
+echo "External hostname: $HOSTNAME"
+```
+
+### Manual vs Controller Benefits
+
+| Aspect | Manual Implementation | TinyLB Controller |
+|--------|----------------------|-------------------|
+| **Setup** | One-time per service | Automatic for all services |
+| **Maintenance** | Manual updates required | Self-healing and automatic |
+| **Port Selection** | Manual decision | Intelligent algorithm |
+| **Cleanup** | Manual (unless owner refs work) | Automatic via owner references |
+| **Monitoring** | No built-in monitoring | Prometheus metrics |
+| **Error Handling** | Manual intervention | Automatic retry logic |
+| **Scalability** | Labor intensive | Handles many services |
+
+The manual approach is useful for:
+- **Understanding** how TinyLB works internally
+- **Debugging** TinyLB behavior
+- **One-off** services in environments where installing TinyLB isn't feasible
+- **Custom** routing requirements that differ from TinyLB's algorithm
+
 ## 🔒 Security Features
 
 ### TLS/mTLS Support
