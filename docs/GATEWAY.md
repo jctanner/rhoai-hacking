@@ -86,6 +86,94 @@ For full functionality, the following OpenShift cluster capabilities must be ena
 - **OperatorLifecycleManager**: Required for ServiceMeshOperator installation
 - **Marketplace**: Required for accessing operator catalogs and subscriptions
 
+## Controller Name Coordination Architecture
+
+### ❗ **Critical Understanding: `openshift.io/gateway-controller/v1` is Defined HERE**
+
+The controller name `openshift.io/gateway-controller/v1` is **defined within this cluster-ingress-operator repository** and serves as the central coordination mechanism between OpenShift and Istio.
+
+#### **Where It's Defined**
+```go
+// From pkg/operator/controller/names.go
+const (
+    // OpenShiftGatewayClassControllerName is the string by which a
+    // gatewayclass identifies itself as belonging to OpenShift Istio.
+    OpenShiftGatewayClassControllerName = "openshift.io/gateway-controller/v1"
+)
+```
+
+#### **How OpenShift Controllers Use It**
+
+**1. Gateway Class Controller** - Only processes GatewayClasses with this controller name:
+```go
+// pkg/operator/controller/gatewayclass/controller.go
+func (r *reconciler) isOwnGatewayClass(class *gatewayapi_v1.GatewayClass) bool {
+    return class.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName
+}
+```
+
+**2. Gateway Labeler Controller** - Only labels Gateways that reference "our" GatewayClasses:
+```go
+// pkg/operator/controller/gateway-labeler/controller.go
+if gatewayClass.Spec.ControllerName == operatorcontroller.OpenShiftGatewayClassControllerName {
+    // Add istio.io/rev label to Gateway
+}
+```
+
+**3. DNS Controller** - Only creates DNS records for Gateways using OpenShift's GatewayClasses
+
+#### **How OpenShift Coordinates with Istio**
+
+OpenShift passes this controller name to Istio via environment variables:
+
+```go
+// pkg/operator/controller/gatewayclass/istio.go
+"PILOT_GATEWAY_API_CONTROLLER_NAME": controller.OpenShiftGatewayClassControllerName,
+```
+
+This tells Istio: **"Only manage Gateway resources that reference GatewayClasses with controller name `openshift.io/gateway-controller/v1`"**
+
+#### **Division of Responsibilities**
+
+| Component | Responsibility | Uses Controller Name For |
+|---|---|---|
+| **OpenShift Controllers** | Orchestration, DNS, Labeling | Filtering which GatewayClasses to process |
+| **Istio** | Actual traffic management, status updates | Filtering which Gateways to manage |
+
+```
+┌─────────────────┐    Controller Name    ┌──────────────────┐
+│ OpenShift       │◄──────────────────────►│ Istio            │
+│ • DNS Records   │  "openshift.io/       │ • Gateway Status │
+│ • Labeling      │   gateway-controller  │ • Traffic Rules  │  
+│ • Orchestration │   /v1"                │ • Service Mesh   │
+└─────────────────┘                       └──────────────────┘
+```
+
+#### **Multi-Implementation Support**
+
+This architecture enables multiple Gateway API implementations to coexist:
+
+```yaml
+# OpenShift's GatewayClass
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: openshift-default
+spec:
+  controllerName: openshift.io/gateway-controller/v1  # OpenShift handles this
+
+---
+# Hypothetical other implementation  
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy-gateway
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller  # Other controller handles this
+```
+
+**Result**: Each implementation only processes resources it's responsible for, preventing conflicts.
+
 ## Integration with OpenShift Service Mesh
 
 The Gateway API implementation integrates deeply with OpenShift Service Mesh (Istio):
