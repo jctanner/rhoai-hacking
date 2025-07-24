@@ -1,5 +1,7 @@
 # OpenShift Ingress Operator Gateway API Implementation
 
+> **Note**: This documentation was created by analyzing the [OpenShift cluster-ingress-operator](https://github.com/openshift/cluster-ingress-operator) source code using Claude (Cursor.ai) in agent mode to automatically parse and understand the codebase architecture and functionality.
+
 ## Overview
 
 The OpenShift Cluster Ingress Operator provides a comprehensive Gateway API implementation that integrates with the OpenShift Service Mesh (Istio) to deliver cloud-native ingress capabilities. This implementation follows the Kubernetes Gateway API specification while providing OpenShift-specific integrations and enterprise features.
