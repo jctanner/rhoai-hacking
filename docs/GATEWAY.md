@@ -254,6 +254,202 @@ pilotContainerEnv := map[string]string{
 
 This architecture gives you **modern Gateway API capabilities** without the complexity, resource overhead, or operational burden of a full service mesh deployment.
 
+## Envoy Filter Capabilities
+
+### ❗ **Good News: Envoy Filters Should Still Work**
+
+Despite the lightweight Gateway API implementation **not being a full service mesh**, you should still have access to **Envoy filters like `ext_authz`, rate limiting, custom headers, and other Envoy extensions**.
+
+#### **Why Envoy Filters Work in Gateway-Only Mode**
+
+**1. Full-Featured Envoy Proxies**
+- Gateway deployments use **complete Envoy proxy instances**, not limited versions
+- These proxies support the full range of Envoy HTTP and network filters
+- Only the **deployment pattern** is different (gateway vs sidecar), not the proxy capabilities
+
+**2. Active Istio Control Plane** 
+- Pilot/Istiod is running and managing Gateway Envoy instances
+- Can process **EnvoyFilter** custom resources normally
+- Handles xDS configuration updates to push filter configurations
+
+**3. Filter Scope**
+- Envoy filters operate at the **proxy level**, not the mesh level
+- `ext_authz`, rate limiting, header manipulation work on individual requests
+- Don't require service-to-service mesh functionality
+
+#### **How to Use EnvoyFilter with Gateway API**
+
+**EnvoyFilter Resource Example**:
+```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: gateway-ext-authz
+  namespace: openshift-ingress  # Same namespace as Gateway
+spec:
+  workloadSelector:
+    labels:
+      # Target the specific Gateway's Envoy pods
+      gateway.networking.k8s.io/gateway-name: "my-gateway"
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: GATEWAY  # Apply to gateway, not sidecar
+      listener:
+        filterChain:
+          filter:
+            name: envoy.filters.network.http_connection_manager
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.filters.http.ext_authz
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+          http_service:
+            server_uri:
+              uri: http://auth-service.auth.svc.cluster.local:8080
+              cluster: outbound|8080||auth-service.auth.svc.cluster.local
+              timeout: 5s
+            authorization_request:
+              allowed_headers:
+                patterns:
+                - exact: "authorization"
+                - exact: "x-user-id"
+          failure_mode_allow: false
+```
+
+**Rate Limiting Example**:
+```yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: gateway-rate-limit
+  namespace: openshift-ingress
+spec:
+  workloadSelector:
+    labels:
+      gateway.networking.k8s.io/gateway-name: "my-gateway"
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: GATEWAY
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.filters.http.local_ratelimit
+        typed_config:
+          "@type": type.googleapis.com/udpa.type.v1.TypedStruct
+          type_url: type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+          value:
+            stat_prefix: local_rate_limiter
+            token_bucket:
+              max_tokens: 100
+              tokens_per_fill: 100
+              fill_interval: 60s
+            filter_enabled:
+              runtime_key: local_rate_limit_enabled
+              default_value:
+                numerator: 100
+                denominator: HUNDRED
+```
+
+#### **Potential Limitations**
+
+**1. OpenShift Restrictions**
+Some Istio features are explicitly limited:
+```go
+// From OpenShift's Istio configuration:
+"PILOT_ENABLE_GATEWAY_API_COPY_LABELS_ANNOTATIONS": "false",  // May affect filter targeting
+"ENABLE_GATEWAY_API_MANUAL_DEPLOYMENT": "false",             // Limits service integration
+```
+
+**2. Resource Conflicts**
+- ✅ **EnvoyFilter**: Should work (infrastructure-level configuration)
+- ❌ **Istio VirtualService/DestinationRule**: May conflict with Gateway API HTTPRoute
+- ✅ **Standard Envoy filters**: ext_authz, rate limiting, headers, WASM should work
+- ❓ **Complex mesh features**: Service discovery, load balancing policies may not work
+
+**3. Workload Selector Challenges**
+- Must target Gateway-created pods correctly using labels
+- Labels may differ from traditional Istio deployments
+- Need to verify actual pod labels: `oc get pods -n openshift-ingress --show-labels`
+
+#### **Testing and Verification**
+
+**1. Verify EnvoyFilter CRD**
+```bash
+# Check if Istio CRDs are available
+oc get crd envoyfilters.networking.istio.io
+oc api-resources | grep envoyfilter
+```
+
+**2. Check Gateway Pod Labels**
+```bash
+# Find Gateway pods and their labels
+oc get pods -n openshift-ingress -l gateway.networking.k8s.io/gateway-name=my-gateway --show-labels
+
+# Example output should show:
+# gateway.networking.k8s.io/gateway-name=my-gateway
+# istio.io/rev=openshift-gateway
+```
+
+**3. Verify EnvoyFilter Application**
+```bash
+# Check if EnvoyFilter is accepted
+oc get envoyfilter -n openshift-ingress
+oc describe envoyfilter gateway-ext-authz -n openshift-ingress
+
+# Verify Envoy configuration was updated
+oc exec -n openshift-ingress <gateway-pod> -- curl -s localhost:15000/config_dump | jq '.configs[].dynamic_active_configs'
+```
+
+**4. Test Filter Functionality**
+```bash
+# Test ext_authz by making requests that should trigger auth
+curl -H "Host: myapp.example.com" https://gateway-hostname/protected-path
+
+# Check Envoy access logs for filter processing
+oc logs -n openshift-ingress <gateway-pod> | grep ext_authz
+```
+
+#### **Common Use Cases That Should Work**
+
+**✅ Authentication and Authorization**
+- `ext_authz` filter for external auth services
+- JWT validation filters
+- Custom header-based auth
+
+**✅ Traffic Control**
+- Rate limiting (local and distributed)
+- Request/response header manipulation
+- Request routing modifications
+
+**✅ Observability**
+- Custom access logging formats
+- Metrics collection filters
+- Tracing configuration
+
+**✅ Security**
+- WAF filters
+- Request sanitization
+- Custom security policies
+
+**❌ Service Mesh Features**
+- Cross-service load balancing
+- Circuit breaker between services
+- Distributed tracing between mesh services
+- Service-to-service authentication
+
+#### **Best Practices**
+
+1. **Always use `context: GATEWAY`** in EnvoyFilter match conditions
+2. **Target specific Gateways** using workload selectors
+3. **Test thoroughly** as this is a non-standard Istio deployment
+4. **Monitor Envoy logs** for filter errors or misconfigurations
+5. **Use Gateway API HTTPRoute** for routing, EnvoyFilter only for advanced proxy features
+
+This gives you the **power of Envoy's extensibility** while maintaining the **simplicity of Gateway API** - the best of both worlds for ingress use cases!
+
 ## Service Mesh Operator Installation Details
 
 The Gateway API implementation integrates with OpenShift Service Mesh (Istio) by:
