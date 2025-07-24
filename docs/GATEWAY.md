@@ -443,6 +443,107 @@ func ManageDNSForDomain(domain string, platformStatus *configv1.PlatformStatus, 
 }
 ```
 
+## Gateway API in Single-Node Environments (SNO/CRC)
+
+### ⚠️ **Problem: No External Load Balancers**
+
+In single-node OpenShift (SNO) or Code Ready Containers (CRC) environments, there's no cloud provider to assign external IPs to LoadBalancer services. This creates a problem:
+
+```bash
+# Gateway Service stays in <pending> state
+oc get service istio-gateway-my-gateway -n openshift-ingress
+# NAME                     TYPE           EXTERNAL-IP   PORT(S)        AGE
+# istio-gateway-my-gateway LoadBalancer   <pending>     80:32156/TCP   5m
+
+# Gateway status shows Programmed=False
+oc get gateway my-gateway -n openshift-ingress  
+# NAME         CLASS              ADDRESS   PROGRAMMED   AGE
+# my-gateway   openshift-default  <none>    False        5m
+```
+
+### ✅ **Solution: OpenShift Route Bridge**
+
+You can create an OpenShift Route that points to the Gateway's service, effectively using OpenShift's built-in router (HAProxy) as the external entry point:
+
+#### **Step 1: Create Gateway (as normal)**
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: my-gateway
+  namespace: openshift-ingress
+spec:
+  gatewayClassName: openshift-default
+  listeners:
+  - name: https
+    port: 443
+    protocol: HTTPS
+    hostname: myapp.example.com
+    tls:
+      mode: Terminate
+```
+
+#### **Step 2: Create Route to Gateway Service**
+```yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: gateway-bridge
+  namespace: openshift-ingress
+spec:
+  host: myapp.example.com                    # Same hostname as Gateway listener
+  to:
+    kind: Service
+    name: istio-gateway-my-gateway           # Istio-created service
+    weight: 100
+  port:
+    targetPort: https                        # Target the Gateway's HTTPS port
+  tls:
+    termination: passthrough                 # Let Gateway handle TLS
+    insecureEdgeTerminationPolicy: Redirect
+```
+
+#### **Step 3: Test the Flow**
+```bash
+# Route gets external hostname from OpenShift router
+oc get route gateway-bridge -n openshift-ingress
+# NAME             HOST/PORT                                    PATH   SERVICES                 PORT    TERMINATION     WILDCARD
+# gateway-bridge   myapp.example.com                                   istio-gateway-my-gateway https   passthrough     None
+
+# HTTPRoutes work normally through the Gateway
+curl -k https://myapp.example.com/api
+# ✅ Request flows: Route → Gateway Service → Istio Gateway → HTTPRoute backends
+```
+
+### **Why This Works**
+
+1. **OpenShift Route** provides external access (via the cluster's *.apps domain)
+2. **TLS Passthrough** means the Route just forwards encrypted traffic to the Gateway
+3. **Gateway processes normally** - handles TLS termination, matches HTTPRoutes, etc.
+4. **HTTPRoute rules work unchanged** - all Gateway API functionality is preserved
+
+### **Limitations of Route Bridge**
+
+❌ **Single hostname per Route**: Each Route can only handle one hostname  
+❌ **No wildcard support**: Routes don't support wildcard hostnames like `*.example.com`  
+❌ **Extra DNS step**: Need to point your DNS to the Route's hostname, not directly to a load balancer  
+❌ **OpenShift-specific**: This workaround only works in OpenShift, not vanilla Kubernetes
+
+### **Alternative: NodePort Access**
+
+For development/testing, you can also access the Gateway directly via NodePort:
+
+```bash
+# Get NodePort from Gateway service
+oc get service istio-gateway-my-gateway -n openshift-ingress
+# NAME                     TYPE           PORT(S)                      
+# istio-gateway-my-gateway LoadBalancer   80:32156/TCP,443:31234/TCP
+
+# Access directly via node IP and NodePort
+curl -k -H "Host: myapp.example.com" https://NODE_IP:31234/api
+# ✅ Works but requires port specification and Host header
+```
+
 ## Gateway Status Management
 
 ### ❗ **Critical Understanding: Istio Manages Gateway Status, Not OpenShift**
