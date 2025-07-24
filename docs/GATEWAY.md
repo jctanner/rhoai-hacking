@@ -176,7 +176,85 @@ spec:
 
 ## Integration with OpenShift Service Mesh
 
-The Gateway API implementation integrates deeply with OpenShift Service Mesh (Istio):
+### ❗ **Critical Understanding: This is NOT a Full Service Mesh Deployment**
+
+**Common misconception**: OpenShift Gateway API uses the full OpenShift Service Mesh.  
+**Reality**: OpenShift installs the Service Mesh 3.0 operator but configures Istio in a **lightweight, gateway-only mode** - essentially just a reverse proxy.
+
+#### **What Gets Installed vs. What Gets Used**
+
+**Installed**:
+- ✅ OpenShift Service Mesh 3.0 operator (`servicemeshoperator3`)  
+- ✅ Istio control plane (Pilot/Istiod)
+- ✅ Istio gateway components (Envoy proxies)
+
+**NOT Used** (Explicitly Disabled):
+- ❌ **Sidecar injection**: `EnableNamespacesByDefault: false`
+- ❌ **CNI integration**: `Cni.Enabled: false`  
+- ❌ **Ingress controller mode**: `IngressControllerMode: Off`
+- ❌ **Service mesh features**: No mesh traffic management between services
+
+#### **Istio Configuration Analysis**
+
+From the code (`pkg/operator/controller/gatewayclass/istio.go`):
+
+```go
+// Service mesh features explicitly disabled
+SidecarInjectorWebhook: &sailv1.SidecarInjectorConfig{
+    EnableNamespacesByDefault: ptr.To(false),  // No automatic sidecar injection
+},
+Pilot: &sailv1.PilotConfig{
+    Cni: &sailv1.CNIUsageConfig{
+        Enabled: ptr.To(false),  // No CNI integration
+    },
+},
+MeshConfig: &sailv1.MeshConfig{
+    IngressControllerMode: sailv1.MeshConfigIngressControllerModeOff,  // No ingress mode
+},
+
+// Only Gateway API features enabled
+pilotContainerEnv := map[string]string{
+    "PILOT_ENABLE_GATEWAY_API": "true",                           // ✅ Gateway API only
+    "PILOT_ENABLE_GATEWAY_API_DEPLOYMENT_CONTROLLER": "true",     // ✅ Create Envoy deployments
+    "PILOT_ENABLE_GATEWAY_API_STATUS": "true",                    // ✅ Update Gateway status
+    "PILOT_ENABLE_GATEWAY_API_GATEWAYCLASS_CONTROLLER": "false",  // ❌ OpenShift manages GatewayClass
+}
+```
+
+#### **What You Actually Get**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    OpenShift Gateway API                    │
+│                   (Lightweight Reverse Proxy)              │
+├─────────────────────────────────────────────────────────────┤
+│  ✅ HTTP/HTTPS termination and routing                     │
+│  ✅ Gateway API resource management                        │  
+│  ✅ Load balancer integration                              │
+│  ✅ TLS certificate management                             │
+│  ✅ Hostname-based routing via HTTPRoute                   │
+├─────────────────────────────────────────────────────────────┤
+│  ❌ NO sidecar proxies in application namespaces           │
+│  ❌ NO service-to-service mesh traffic                     │
+│  ❌ NO mutual TLS between services                         │
+│  ❌ NO traffic policies (retry, circuit breaker, etc.)     │
+│  ❌ NO observability mesh features                         │
+│  ❌ NO service discovery mesh features                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### **Why Use Service Mesh Operator for Just Gateway Functionality?**
+
+1. **Code Reuse**: Leverages Istio's battle-tested Envoy proxy and Gateway API implementation
+2. **Consistency**: Uses the same gateway technology as full Service Mesh deployments  
+3. **Upgrade Path**: Users can potentially add full service mesh later
+4. **Support**: Reuses Red Hat's supported Service Mesh operator infrastructure
+
+This architecture gives you **modern Gateway API capabilities** without the complexity, resource overhead, or operational burden of a full service mesh deployment.
+
+## Service Mesh Operator Installation Details
+
+The Gateway API implementation integrates with OpenShift Service Mesh (Istio) by:
 
 ### Service Mesh Operator Installation
 1. **Subscription Management**: Creates a Subscription CR for `servicemeshoperator3` in the `openshift-operators` namespace
@@ -840,6 +918,12 @@ oc get infrastructure cluster -o jsonpath='{.status.platformStatus}'
    - **Cause**: Service LoadBalancer hasn't received external IP/hostname from cloud provider
    - **Solution**: Check cloud provider quotas, permissions, and Service events
    - **Check**: `oc describe service istio-gateway-my-gateway -n openshift-ingress`
+
+10. **Expecting Full Service Mesh Features (Common Misconception)**
+   - **Symptom**: No sidecar injection, no service-to-service mesh features
+   - **Cause**: OpenShift Gateway API is NOT a full service mesh - it's lightweight gateway-only
+   - **Reality**: Only provides HTTP/HTTPS ingress functionality, no mesh between services
+   - **Solution**: Use OpenShift Service Mesh separately if you need full mesh capabilities
 
 ### Debugging Commands
 
