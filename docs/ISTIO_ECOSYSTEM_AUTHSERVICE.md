@@ -150,7 +150,7 @@ graph TD
     end
 
     subgraph "Application Namespace"
-        AppPod[Your App Pod <br/>(No Sidecar)]
+        AppPod[Your App Pod - No Sidecar]
     end
 
     User -- "1. Request" --> Gateway
