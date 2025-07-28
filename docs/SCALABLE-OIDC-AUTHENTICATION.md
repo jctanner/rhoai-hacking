@@ -128,4 +128,65 @@ This centralized broker architecture directly solves every pain point you identi
 | **Onboarding New Applications** | **Slow & Manual.** Requires coordination between app teams and identity teams. | **Fast & Automated.** Onboarding a new app is as simple as applying a Kubernetes `AuthPolicy`. It's a pure GitOps workflow. |
 | **Scalability** | **Very Poor.** Fails after a handful of applications. | **Excellent.** Scales to hundreds of applications with minimal operational overhead. |
 
-By adopting this model, you move from a brittle, imperative process to a robust, declarative, and Kubernetes-native workflow for application authentication. 
+By adopting this model, you move from a brittle, imperative process to a robust, declarative, and Kubernetes-native workflow for application authentication.
+
+---
+
+## What About the Built-in OpenShift OAuth Server?
+
+This is a critical point of clarification. The centralized Authorino broker pattern described above is the recommended solution for integrating with **external, standard OIDC providers**.
+
+The built-in **OpenShift OAuth server** uses a different, mutually exclusive pattern for interactive user logins: the **`oauth-proxy` sidecar**. You cannot use Authorino's OIDC login flow capabilities with the OpenShift OAuth server because it is not a standard OIDC provider.
+
+### Two Mutually Exclusive Patterns for UI Logins
+
+You must choose one of these two patterns for your user-facing applications.
+
+| Feature | **Pattern 1: Authorino @ Gateway (This Document's Focus)** | **Pattern 2: `oauth-proxy` Sidecar** |
+| :--- | :--- | :--- |
+| **Use Case** | Integrating with **External/Standard OIDC Providers** (Keycloak, Okta, etc.). | Integrating with the **Built-in OpenShift OAuth Server**. |
+| **Architecture** | **Centralized.** One Authorino instance at the gateway handles all apps. | **Decentralized.** One `oauth-proxy` sidecar is required for *every* application pod. |
+| **How it Works** | Authorino initiates the OIDC login flow and manages the session. | The `oauth-proxy` sidecar initiates the login flow and manages the session. |
+| **App Deployment** | **No changes needed.** Your application `Deployment` is untouched. | **Requires modification.** Every `Deployment` must be configured with the `oauth-proxy` sidecar. |
+| **Client Management** | **Excellent.** One client in your external IDP can serve all apps. | **Good.** One `OAuthClient` CRD is needed per app, but this can be automated by a controller. |
+
+### Architectural Diagram: `oauth-proxy` Sidecar Flow
+
+This diagram shows how the `oauth-proxy` pattern works. Notice that the authentication logic is inside the application pod, not at the gateway.
+
+```mermaid
+graph TD
+    subgraph "Gateway (No Auth Policy)"
+        B[Envoy Gateway]
+    end
+
+    subgraph "Application Pod"
+        C[oauth-proxy Sidecar Container]
+        D[Your Application Container]
+        C -- "Forwards authenticated request" --> D
+    end
+    
+    subgraph "OpenShift Control Plane"
+        E[OpenShift OAuth Server]
+    end
+
+    User -- "Request" --> B
+    B -- "Routes traffic to Pod" --> C
+    C -- "No session? Redirects user to login" --> E
+    E -- "User logs in, redirects back to proxy" --> C
+    C -- "Exchanges code for token, creates session" --> E
+```
+
+### When to Choose Which Pattern
+
+*   **Choose the Centralized Authorino Broker (this document's pattern) if:**
+    *   You need to connect to a corporate standard OIDC provider like Keycloak, Okta, Azure AD, etc.
+    *   You want to avoid modifying application deployments.
+    *   You want a single, scalable client for all your applications.
+
+*   **Choose the `oauth-proxy` Sidecar pattern if:**
+    *   You want to use OpenShift's built-in user identities exclusively.
+    *   You do not have or want to manage an external IDP.
+    *   You are willing to add and manage a sidecar for every application that needs protection.
+
+In summary, the scalable architecture described in this document is specifically for the common enterprise use case of integrating with external OIDC providers. For leveraging OpenShift's internal OAuth system, you must use the `oauth-proxy` sidecar pattern instead. 
