@@ -361,6 +361,33 @@ The OpenShift OAuth server provides a comprehensive authentication solution that
 
 This architecture makes OpenShift significantly more accessible for end users while maintaining enterprise-grade security and integration capabilities.
 
+## Appendix: Manual Client Creation for Testing
+
+For testing or simple automation, you can create an OAuth client manually without building a full operator. This approach is ideal for quick integrations or validating application configurations.
+
+A ready-to-use bash script is available in this repository:
+-   **`create-oauth-client.sh`**
+
+This script handles the creation of a temporary `OAuthClient` and provides you with the necessary credentials and a test URL.
+
+### Usage
+
+1.  **Make the script executable:**
+    ```bash
+    chmod +x create-oauth-client.sh
+    ```
+
+2.  **Run the script:**
+    ```bash
+    # Create a client with the default name "my-bash-test-client"
+    ./create-oauth-client.sh
+
+    # Or specify a custom client name
+    ./create-oauth-client.sh my-app-test-client
+    ```
+
+The script requires `cluster-admin` permissions and will output the `client_id`, `client_secret`, a test URL, and the cleanup command.
+
 ## Comparison with Traditional OAuth/OIDC Providers (e.g., Keycloak)
 
 The OpenShift OAuth server is purpose-built for Kubernetes/OpenShift integration rather than being a general-purpose identity provider. Here's how it compares to full-featured solutions like Keycloak:
@@ -725,4 +752,5 @@ echo "When you are finished, run this command to delete the client:"
 echo "   oc delete oauthclient ${CLIENT_ID}"
 echo ""
 echo "------------------------------------------------------------------"
+
 ```
