@@ -208,4 +208,37 @@ graph TD
 | **Primary Goal** | Authenticate external users for web applications. | Authenticate and authorize internal service-to-service calls. |
 | **Impact on Apps** | No changes to application deployments. | All pods are injected with an Envoy sidecar. |
 
-**Conclusion:** You can confidently use the `authservice` in a simple, gateway-only architecture. You only need to introduce a full service mesh if and when your security requirements expand to include controlling internal East-West traffic. 
+**Conclusion:** You can confidently use the `authservice` in a simple, gateway-only architecture. You only need to introduce a full service mesh if and when your security requirements expand to include controlling internal East-west traffic.
+
+---
+
+## Incompatibility with OpenShift OAuth Server
+
+A critical point of clarification is that the `istio-ecosystem/authservice` **is not compatible** with the built-in OpenShift OAuth server for managing interactive user login flows. While both are powerful authentication systems, they are architecturally dissimilar and designed for different use cases.
+
+The `authservice` is a standard **OIDC Relying Party**, while the OpenShift OAuth server is a **specialized OAuth 2.0 server** that is not a generic, OIDC-compliant identity provider.
+
+### The Core Problem: Protocol Mismatch
+
+The incompatibility arises from a fundamental protocol mismatch. `authservice` strictly requires a standard OIDC provider, but the OpenShift OAuth server does not expose the necessary endpoints or token formats.
+
+| OIDC Feature | `authservice` **Requires** | OpenShift OAuth Server **Provides** | **Result** |
+| :--- | :--- | :--- | :--- |
+| **Discovery Endpoint** | A standard `/.well-known/openid-configuration` document to auto-discover all other endpoints. | **None.** The endpoints are custom and not published in a standard discovery document. | **Hard Failure.** `authservice` cannot initialize its configuration. |
+| **ID Token Format** | A standard **JSON Web Token (JWT)** that can be decoded and cryptographically verified. | An **Opaque Access Token** (a random, meaningless string to external clients). | **Catastrophic Failure.** `authservice` receives a token it cannot parse, failing all validation logic. |
+| **Token Signature Verification** | A standard `jwks_uri` to fetch the public keys needed to verify the JWT's signature. | **None.** Since it does not issue JWTs for this flow, there are no public keys to fetch. | **Hard Failure.** `authservice` has no way to verify the token's authenticity. |
+| **User Info Endpoint** | A standard `/userinfo` endpoint to fetch claims about the authenticated user. | A non-standard `/apis/user.openshift.io/v1/users/~` endpoint for cluster-aware clients. | **Failure.** `authservice` does not know how to query this custom API. |
+
+### Conclusion: Two Mutually Exclusive Patterns
+
+This leads to two distinct and correct architectural patterns that should not be mixed:
+
+1.  **For External, Standard OIDC Providers (Keycloak, Okta, Azure AD, etc.):**
+    *   **Use `istio-ecosystem/authservice`** at the gateway.
+    *   It is the correct tool for handling the full, standard OIDC login flow in a scalable way without requiring application sidecars.
+
+2.  **For the Built-in OpenShift OAuth Server:**
+    *   **Use the `oauth-proxy` sidecar** pattern.
+    *   This is the only component specifically designed to bridge the gap between a standard application and the OpenShift OAuth server's unique, non-OIDC protocol for interactive logins.
+
+Attempting to use `authservice` with the OpenShift OAuth server will result in failure because the server cannot provide the OIDC-specific responses that `authservice` is hard-coded to expect. You must choose the right tool for the identity provider you are integrating with. 
