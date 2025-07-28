@@ -141,7 +141,7 @@ graph TD
         User
     end
 
-    subgraph "Cluster Edge (No Service Mesh)"
+    subgraph "Cluster Edge (No Mesh)"
         Gateway[Envoy Gateway Pod] -- "ext_authz check" --> AuthService
     end
     
