@@ -29,6 +29,11 @@ auth:
   cookie_authentication_key: "${CAP_COOKIE_AUTH_KEY}"
   cookie_encryption_key: "${CAP_COOKIE_ENCRYPT_KEY}"
   
+  # TLS settings for auth provider connections
+  tls:
+    insecure_skip_verify: false  # Never skip in production
+    server_name: ""              # Override SNI server name if needed
+  
   kube_config:
     in_cluster: true  # Running in Kubernetes
 
@@ -64,7 +69,10 @@ proxy:
   
   tls:
     insecure_skip_verify: false
+    server_name: ""              # Override SNI server name if needed
     ca_file: "/etc/ssl/ca/ca.crt"  # Custom CA if needed
+    cert_file: ""                # Client certificate file if needed
+    key_file: ""                 # Client private key file if needed
 
 observability:
   metrics:

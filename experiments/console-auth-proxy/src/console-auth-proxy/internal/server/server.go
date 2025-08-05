@@ -170,6 +170,10 @@ func createAuthenticator(cfg *config.Config, metrics *auth.Metrics) (auth.Authen
 			SecureCookies:              cfg.Auth.SecureCookies,
 			CookieEncryptionKey:        cookieEncryptKey,
 			CookieAuthenticationKey:    cookieAuthKey,
+			TLS: oauth2.TLSConfig{
+				InsecureSkipVerify: cfg.Auth.TLS.InsecureSkipVerify,
+				ServerName:         cfg.Auth.TLS.ServerName,
+			},
 			K8sConfig:                  k8sConfig,
 			Metrics:                    metrics,
 			OCLoginCommand:             cfg.Auth.OCLoginCommand,

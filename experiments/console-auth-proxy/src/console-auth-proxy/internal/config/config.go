@@ -54,6 +54,9 @@ type AuthConfig struct {
 	CookieAuthenticationKey string `mapstructure:"cookie_authentication_key" yaml:"cookie_authentication_key"`
 	CookieEncryptionKey     string `mapstructure:"cookie_encryption_key" yaml:"cookie_encryption_key"`
 
+	// TLS configuration for auth provider connections
+	TLS AuthTLSConfig `mapstructure:"tls" yaml:"tls"`
+
 	// Kubernetes configuration for token validation
 	KubeConfig KubeConfig `mapstructure:"kube_config" yaml:"kube_config"`
 }
@@ -115,9 +118,16 @@ type TimeoutConfig struct {
 // ProxyTLSConfig contains TLS settings for backend connections
 type ProxyTLSConfig struct {
 	InsecureSkipVerify bool   `mapstructure:"insecure_skip_verify" yaml:"insecure_skip_verify"`
+	ServerName         string `mapstructure:"server_name" yaml:"server_name"` // Override SNI server name
 	CAFile             string `mapstructure:"ca_file" yaml:"ca_file"`
 	CertFile           string `mapstructure:"cert_file" yaml:"cert_file"`
 	KeyFile            string `mapstructure:"key_file" yaml:"key_file"`
+}
+
+// AuthTLSConfig contains TLS settings for auth provider connections
+type AuthTLSConfig struct {
+	InsecureSkipVerify bool   `mapstructure:"insecure_skip_verify" yaml:"insecure_skip_verify"`
+	ServerName         string `mapstructure:"server_name" yaml:"server_name"` // Override SNI server name
 }
 
 // ObservabilityConfig contains monitoring and logging configuration

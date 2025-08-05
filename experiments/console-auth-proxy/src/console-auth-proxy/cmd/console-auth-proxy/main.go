@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -41,9 +42,29 @@ authentication module to provide OAuth2/OIDC authentication for backend applicat
 	rootCmd.PersistentFlags().String("client-secret", "", "OAuth2 client secret")
 	rootCmd.PersistentFlags().String("redirect-url", "", "OAuth2 redirect URL")
 	rootCmd.PersistentFlags().Bool("secure-cookies", true, "Use secure cookies (HTTPS)")
+	
+	// TLS options for auth provider connections
+	rootCmd.PersistentFlags().Bool("auth-tls-insecure-skip-verify", false, "Skip TLS certificate verification for auth provider")
+	rootCmd.PersistentFlags().String("auth-tls-server-name", "", "Override SNI server name for auth provider connections")
+	
+	// TLS options for backend proxy connections
+	rootCmd.PersistentFlags().Bool("proxy-tls-insecure-skip-verify", false, "Skip TLS certificate verification for backend")
+	rootCmd.PersistentFlags().String("proxy-tls-server-name", "", "Override SNI server name for backend connections")
+	rootCmd.PersistentFlags().String("proxy-tls-ca-file", "", "Custom CA file for backend connections")
+	rootCmd.PersistentFlags().String("proxy-tls-cert-file", "", "Client certificate file for backend connections")
+	rootCmd.PersistentFlags().String("proxy-tls-key-file", "", "Client private key file for backend connections")
 
-	// Bind flags to viper
+	// Bind flags to viper with custom mappings for nested config
 	viper.BindPFlags(rootCmd.PersistentFlags())
+	
+	// Map CLI flags to nested config structure
+	viper.BindPFlag("auth.tls.insecure_skip_verify", rootCmd.PersistentFlags().Lookup("auth-tls-insecure-skip-verify"))
+	viper.BindPFlag("auth.tls.server_name", rootCmd.PersistentFlags().Lookup("auth-tls-server-name"))
+	viper.BindPFlag("proxy.tls.insecure_skip_verify", rootCmd.PersistentFlags().Lookup("proxy-tls-insecure-skip-verify"))
+	viper.BindPFlag("proxy.tls.server_name", rootCmd.PersistentFlags().Lookup("proxy-tls-server-name"))
+	viper.BindPFlag("proxy.tls.ca_file", rootCmd.PersistentFlags().Lookup("proxy-tls-ca-file"))
+	viper.BindPFlag("proxy.tls.cert_file", rootCmd.PersistentFlags().Lookup("proxy-tls-cert-file"))
+	viper.BindPFlag("proxy.tls.key_file", rootCmd.PersistentFlags().Lookup("proxy-tls-key-file"))
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -116,8 +137,9 @@ func initConfig() error {
 		viper.AddConfigPath("./configs")
 	}
 
-	// Read environment variables
+	// Read environment variables with key replacer for nested configs
 	viper.SetEnvPrefix("CAP") // Console Auth Proxy
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	viper.AutomaticEnv()
 
 	// Read config file if it exists

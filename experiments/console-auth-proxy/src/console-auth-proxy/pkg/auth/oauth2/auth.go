@@ -123,11 +123,20 @@ type Config struct {
 	CookieEncryptionKey     []byte
 	CookieAuthenticationKey []byte
 
+	// TLS configuration for auth provider connections
+	TLS TLSConfig
+
 	K8sConfig *rest.Config
 	Metrics   *auth.Metrics
 
 	// Custom login command to display in the console
 	OCLoginCommand string
+}
+
+// TLSConfig contains TLS settings for auth provider connections
+type TLSConfig struct {
+	InsecureSkipVerify bool
+	ServerName         string
 }
 
 type completedConfig struct {
@@ -213,7 +222,7 @@ func NewOAuth2Authenticator(ctx context.Context, config *Config) (*OAuth2Authent
 		// add the c.K8SCA to it and use the roundtripper created from that config
 		//
 		// Use the k8s CA for OAuth metadata discovery.
-		k8sClient, errK8Client := newHTTPClient(c.K8sCA, true)
+		k8sClient, errK8Client := newHTTPClient(c.K8sCA, true, c.TLS.InsecureSkipVerify, c.TLS.ServerName)
 		if errK8Client != nil {
 			return nil, errK8Client
 		}
@@ -396,13 +405,13 @@ func (c *Config) Complete() (*completedConfig, error) {
 	}
 
 	// make sure we get a valid starting client
-	fallbackClient, err := newHTTPClient(c.IssuerCA, true)
+	fallbackClient, err := newHTTPClient(c.IssuerCA, true, c.TLS.InsecureSkipVerify, c.TLS.ServerName)
 	if err != nil {
 		return nil, err
 	}
 
 	clientFunc := func() *http.Client {
-		currentClient, err := newHTTPClient(c.IssuerCA, true)
+		currentClient, err := newHTTPClient(c.IssuerCA, true, c.TLS.InsecureSkipVerify, c.TLS.ServerName)
 		if err != nil {
 			klog.Errorf("failed to get latest http client: %v", err)
 			return fallbackClient

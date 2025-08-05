@@ -2,10 +2,12 @@ package proxy
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -49,10 +51,30 @@ func NewAuthenticatedProxy(cfg *config.Config, authenticator auth.Authenticator)
 			InsecureSkipVerify: cfg.Proxy.TLS.InsecureSkipVerify,
 		}
 
+		// Set custom server name for SNI if provided
+		if cfg.Proxy.TLS.ServerName != "" {
+			tlsConfig.ServerName = cfg.Proxy.TLS.ServerName
+		}
+
 		// Load custom CA if provided
 		if cfg.Proxy.TLS.CAFile != "" {
-			// TODO: Load custom CA certificates
-			klog.Warningf("Custom CA file support not yet implemented: %s", cfg.Proxy.TLS.CAFile)
+			caData, err := os.ReadFile(cfg.Proxy.TLS.CAFile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read CA file %s: %w", cfg.Proxy.TLS.CAFile, err)
+			}
+			
+			certPool, err := x509.SystemCertPool()
+			if err != nil {
+				klog.Warningf("Failed to get system cert pool, using empty pool: %v", err)
+				certPool = x509.NewCertPool()
+			}
+			
+			if !certPool.AppendCertsFromPEM(caData) {
+				return nil, fmt.Errorf("failed to parse CA certificates from %s", cfg.Proxy.TLS.CAFile)
+			}
+			
+			tlsConfig.RootCAs = certPool
+			klog.V(4).Infof("Loaded custom CA certificates from %s for backend connections", cfg.Proxy.TLS.CAFile)
 		}
 
 		// Load client certificate if provided
@@ -62,6 +84,7 @@ func NewAuthenticatedProxy(cfg *config.Config, authenticator auth.Authenticator)
 				return nil, fmt.Errorf("failed to load client certificate: %w", err)
 			}
 			tlsConfig.Certificates = []tls.Certificate{cert}
+			klog.V(4).Infof("Loaded client certificate from %s for backend connections", cfg.Proxy.TLS.CertFile)
 		}
 
 		transport.TLSClientConfig = tlsConfig

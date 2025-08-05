@@ -27,6 +27,11 @@ auth:
   cookie_authentication_key: ""
   cookie_encryption_key: ""
   
+  # TLS settings for auth provider connections
+  tls:
+    insecure_skip_verify: false  # Set to true to skip TLS certificate verification for OIDC/OAuth provider
+    server_name: ""              # Override SNI server name for auth provider connections
+  
   kube_config:
     in_cluster: false
     config_path: "~/.kube/config"  # Path to kubeconfig file
@@ -62,7 +67,11 @@ proxy:
     max_idle_conns_per_host: 10
   
   tls:
-    insecure_skip_verify: false
+    insecure_skip_verify: false  # Set to true to skip TLS certificate verification for backend
+    server_name: ""              # Override SNI server name for backend connections
+    ca_file: ""                  # Custom CA file for backend connections
+    cert_file: ""                # Client certificate file for backend connections  
+    key_file: ""                 # Client private key file for backend connections
 
 observability:
   metrics:

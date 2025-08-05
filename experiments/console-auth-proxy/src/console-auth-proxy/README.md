@@ -8,7 +8,7 @@ A standalone authentication reverse proxy service that extracts and reuses the m
 - **OAuth2/OIDC Support**: Full support for OpenShift OAuth and generic OIDC providers
 - **Reverse Proxy**: Proxies authenticated requests to any backend application
 - **Session Management**: Sophisticated dual-store session management with encrypted cookies
-- **Security Features**: CSRF protection, token validation, and secure transport
+- **Security Features**: CSRF protection, token validation, secure transport, and flexible TLS configuration
 - **Cloud Native**: Kubernetes-ready with health checks and metrics
 - **Zero Auth Module Changes**: Preserves the original console auth code without modifications
 
@@ -47,6 +47,17 @@ docker run -p 8080:8080 \
   -e CAP_CLIENT_SECRET=your-client-secret \
   -e CAP_REDIRECT_URL=http://localhost:8080/auth/callback \
   -e CAP_BACKEND_URL=http://your-backend:3000 \
+  console-auth-proxy
+
+# Run with self-signed certificates (development)
+docker run -p 8080:8080 \
+  -e CAP_ISSUER_URL=https://self-signed-oidc.internal \
+  -e CAP_CLIENT_ID=your-client-id \
+  -e CAP_CLIENT_SECRET=your-client-secret \
+  -e CAP_REDIRECT_URL=http://localhost:8080/auth/callback \
+  -e CAP_BACKEND_URL=https://self-signed-app.internal \
+  -e CAP_AUTH_TLS_INSECURE_SKIP_VERIFY=true \
+  -e CAP_PROXY_TLS_INSECURE_SKIP_VERIFY=true \
   console-auth-proxy
 ```
 
@@ -110,6 +121,13 @@ The console-auth-proxy supports comprehensive CLI configuration. Here are common
 | `--client-secret` | OAuth2 client secret | *(required)* | `--client-secret secret123` |
 | `--redirect-url` | OAuth2 redirect URL | *(required)* | `--redirect-url https://proxy.example.com/auth/callback` |
 | `--secure-cookies` | Use secure HTTPS-only cookies | `true` | `--secure-cookies=false` |
+| `--auth-tls-insecure-skip-verify` | Skip TLS verification for auth provider | `false` | `--auth-tls-insecure-skip-verify=true` |
+| `--auth-tls-server-name` | Override SNI server name for auth provider | | `--auth-tls-server-name=auth.internal` |
+| `--proxy-tls-insecure-skip-verify` | Skip TLS verification for backend | `false` | `--proxy-tls-insecure-skip-verify=true` |
+| `--proxy-tls-server-name` | Override SNI server name for backend | | `--proxy-tls-server-name=app.internal` |
+| `--proxy-tls-ca-file` | Custom CA file for backend connections | | `--proxy-tls-ca-file=/etc/ssl/ca.crt` |
+| `--proxy-tls-cert-file` | Client certificate file for backend | | `--proxy-tls-cert-file=/etc/ssl/client.crt` |
+| `--proxy-tls-key-file` | Client private key file for backend | | `--proxy-tls-key-file=/etc/ssl/client.key` |
 | `--help, -h` | Show help message | | `--help` |
 | `--version, -v` | Show version information | | `--version` |
 
@@ -148,6 +166,32 @@ The console-auth-proxy supports comprehensive CLI configuration. Here are common
   --listen-address :9090
 ```
 
+#### Self-Signed Certificates (Development)
+```bash
+# Skip TLS verification for both auth provider and backend
+./console-auth-proxy \
+  --backend-url https://self-signed-app.internal:8443 \
+  --issuer-url https://self-signed-keycloak.internal:8443/auth/realms/myrealm \
+  --client-id console-proxy \
+  --client-secret mysecret \
+  --redirect-url https://proxy.example.com/auth/callback \
+  --auth-tls-insecure-skip-verify=true \
+  --proxy-tls-insecure-skip-verify=true
+```
+
+#### SNI Override for IP-based Connections
+```bash
+# Use IP addresses but override SNI names to match certificates
+./console-auth-proxy \
+  --backend-url https://192.168.1.100:8080 \
+  --issuer-url https://10.0.0.50:8443 \
+  --auth-tls-server-name keycloak.internal \
+  --proxy-tls-server-name app.internal \
+  --client-id my-client \
+  --client-secret my-secret \
+  --redirect-url https://proxy.example.com/auth/callback
+```
+
 ### Environment Variable Equivalents
 
 All CLI flags can be set via environment variables with the `CAP_` prefix:
@@ -160,6 +204,13 @@ export CAP_CLIENT_ID=your-client-id
 export CAP_CLIENT_SECRET=your-client-secret
 export CAP_REDIRECT_URL=http://localhost:8080/auth/callback
 export CAP_SECURE_COOKIES=true
+
+# TLS configuration via environment variables
+export CAP_AUTH_TLS_INSECURE_SKIP_VERIFY=false
+export CAP_AUTH_TLS_SERVER_NAME=auth.internal
+export CAP_PROXY_TLS_INSECURE_SKIP_VERIFY=false
+export CAP_PROXY_TLS_SERVER_NAME=app.internal
+export CAP_PROXY_TLS_CA_FILE=/etc/ssl/ca/ca.crt
 
 # Run with env vars
 ./console-auth-proxy
@@ -226,6 +277,11 @@ auth:
   redirect_url: "http://localhost:8080/auth/callback"
   scope: ["openid", "profile", "email"]
   secure_cookies: true
+  
+  # TLS settings for auth provider connections
+  tls:
+    insecure_skip_verify: false  # Set to true to skip TLS verification (dev only)
+    server_name: ""              # Override SNI server name if needed
 
 proxy:
   backend:
@@ -234,6 +290,14 @@ proxy:
     user_header: "X-Forwarded-User"
     auth_header: "Authorization"
     auth_header_value: "bearer"
+  
+  # TLS settings for backend connections
+  tls:
+    insecure_skip_verify: false  # Set to true to skip TLS verification (dev only)
+    server_name: ""              # Override SNI server name if needed
+    ca_file: ""                  # Custom CA certificate file
+    cert_file: ""                # Client certificate file for mTLS
+    key_file: ""                 # Client private key file for mTLS
 ```
 
 ### Environment Variables
@@ -246,6 +310,16 @@ All configuration options can be set via environment variables with the `CAP_` p
 - `CAP_REDIRECT_URL`: OAuth2 redirect URL
 - `CAP_BACKEND_URL`: Backend application URL
 - `CAP_SECURE_COOKIES`: Use secure cookies (true/false)
+
+#### TLS Configuration Variables
+
+- `CAP_AUTH_TLS_INSECURE_SKIP_VERIFY`: Skip TLS verification for auth provider (true/false)
+- `CAP_AUTH_TLS_SERVER_NAME`: Override SNI server name for auth provider
+- `CAP_PROXY_TLS_INSECURE_SKIP_VERIFY`: Skip TLS verification for backend (true/false)
+- `CAP_PROXY_TLS_SERVER_NAME`: Override SNI server name for backend
+- `CAP_PROXY_TLS_CA_FILE`: Custom CA file for backend connections
+- `CAP_PROXY_TLS_CERT_FILE`: Client certificate file for backend connections
+- `CAP_PROXY_TLS_KEY_FILE`: Client private key file for backend connections
 
 ### Configuration Files
 
@@ -367,6 +441,70 @@ grantMethod: auto
 EOF
 ```
 
+## TLS Configuration
+
+The proxy supports comprehensive TLS configuration for both auth provider connections and backend service connections.
+
+### Common TLS Scenarios
+
+#### Self-Signed Certificates (Development Only)
+
+⚠️ **Warning**: Only use `insecure_skip_verify` in development environments.
+
+```yaml
+auth:
+  tls:
+    insecure_skip_verify: true
+
+proxy:
+  tls:
+    insecure_skip_verify: true
+```
+
+#### SNI Override for IP-Based Connections
+
+When connecting to services by IP address but certificates use hostnames:
+
+```yaml
+auth:
+  issuer_url: "https://192.168.1.100:8443"
+  tls:
+    server_name: "keycloak.internal"
+
+proxy:
+  backend:
+    url: "https://10.0.0.50:8080"
+  tls:
+    server_name: "app.internal"
+```
+
+#### Custom CA Certificates
+
+For services using private/corporate CA certificates:
+
+```yaml
+auth:
+  issuer_ca: "/etc/ssl/ca/auth-provider-ca.crt"
+
+proxy:
+  tls:
+    ca_file: "/etc/ssl/ca/backend-ca.crt"
+```
+
+#### Mutual TLS (mTLS)
+
+For backend services requiring client certificates:
+
+```yaml
+proxy:
+  tls:
+    ca_file: "/etc/ssl/ca/backend-ca.crt"
+    cert_file: "/etc/ssl/client/client.crt"
+    key_file: "/etc/ssl/client/client.key"
+```
+
+For detailed TLS configuration examples and troubleshooting, see [TLS_CONFIGURATION.md](./TLS_CONFIGURATION.md).
+
 ## Security Considerations
 
 ### Production Deployment
@@ -377,6 +515,7 @@ EOF
 4. **Network Policies**: Restrict network access in Kubernetes
 5. **RBAC**: Use minimal service account permissions
 6. **Regular Updates**: Keep dependencies updated
+7. **TLS Best Practices**: Never use `insecure_skip_verify` in production
 
 ### Cookie Encryption Keys
 
