@@ -138,15 +138,15 @@ graph TD
         I(Identity Provider)
     end
 
-    U -- "1. Access /jupyter/user-a/" --> G;
-    G -- "2. Not Authenticated. Redirect to IDP" --> U;
-    U -- "3. Authenticates with IDP" --> I;
-    I -- "4. Redirects to Gateway's <br> /oauth2/callback with Auth Code" --> G;
-    G -- "5. Exchanges Code for Tokens" --> I;
-    I -- "6. Returns Tokens" --> G;
-    G -- "7. Sets Session Cookie and <br> Proxies Request to Upstream" --> S1;
-    S1 -- "8. Returns Response" --> G;
-    G -- "9. Returns Response to User" --> U;
+    U -- "Access /jupyter/user-a/" --> G;
+    G -- "Not Authenticated. Redirect to IDP" --> U;
+    U -- "Authenticates with IDP" --> I;
+    I -- "Redirects to Gateway's <br> /oauth2/callback with Auth Code" --> G;
+    G -- "Exchanges Code for Tokens" --> I;
+    I -- "Returns Tokens" --> G;
+    G -- "Sets Session Cookie and <br> Proxies Request to Upstream" --> S1;
+    S1 -- "Returns Response" --> G;
+    G -- "Returns Response to User" --> U;
 
     style G fill:#f9f,stroke:#333,stroke-width:2px
     style S1 fill:#ccf,stroke:#333,stroke-width:1px
