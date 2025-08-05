@@ -167,7 +167,7 @@ This architecture provides a clean separation of concerns. The backend services 
 
 ## A Note on OpenShift's Integrated OAuth
 
-The friction described above is often invisible to developers working in a default OpenShift environment, which provides a uniquely seamless authentication experience thanks to its integrated OAuth server and the `oauth-proxy`.
+The friction described above is often invisible to developers working in a default OpenShift environment, which provides a uniquely seamless authentication experience thanks to its integrated OAuth server and the specialized `openshift/oauth-proxy`.
 
 ### The "Magic": Default Integrated Authentication
 
@@ -178,7 +178,7 @@ graph TD
     subgraph "OpenShift Cluster"
         OCP_API(OpenShift API Server)
         OCP_OAuth(Internal OAuth Server)
-        Proxy(oauth-proxy)
+        Proxy("openshift/oauth-proxy")
         App(Your Application)
     
         OCP_API -- "Manages" --> OCP_OAuth
@@ -193,17 +193,17 @@ graph TD
     Proxy -- "Validates session" --> App
 ```
 
-*   **Dynamic Client Recognition:** When you deploy an application protected by `oauth-proxy`, you typically point it to a `ServiceAccount`. The OpenShift OAuth server is smart enough to treat this `ServiceAccount` as a dynamic `OAuthClient`. It automatically trusts the redirect URI provided by the proxy (which is simply the application's Route URL) without any pre-registration.
-*   **Seamless Experience:** This allows for effortless, automated protection of new services. You can create a new Route and an `oauth-proxy` sidecar for it, and the authentication flow works immediately without any manual configuration in the IdP.
+*   **Dynamic Client Recognition:** When you deploy an application protected by `openshift/oauth-proxy`, you typically point it to a `ServiceAccount`. The OpenShift OAuth server is smart enough to treat this `ServiceAccount` as a dynamic `OAuthClient`. It automatically trusts the redirect URI provided by the proxy (which is simply the application's Route URL) without any pre-registration.
+*   **Seamless Experience:** This allows for effortless, automated protection of new services. You can create a new Route and an `oauth-proxy` sidecar for it, and the authentication flow works immediately without any manual IdP configuration.
 
 ### The Federated Reality: Using an External IdP
 
-This "magic" disappears the moment you configure the cluster to federate with an external Identity Provider (e.g., Keycloak, Azure AD, Okta).
+This "magic" disappears the moment you configure the cluster to federate with an external Identity Provider. The `openshift/oauth-proxy` cannot be used with generic OIDC providers; it is exclusively for the integrated OpenShift OAuth server. Therefore, you must switch to a different proxy implementation.
 
 ```mermaid
 graph TD
     subgraph "OpenShift Cluster"
-        Proxy(oauth-proxy)
+        Proxy("Generic OIDC Proxy<br>(e.g., oauth2-proxy)")
         App(Your Application)
     end
 
@@ -219,6 +219,6 @@ graph TD
     Ext_IDP -- "ERROR: Redirect URI for this Route is not registered!" --> U
 ```
 
-*   **Loss of Dynamic Clients:** The external IdP has no knowledge of OpenShift's internal `ServiceAccount` or `OAuthClient` objects. It only knows about the clients that have been explicitly registered in its own database.
-*   **The Redirect URI Problem Reappears:** The `oauth-proxy` will still try to use the application's unique Route URL as the redirect URI. Since this dynamic URL was never manually added to the client configuration in the external IdP, the IdP will correctly reject the authentication request as a security measure.
-*   **The Gateway Pattern Becomes Necessary:** At this point, the seamless experience is broken, and you are forced to confront the OIDC architectural challenge described in the previous section. The **Authentication Gateway (Reverse Proxy) Pattern** becomes the necessary and correct solution to re-establish a secure and automated authentication system for your on-demand services.
+*   **Loss of Dynamic Clients:** When you switch to a generic OIDC-aware proxy (like `oauth2-proxy`), that proxy must be configured to talk to the external IdP. The external IdP has no knowledge of OpenShift's internal `ServiceAccount` objects. It only knows about the OIDC clients that have been explicitly registered in its own database.
+*   **The Redirect URI Problem Reappears:** The generic proxy will try to use the application's unique Route URL as the redirect URI. Since this dynamic URL was never manually added to the client configuration in the external IdP, the IdP will correctly reject the authentication request as a security measure.
+*   **The Gateway Pattern Becomes Necessary:** At this point, the seamless integrated experience is broken. You are forced to confront the standard OIDC architectural challenge, making the **Authentication Gateway (Reverse Proxy) Pattern** the necessary and correct solution to re-establish a secure and automated authentication system for your on-demand services against an external IdP.
