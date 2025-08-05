@@ -60,6 +60,26 @@ The terms **Redirect URI** and **Callback URL** are often used interchangeably. 
 
 Here’s a simplified step-by-step of how these URLs are used in the "Authorization Code Flow":
 
+```mermaid
+sequenceDiagram
+    participant User
+    participant Browser
+    participant WebApp as Web App (Client)
+    participant IDP as Identity Provider
+
+    User->>+Browser: Clicks "Login" on yourapp.com
+    Browser->>+WebApp: Request to login endpoint
+    WebApp-->>-Browser: Redirect to IDP's /auth endpoint <br> (with client_id, redirect_uri, state)
+    Browser->>+IDP: Follows redirect to IDP
+    IDP-->>Browser: Shows login and consent screen
+    User->>IDP: Enters credentials and grants access
+    IDP-->>-Browser: Redirect to WebApp's callback URI <br> (with authorization_code, state)
+    Browser->>+WebApp: Follows redirect to /callback
+    WebApp->>+IDP: Exchanges auth_code for tokens <br> (direct server-to-server call)
+    IDP-->>-WebApp: Returns ID Token & Access Token
+    WebApp-->>-Browser: Sets session cookie, serves application
+```
+
 1.  **User Clicks "Login":** A user on your application (e.g., `https://yourapp.com`) clicks a "Login with Google" button.
 
 2.  **Redirect to IDP:** Your application redirects the user to the IDP's authorization endpoint (e.g., `https://accounts.google.com/o/oauth2/v2/auth`). This request includes several parameters, most importantly:
@@ -100,6 +120,39 @@ This leaves platform architects with several poor options:
 ### The Solution: The Authentication Gateway (Reverse Proxy) Pattern
 
 A more secure, scalable, and manageable solution is to decouple the authentication logic from the backend services using a centralized **Authentication Gateway**. This is typically implemented as a reverse proxy with built-in OIDC support.
+
+```mermaid
+graph TD
+    subgraph "Browser"
+        U(User)
+    end
+
+    subgraph "OpenShift / Kubernetes Cluster"
+        G(Authentication Gateway <br> my-platform.apps.my-cluster.com)
+        S1(Jupyter Service A)
+        S2(Model Service B)
+        S3(...)
+    end
+    
+    subgraph "External"
+        I(Identity Provider)
+    end
+
+    U -- "1. Access /jupyter/user-a/" --> G;
+    G -- "2. Not Authenticated. Redirect to IDP" --> U;
+    U -- "3. Authenticates with IDP" --> I;
+    I -- "4. Redirects to Gateway's <br> /oauth2/callback with Auth Code" --> G;
+    G -- "5. Exchanges Code for Tokens" --> I;
+    I -- "6. Returns Tokens" --> G;
+    G -- "7. Sets Session Cookie and <br> Proxies Request to Upstream" --> S1;
+    S1 -- "8. Returns Response" --> G;
+    G -- "9. Returns Response to User" --> U;
+
+    style G fill:#f9f,stroke:#333,stroke-width:2px
+    style S1 fill:#ccf,stroke:#333,stroke-width:1px
+    style S2 fill:#ccf,stroke:#333,stroke-width:1px
+    style S3 fill:#ccf,stroke:#333,stroke-width:1px
+```
 
 In this pattern:
 
