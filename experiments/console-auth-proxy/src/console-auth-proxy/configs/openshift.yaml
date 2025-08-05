@@ -1,0 +1,82 @@
+# OpenShift configuration for Console Auth Proxy
+server:
+  listen_address: "0.0.0.0:8080"
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+  tls:
+    enabled: false  # Let OpenShift Route handle TLS termination
+
+auth:
+  auth_source: "openshift"  # Use OpenShift OAuth server
+  issuer_url: "${CAP_ISSUER_URL:-https://oauth-openshift.apps.cluster.example.com}"
+  client_id: "${CAP_CLIENT_ID}"
+  client_secret: "${CAP_CLIENT_SECRET}"
+  redirect_url: "${CAP_REDIRECT_URL}"
+  scope:
+    - "user:info"
+    - "user:check-access"
+  success_url: "/"
+  error_url: "/auth/error"
+  cookie_path: "/"
+  secure_cookies: true
+  
+  # OpenShift-specific configuration
+  k8s_ca: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+  oc_login_command: "oc login --server=${CAP_ISSUER_URL} --web"
+  
+  # Cookie encryption keys
+  cookie_authentication_key: "${CAP_COOKIE_AUTH_KEY}"
+  cookie_encryption_key: "${CAP_COOKIE_ENCRYPT_KEY}"
+  
+  kube_config:
+    in_cluster: true
+    ca_file: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    bearer_token_file: "/var/run/secrets/kubernetes.io/serviceaccount/token"
+
+proxy:
+  backend:
+    url: "${CAP_BACKEND_URL}"
+    health_check_path: "/healthz"
+    health_check_interval: 30s
+  
+  headers:
+    user_header: "X-Forwarded-User"
+    user_id_header: "X-Forwarded-User-ID"
+    auth_header: "Authorization"
+    auth_header_value: "bearer"
+    
+    custom:
+      X-Proxy-Source: "console-auth-proxy"
+      X-Platform: "openshift"
+      X-Forwarded-Access-Token: "true"
+    
+    remove:
+      - "Cookie"
+  
+  timeouts:
+    dial: 10s
+    tls_handshake: 10s
+    response_header: 30s
+    expect_continue: 1s
+    idle_conn: 90s
+    max_idle_conns: 100
+    max_idle_conns_per_host: 10
+  
+  tls:
+    insecure_skip_verify: false
+
+observability:
+  metrics:
+    enabled: true
+    path: "/metrics"
+  
+  logging:
+    level: "info"
+    format: "json"
+    output: "stdout"
+  
+  health:
+    enabled: true
+    liveness_path: "/healthz"
+    readiness_path: "/readyz"

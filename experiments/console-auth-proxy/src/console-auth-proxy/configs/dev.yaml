@@ -1,0 +1,80 @@
+# Development configuration for Console Auth Proxy
+server:
+  listen_address: "0.0.0.0:8080"
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+  tls:
+    enabled: false
+
+auth:
+  auth_source: "oidc"  # or "openshift" for OpenShift OAuth
+  issuer_url: "https://your-oidc-provider.example.com"
+  client_id: "console-auth-proxy"
+  client_secret: "your-client-secret"
+  redirect_url: "http://localhost:8080/auth/callback"
+  scope:
+    - "openid"
+    - "profile"
+    - "email"
+  success_url: "/"
+  error_url: "/auth/error"
+  cookie_path: "/"
+  secure_cookies: false  # Set to true in production with HTTPS
+  
+  # Cookie encryption keys (base64 encoded, generate with: openssl rand -base64 64)
+  # Leave empty for development - random keys will be generated
+  cookie_authentication_key: ""
+  cookie_encryption_key: ""
+  
+  kube_config:
+    in_cluster: false
+    config_path: "~/.kube/config"  # Path to kubeconfig file
+
+proxy:
+  backend:
+    url: "http://localhost:3000"  # Your backend application URL
+    health_check_path: "/healthz"
+    health_check_interval: 30s
+  
+  headers:
+    user_header: "X-Forwarded-User"
+    user_id_header: "X-Forwarded-User-ID"
+    email_header: "X-Forwarded-Email"
+    auth_header: "Authorization"
+    auth_header_value: "bearer"  # "bearer" or "token"
+    
+    # Custom headers to add to backend requests
+    custom:
+      X-Proxy-Source: "console-auth-proxy"
+    
+    # Headers to remove from backend requests
+    remove:
+      - "Cookie"
+  
+  timeouts:
+    dial: 30s
+    tls_handshake: 10s
+    response_header: 30s
+    expect_continue: 1s
+    idle_conn: 90s
+    max_idle_conns: 100
+    max_idle_conns_per_host: 10
+  
+  tls:
+    insecure_skip_verify: false
+
+observability:
+  metrics:
+    enabled: true
+    path: "/metrics"
+  
+  logging:
+    level: "info"  # debug, info, warn, error
+    format: "text"  # json, text
+    output: "stdout"
+  
+  health:
+    enabled: true
+    liveness_path: "/healthz"
+    readiness_path: "/readyz"
