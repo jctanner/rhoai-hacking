@@ -131,8 +131,74 @@ The startup arguments for `oauth2-proxy` are critical for making it work as a pu
 *   `--set-xauthrequest=true`: Works with `--pass-access-token` to specifically set the `X-Auth-Request-Access-Token` header in the response to Envoy, which is required for the `auth_request` flow.
 *   `--ssl-insecure-skip-verify=true`: **(For demo purposes only)**. This is required because the `oauth2-proxy` pod needs to connect to the Keycloak server, and if Keycloak is using a self-signed or private CA, this flag is needed to bypass TLS certificate validation. In production, you would mount a custom CA bundle instead.
 
+### Understanding the 401 Error from the Kubernetes API
+
+When the `echo-server` attempts to use the user's token to list namespaces, the Kubernetes API will return a `401 Unauthorized` error. This is expected and correct behavior, demonstrating a key JWT security feature.
+
+The call to the Kubernetes API from the echo server will only succeed if the JWT has an **audience** claim (`aud`) containing a client name that is also present in the allowed audience list of the OpenShift cluster's OIDC configuration. In this demo, the token's audience is for our `odh` client, but the Kubernetes API expects a different audience (e.g., `kubernetes`). The mismatch causes the API server to reject the token, which is the correct and secure action. The `401` error successfully proves that the token was passed correctly and that the destination API is enforcing its security policies.
+
 ### Usage
 1.  **IMPORTANT:** Edit `src/envoy-proxy-authenticated/deployment.yaml` and fill in the placeholder values in the `oauth2-proxy-creds` Secret with your Keycloak client details and a random cookie secret.
 2.  Ensure your OIDC client in Keycloak has the valid redirect URI set to `https://echo-proxy-authenticated.apps-crc.testing/oauth2/callback`.
 3.  Apply the manifest: `oc apply -f src/envoy-proxy-authenticated/deployment.yaml`.
 4.  The authenticated proxy will be accessible at `https://echo-proxy-authenticated.apps-crc.testing`. Accessing this URL will trigger the full OIDC login flow.
+
+---
+
+### Example Success Output
+
+After successfully authenticating and configuring the OIDC provider with the correct audiences, the `echo-server` will return a response like the following. This demonstrates that the user's token was successfully passed through all layers and used to query the Kubernetes API.
+
+```json
+{
+  "headers": {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "max-age=0",
+    "Cookie": "_oauth2_proxy=...<snip>...",
+    "Forwarded": "for=192.168.127.1;host=echo-proxy-authenticated.apps-crc.testing;proto=https",
+    "Host": "echo-proxy-authenticated.apps-crc.testing",
+    "X-Auth-Request-Access-Token": "eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJxVll6QjI5TnE0WWhld2hLOUJtR050ekpRR2x4UlA0S3Z0UkczUjVzTTdZIn0...",
+    "X-Auth-Request-Email": "kubeadmin@example.com",
+    "X-Auth-Request-User": "2aeed4ef-05eb-4b23-9354-f19fccbcc37b",
+    "X-Forwarded-For": "192.168.127.1",
+    "X-Forwarded-Host": "echo-proxy-authenticated.apps-crc.testing",
+    "X-Forwarded-Proto": "https",
+    "X-Auth-Request-Access-Token-Decoded": {
+      "exp": 1754522938,
+      "iat": 1754522638,
+      "auth_time": 1754522638,
+      "jti": "onrtac:18f0288e-5eea-4808-82c4-461ab5cd4cf5",
+      "iss": "https://keycloak.tannerjc.net/realms/ocp-byoidc-realm",
+      "aud": "odh",
+      "sub": "2aeed4ef-05eb-4b23-9354-f19fccbcc37b",
+      "typ": "Bearer",
+      "azp": "odh",
+      "sid": "d1388489-ae80-4351-86d3-eb918167685c",
+      "acr": "1",
+      "scope": "openid email profile",
+      "email_verified": true,
+      "name": "Kube Admin",
+      "groups": [
+        "cluster-admins"
+      ],
+      "preferred_username": "kubeadmin",
+      "given_name": "Kube",
+      "family_name": "Admin",
+      "email": "kubeadmin@example.com"
+    }
+  },
+  "kubernetes_api_result": {
+    "status": "Success",
+    "namespaces": [
+      "default",
+      "echo-server",
+      "hostpath-provisioner",
+      "kube-node-lease",
+      "kube-public",
+      "kube-system"
+    ]
+  }
+}
+```
