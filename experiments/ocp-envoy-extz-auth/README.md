@@ -51,6 +51,8 @@ graph TD
     *   A `Service` to expose the Envoy pod.
     *   An OpenShift `Route` to make the proxy publicly accessible.
 
+> **Note on the Envoy Image:** The `registry.redhat.io/openshift-service-mesh/proxyv2-rhel9:2.6` image is designed for use with Istio and has a default entrypoint (`pilot-agent`) that we don't want. In the Deployment spec, we override this by setting the `command` to `/usr/local/bin/envoy` to run the raw Envoy binary directly with our custom configuration.
+
 ### Usage
 1.  Apply the manifest: `oc apply -f src/envoy-proxy/deployment.yaml`.
 2.  The proxy will be accessible at `http://echo-proxy.apps-crc.testing`.
