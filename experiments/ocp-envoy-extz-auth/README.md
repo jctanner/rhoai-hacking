@@ -12,7 +12,7 @@ This is a simple backend service used as the destination for our proxies. It is 
 
 ```mermaid
 graph TD
-    User -- "https://echo-direct.apps-crc.testing" --> OCP_Route[OpenShift Route]
+    User -- "Request to echo-direct host" --> OCP_Route[OpenShift Route]
     OCP_Route --> Echo_Service[Service: echo-server]
     Echo_Service --> Echo_Pod[Pod: echo-server]
 ```
@@ -37,7 +37,7 @@ This is a basic example of an Envoy proxy that performs simple routing to the ba
 
 ```mermaid
 graph TD
-    User -- "https://echo-proxy.apps-crc.testing" --> OCP_Route[OpenShift Route]
+    User -- "Request to echo-proxy host" --> OCP_Route[OpenShift Route]
     OCP_Route --> Envoy_Service[Service: envoy-proxy]
     Envoy_Service --> Envoy_Pod[Pod: envoy-proxy]
     Envoy_Pod -- "Forwards traffic" --> Echo_Service[Service: echo-server]
