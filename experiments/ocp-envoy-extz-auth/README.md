@@ -57,13 +57,37 @@ This is the complete, secure setup demonstrating Envoy's external authorization 
 ### Components:
 *   `deployment.yaml`: A single, comprehensive manifest containing:
     *   A `Secret` to hold the OIDC client credentials for `oauth2-proxy`. **You must edit this file before applying it.**
-    *   A `Deployment` and `Service` for `oauth2-proxy`, configured to use Keycloak and to act as a pure authorization service (`--upstream=static://200`).
-    *   A `ConfigMap` with an advanced Envoy configuration that correctly routes `/oauth2/...` traffic to the proxy while protecting all other paths with the `ext_authz` filter.
-    *   A `Deployment`, `Service`, and OpenShift `Route` (with explicit TLS edge termination) for the authenticated Envoy proxy.
+    *   A `Deployment` and `Service` for `oauth2-proxy`, configured to use Keycloak.
+    *   A `ConfigMap` with an advanced Envoy configuration.
+    *   A `Deployment`, `Service`, and OpenShift `Route` for the authenticated Envoy proxy.
+
+### Envoy Routing Logic Explained
+
+The order of the routing rules in the Envoy `ConfigMap` is critical. Envoy evaluates them from top to bottom and uses the first one that matches.
+
+1.  **Rule 1: The OAuth2 Callback Exemption**
+    *   **Match:** The first rule checks if the request path starts with `/oauth2`.
+    *   **Action:** If it matches, the request is immediately routed to the `oauth2-proxy` service.
+    *   **Crucially:** This rule also has a `typed_per_filter_config` section that explicitly **disables** the `ext_authz` filter for this specific route. This is the key to preventing an infinite loop where the login callback itself would require a login.
+
+2.  **Rule 2: The Default Protected Route**
+    *   **Match:** If the first rule does not match, Envoy checks the second rule, which matches any path starting with `/` (i.e., everything else).
+    *   **Action:** The request is routed to the `echo-server`.
+    *   **Implicit Action:** Because this rule does *not* have a section disabling the `ext_authz` filter, the global `ext_authz` filter we defined is automatically applied. This means every request matching this rule must first be approved by `oauth2-proxy` before it is sent to the `echo-server`.
+
+### `oauth2-proxy` Configuration Explained
+
+The startup arguments for `oauth2-proxy` are critical for making it work as a pure authorization service for Envoy:
+*   `--provider=oidc`: Specifies that we are using a standard OpenID Connect provider.
+*   `--oidc-issuer-url=...`: The URL to your Keycloak realm's discovery endpoint.
+*   `--upstream=static://200`: This is the key trick. It tells `oauth2-proxy` to not act as a reverse proxy. Instead of forwarding traffic, it will simply return a static `200 OK` response after a successful login, which is the signal Envoy needs to proceed.
+*   `--skip-provider-button`: Immediately redirects users to the Keycloak login page instead of showing an intermediate login page from `oauth2-proxy` itself.
+*   `--pass-access-token=true`: Tells the proxy to pass the user's access token in a header.
+*   `--set-xauthrequest=true`: Works with `--pass-access-token` to specifically set the `X-Auth-Request-Access-Token` header in the response to Envoy, which is required for the `auth_request` flow.
+*   `--ssl-insecure-skip-verify=true`: **(For demo purposes only)**. This is required because the `oauth2-proxy` pod needs to connect to the Keycloak server, and if Keycloak is using a self-signed or private CA, this flag is needed to bypass TLS certificate validation. In production, you would mount a custom CA bundle instead.
 
 ### Usage:
 1.  **IMPORTANT:** Edit `src/envoy-proxy-authenticated/deployment.yaml` and fill in the placeholder values in the `oauth2-proxy-creds` Secret with your Keycloak client details and a random cookie secret.
 2.  Ensure your OIDC client in Keycloak has the valid redirect URI set to `https://echo-proxy-authenticated.apps-crc.testing/oauth2/callback`.
 3.  Apply the manifest: `oc apply -f src/envoy-proxy-authenticated/deployment.yaml`.
 4.  The authenticated proxy will be accessible at `https://echo-proxy-authenticated.apps-crc.testing`. Accessing this URL will trigger the full OIDC login flow.
-
