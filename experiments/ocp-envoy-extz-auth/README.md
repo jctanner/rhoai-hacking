@@ -8,15 +8,22 @@ There are three main components, each in its own directory under `src/`.
 
 ## 1. The Echo Service (`src/echo-server`)
 
-This is a simple backend service used as the destination for our proxies.
+This is a simple backend service used as the destination for our proxies. It is exposed directly via an OpenShift Route without any additional protection.
 
-### Components:
+```mermaid
+graph TD
+    User -- "https://echo-direct.apps-crc.testing" --> OCP_Route[OpenShift Route]
+    OCP_Route --> Echo_Service[Service: echo-server]
+    Echo_Service --> Echo_Pod[Pod: echo-server]
+```
+
+### Components
 *   `app.py`: A simple Python Flask application that listens on any path and echoes back all the request headers it receives as a JSON response.
 *   `Dockerfile`: A container image definition for the echo service.
 *   `Makefile`: A helper to build and push the container image to `registry.tannerjc.net/echo-server:latest`.
 *   `deployment.yaml`: A Kubernetes manifest that deploys the echo service into the `echo-server` namespace. It also creates a `Service` and a direct, unsecured OpenShift `Route` to expose it.
 
-### Usage:
+### Usage
 1.  Navigate to `src/echo-server`.
 2.  Run `make build` and `make push` to build and publish the container image.
 3.  Apply the manifest: `oc apply -f deployment.yaml`.
@@ -26,16 +33,25 @@ This is a simple backend service used as the destination for our proxies.
 
 ## 2. Unauthenticated Envoy Proxy (`src/envoy-proxy`)
 
-This is a basic example of an Envoy proxy that performs simple routing.
+This is a basic example of an Envoy proxy that performs simple routing to the backend echo service.
 
-### Components:
+```mermaid
+graph TD
+    User -- "https://echo-proxy.apps-crc.testing" --> OCP_Route[OpenShift Route]
+    OCP_Route --> Envoy_Service[Service: envoy-proxy]
+    Envoy_Service --> Envoy_Pod[Pod: envoy-proxy]
+    Envoy_Pod -- "Forwards traffic" --> Echo_Service[Service: echo-server]
+    Echo_Service --> Echo_Pod[Pod: echo-server]
+```
+
+### Components
 *   `deployment.yaml`: A Kubernetes manifest containing:
     *   A `ConfigMap` with the Envoy configuration to listen for traffic and route all requests to the `echo-server` service.
     *   A `Deployment` for the Envoy proxy itself, using the Red Hat Service Mesh proxy image.
     *   A `Service` to expose the Envoy pod.
     *   An OpenShift `Route` to make the proxy publicly accessible.
 
-### Usage:
+### Usage
 1.  Apply the manifest: `oc apply -f src/envoy-proxy/deployment.yaml`.
 2.  The proxy will be accessible at `http://echo-proxy.apps-crc.testing`.
 3.  All traffic sent to this URL will be forwarded to the echo service.
@@ -46,7 +62,34 @@ This is a basic example of an Envoy proxy that performs simple routing.
 
 This is the complete, secure setup demonstrating Envoy's external authorization capabilities with `oauth2-proxy` and an OIDC provider (Keycloak).
 
-### How It Works:
+```mermaid
+sequenceDiagram
+    participant User
+    participant Envoy Proxy
+    participant oauth2-proxy
+    participant Keycloak
+    participant Echo Service
+
+    User->>Envoy Proxy: GET / (unauthenticated)
+    Envoy Proxy->>oauth2-proxy: Auth Check
+    oauth2-proxy-->>Envoy Proxy: 401 Unauthorized + Redirect URL
+    Envoy Proxy-->>User: 302 Redirect to Keycloak
+    User->>Keycloak: Logs in
+    Keycloak-->>User: Redirect to /oauth2/callback
+    User->>Envoy Proxy: GET /oauth2/callback
+    Envoy Proxy->>oauth2-proxy: Forward callback
+    oauth2-proxy->>Keycloak: Exchange code for token
+    Keycloak-->>oauth2-proxy: Token
+    oauth2-proxy-->>User: 302 Redirect to / + Set Cookie
+    User->>Envoy Proxy: GET / (with cookie)
+    Envoy Proxy->>oauth2-proxy: Auth Check
+    oauth2-proxy-->>Envoy Proxy: 200 OK + Token Header
+    Envoy Proxy->>Echo Service: Forward Request with Token
+    Echo Service-->>Envoy Proxy: Response
+    Envoy Proxy-->>User: Response
+```
+
+### How It Works
 1.  A request comes into the Envoy proxy.
 2.  Envoy's `ext_authz` filter intercepts the request and sends a "check" request to the `oauth2-proxy` service.
 3.  If the user is not authenticated, `oauth2-proxy` instructs Envoy to perform a `302 Redirect` to the Keycloak login page.
@@ -54,7 +97,7 @@ This is the complete, secure setup demonstrating Envoy's external authorization 
 5.  With the `200 OK` from `oauth2-proxy`, Envoy forwards the original request to the `echo-server`.
 6.  `oauth2-proxy` also attaches the user's identity information and access token as headers (`X-Auth-Request-*`), which Envoy forwards to the `echo-server`.
 
-### Components:
+### Components
 *   `deployment.yaml`: A single, comprehensive manifest containing:
     *   A `Secret` to hold the OIDC client credentials for `oauth2-proxy`. **You must edit this file before applying it.**
     *   A `Deployment` and `Service` for `oauth2-proxy`, configured to use Keycloak.
@@ -86,7 +129,7 @@ The startup arguments for `oauth2-proxy` are critical for making it work as a pu
 *   `--set-xauthrequest=true`: Works with `--pass-access-token` to specifically set the `X-Auth-Request-Access-Token` header in the response to Envoy, which is required for the `auth_request` flow.
 *   `--ssl-insecure-skip-verify=true`: **(For demo purposes only)**. This is required because the `oauth2-proxy` pod needs to connect to the Keycloak server, and if Keycloak is using a self-signed or private CA, this flag is needed to bypass TLS certificate validation. In production, you would mount a custom CA bundle instead.
 
-### Usage:
+### Usage
 1.  **IMPORTANT:** Edit `src/envoy-proxy-authenticated/deployment.yaml` and fill in the placeholder values in the `oauth2-proxy-creds` Secret with your Keycloak client details and a random cookie secret.
 2.  Ensure your OIDC client in Keycloak has the valid redirect URI set to `https://echo-proxy-authenticated.apps-crc.testing/oauth2/callback`.
 3.  Apply the manifest: `oc apply -f src/envoy-proxy-authenticated/deployment.yaml`.
