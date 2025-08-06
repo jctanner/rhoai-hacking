@@ -2,4 +2,5 @@
   description = "Ignore specific files"
   files = [
     "experiments/multimode-gateway/configs/gateway.yaml"
+    "experiments/ocp-envoy-extz-auth/src/envoy-proxy-authenticated/deployment.yaml"
   ]
