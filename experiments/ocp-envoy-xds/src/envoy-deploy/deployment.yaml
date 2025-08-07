@@ -1,0 +1,185 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: envoy-xds-test
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy-proxy-service
+  namespace: envoy-xds-test
+  labels:
+    app: envoy-proxy
+spec:
+  selector:
+    app: envoy-proxy
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8080
+      targetPort: 10000
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-config
+  namespace: envoy-xds-test
+  labels:
+    app: envoy-proxy
+data:
+  envoy.yaml: |
+    node:
+      cluster: test-cluster
+      id: test-id
+    dynamic_resources:
+      lds_config:
+        api_config_source:
+          api_type: GRPC
+          transport_api_version: V3
+          grpc_services:
+            - envoy_grpc:
+                cluster_name: xds_cluster
+      cds_config:
+        api_config_source:
+          api_type: GRPC
+          transport_api_version: V3
+          grpc_services:
+            - envoy_grpc:
+                cluster_name: xds_cluster
+    static_resources:
+      clusters:
+      - name: xds_cluster
+        type: STRICT_DNS
+        connect_timeout: 0.25s
+        lb_policy: ROUND_ROBIN
+        http2_protocol_options: {}
+        load_assignment:
+          cluster_name: xds_cluster
+          endpoints:
+          - lb_endpoints:
+            - endpoint:
+                address:
+                  socket_address:
+                    address: xds-control-plane
+                    port_value: 18000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy-proxy
+  namespace: envoy-xds-test
+  labels:
+    app: envoy-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: envoy-proxy
+  template:
+    metadata:
+      labels:
+        app: envoy-proxy
+    spec:
+      containers:
+      - name: envoy-proxy
+        image: registry.redhat.io/openshift-service-mesh/proxyv2-rhel9:2.6
+        command:
+        - /usr/local/bin/envoy
+        args:
+        - -c
+        - /etc/envoy/envoy.yaml
+        - --service-cluster
+        - test-cluster
+        ports:
+        - name: http
+          containerPort: 10000
+        volumeMounts:
+        - name: envoy-config-volume
+          mountPath: /etc/envoy
+      volumes:
+      - name: envoy-config-volume
+        configMap:
+          name: envoy-config
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: envoy-proxy-route
+  namespace: envoy-xds-test
+  labels:
+    app: envoy-proxy
+spec:
+  host: envoy-xds.apps-crc.testing
+  to:
+    kind: Service
+    name: envoy-proxy-service
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: xds-control-plane
+  namespace: envoy-xds-test
+  labels:
+    app: xds-control-plane
+spec:
+  selector:
+    app: xds-control-plane
+  ports:
+    - name: grpc
+      protocol: TCP
+      port: 18000
+      targetPort: 18000
+    - name: rest
+      protocol: TCP
+      port: 8081
+      targetPort: 8081
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xds-control-plane
+  namespace: envoy-xds-test
+  labels:
+    app: xds-control-plane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: xds-control-plane
+  template:
+    metadata:
+      labels:
+        app: xds-control-plane
+    spec:
+      containers:
+      - name: xds-control-plane
+        image: registry.tannerjc.net/xds-controller-test:latest
+        ports:
+        - name: grpc
+          containerPort: 18000
+        - name: rest
+          containerPort: 8081
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: xds-control-plane-route
+  namespace: envoy-xds-test
+  labels:
+    app: xds-control-plane
+spec:
+  host: envoy-xds-controller.apps-crc.testing
+  to:
+    kind: Service
+    name: xds-control-plane
+  port:
+    targetPort: rest
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
