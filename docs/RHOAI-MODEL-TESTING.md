@@ -37,6 +37,8 @@
 
 ## train.ipynb
 
+A tiny two-layer feed-forward neural network (MLP) trained for regression, using one hidden layer with ReLU activation to model non-linear relationships between inputs and output.
+
 ```
 import os
 import boto3
