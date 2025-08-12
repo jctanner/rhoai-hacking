@@ -75,19 +75,23 @@ metadata:
 --client-ca-file=/path/to/ca.crt
 ```
 
-### 3. OIDC (OpenID Connect)
+### 3. OIDC (OpenID Connect) - Token Validation Only
 
-- Validates JWT tokens from external OIDC providers
+- **Validates existing JWT tokens** from external OIDC providers (does NOT initiate login flows)
+- **Passive authentication**: Expects clients to already have valid OIDC tokens
+- **Not an OIDC client**: Does not perform OAuth2/OIDC authorization code flow or redirects
 - Configurable claims mapping for username and groups
 - Supports multiple signing algorithms
 
 ```bash
-# OIDC configuration
+# OIDC configuration - validates tokens issued by the OIDC provider
 --oidc-issuer=https://example.com
 --oidc-clientID=my-client
 --oidc-username-claim=email
 --oidc-groups-claim=groups
 ```
+
+**Important**: Clients must obtain OIDC tokens through other means (e.g., separate login flow, CLI tools, etc.) before sending requests to kube-rbac-proxy.
 
 ## Authorization Configuration
 
@@ -203,9 +207,10 @@ data:
         name: prometheus
 ```
 
-### OIDC Integration
+### OIDC Integration (Token Validation)
 
 ```bash
+# kube-rbac-proxy validates OIDC tokens but does NOT handle login flows
 kube-rbac-proxy \
   --secure-listen-address=0.0.0.0:8443 \
   --upstream=http://localhost:8080/ \
@@ -213,6 +218,9 @@ kube-rbac-proxy \
   --oidc-clientID=kube-rbac-proxy \
   --oidc-username-claim=preferred_username \
   --oidc-groups-claim=groups
+
+# Clients must obtain tokens separately, e.g.:
+# curl -H "Authorization: Bearer $(oidc-token)" https://proxy:8443/api
 ```
 
 ### Multi-tenant with Rewrites
