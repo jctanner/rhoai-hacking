@@ -72,7 +72,8 @@ torch.onnx.export(
 # ---------- upload to S3 (uses your existing s3_client & bucket_name) ----------
 import hashlib
 
-#object_key = "openvino/mlp_regressor.onnx"  # change if you like
+# this folder+filename structure is crucial for openvino to work
+# when we eventually host the model
 object_key = "openvino/mlpregressor/1/model.onnx"
 
 # compute sha256 for sanity
@@ -95,4 +96,14 @@ print(
     f"Uploaded: s3://{bucket_name}/{object_key}\n"
     f"Size: {head['ContentLength']} bytes | ETag: {head['ETag']} | sha256: {sha256.hexdigest()}"
 )
+```
+
+## model prediction example
+
+```
+$ curl -sS -k -H "Authorization: Bearer ${TOKEN}"   -H 'Content-Type: application/json'   -d '{"instances":[[0.12,-0.5,0.3,1.0,0.0,-1.2,0.7,0.2,-0.9,0.05]]}'   $HOST/v1/models/mlpregressor:predict ; echo ""
+{
+    "predictions": [[-0.409755319]
+    ]
+}
 ```
