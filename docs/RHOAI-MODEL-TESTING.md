@@ -1,5 +1,7 @@
 # RHOAI MODEL TESTING
 
+These instructions explain how to create, host and use a very small predictive model in ODH or RHOAI for testing purposes. Training takes a few seconds and does not require a GPU. Prediction is also quick and does not need a GPU.
+
 ## workflow
 
 1. open the rhoai dashboard
