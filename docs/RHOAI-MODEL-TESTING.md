@@ -30,6 +30,10 @@
 6. Get the auth token for the model
    1. expand the `>` icon to the left of the model name under the models section in the project
    2. the token is the last line in the expanded menu
+7. Test the model connection, auth and prediction
+   1. click on the "Internal and external endpoint details" link next to the model name
+   2. copy the external url (or internal url if you want)
+   3. Follow the curl example at the bottom of this doc
 
 ## train.ipynb
 
