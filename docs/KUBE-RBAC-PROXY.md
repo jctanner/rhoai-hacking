@@ -1,134 +1,194 @@
-# Kube-RBAC-Proxy: How it Works
-
-This document outlines the architecture and functionality of the `kube-rbac-proxy`.
+# kube-rbac-proxy: Analysis and Architecture
 
 ## Overview
 
-`kube-rbac-proxy` is a small, security-focused HTTP proxy designed to sit in front of an application or service running in Kubernetes. Its primary purpose is to protect services by offloading authentication and authorization to the Kubernetes API.
+**kube-rbac-proxy** is a small HTTP reverse proxy designed to provide Kubernetes RBAC-based authentication and authorization for single upstream services. It acts as a security gateway that enforces Kubernetes native RBAC policies before proxying requests to backend services.
 
-Before a request is allowed to reach the upstream application, the proxy intercepts it and performs two critical checks:
+## Purpose and Use Cases
 
-1.  **Authentication (AuthN):** It identifies *who* is making the request.
-2.  **Authorization (AuthZ):** It determines if the identified user has permission to make that specific request.
+### Primary Purpose
 
-## Core Components and Flow
+- **Secure services that lack built-in authentication/authorization** by adding a Kubernetes RBAC layer
+- **Enforce fine-grained access control** using standard Kubernetes RBAC mechanisms
+- **Provide authentication via multiple methods** (service account tokens, client certificates, OIDC)
 
-The application is initialized in `cmd/kube-rbac-proxy/main.go`, which uses `k8s.io/component-base/cli` to set up a `cobra` command. The core logic resides in `cmd/kube-rbac-proxy/app/kube-rbac-proxy.go`.
+### Common Use Cases
 
-The proxy works by chaining together a series of HTTP middleware filters, defined in `pkg/filters/auth.go`. For any incoming request, the flow is as follows:
+- **Prometheus metrics protection**: Securing `/metrics` endpoints with RBAC policies
+- **Service mesh integration**: Adding authentication to legacy services
+- **Zero-trust networking**: Ensuring only authorized entities can access services
+- **Sidecar pattern**: Running alongside applications to provide security layer
+- **Multi-tenant environments**: Isolating access to services based on user/service account permissions
 
-1.  The `WithAuthentication` filter is executed first.
-2.  If authentication is successful, the `WithAuthorization` filter is executed.
-3.  If authorization is successful, the request is forwarded to the upstream application via a reverse proxy.
+## Architecture Overview
 
-If either check fails, the proxy immediately rejects the request with a `401 Unauthorized` or `403 Forbidden` status code.
+### Core Components
 
-### 1. Authentication: Identifying the User
+```
+┌─────────────┐    ┌──────────────────┐    ┌─────────────┐
+│   Client    │──▶│  kube-rbac-proxy │──▶│  Upstream   │
+│ (with auth) │    │                  │    │   Service   │
+└─────────────┘    └──────────────────┘    └─────────────┘
+                           │
+                           ▼
+                   ┌──────────────────┐
+                   │ Kubernetes API   │
+                   │ - TokenReview    │
+                   │ - SubjectAccess  │
+                   │   Review         │
+                   └──────────────────┘
+```
 
-The proxy determines the user's identity from the incoming request using one of three methods. This logic is handled by an `authenticator.Request` object.
+### Request Processing Pipeline
 
--   **Bearer Tokens:** The proxy inspects the `Authorization: Bearer <token>` header. It then sends this token to the main Kubernetes API server by creating a `TokenReview` object. The API server validates the token and returns the user's identity (e.g., `system:serviceaccount:my-ns:my-sa`).
--   **TLS Client Certificates:** The proxy can be configured to trust a specific Certificate Authority (CA). If an incoming request presents a valid client certificate signed by that CA, the user's identity is extracted from the certificate's Subject field (`Common Name` for username, `Organization` for groups).
--   **OIDC (OpenID Connect):** For human user authentication, the proxy can be configured as an OIDC client. It validates JWTs from an OIDC provider and extracts user claims (like `email` and `groups`) to establish identity.
+1. **Client Request** → kube-rbac-proxy (with authentication credentials)
+2. **Path Filtering** → Check allow/ignore path patterns
+3. **Authentication** → Validate credentials via Kubernetes APIs
+4. **Authorization** → Check RBAC permissions via SubjectAccessReview
+5. **Header Injection** → Add user identity headers (optional)
+6. **Proxy Forward** → Send request to upstream service
 
-Upon successful authentication, the user's information (`user.Info`) is attached to the request's context.
+## Authentication Methods
 
-### 2. Authorization: Checking Permissions
+### 1. Service Account Tokens (Default)
 
-Once the user is known, the `WithAuthorization` filter takes over.
-
-1.  **Extract User:** It retrieves the user's identity from the request context, where the authentication filter placed it.
-2.  **Build Attributes:** It combines the user's identity with details from the HTTP request (e.g., `GET`, `/metrics`, `pods`) to create a set of `authorizer.Attributes`.
-3.  **Perform `SubjectAccessReview`:** It sends these attributes to the main Kubernetes API server in a `SubjectAccessReview` (SAR) request. The SAR asks the API, "Is this user allowed to perform this action on this resource?"
-4.  **Enforce Decision:** The API server, which has the complete picture of all Roles and RoleBindings in the cluster, returns a simple "yes" or "no."
-    -   If "yes" (`authorizer.DecisionAllow`), the request is passed along to the next handler.
-    -   If "no," the request is immediately rejected with a `403 Forbidden` error.
-
-This architecture allows for fine-grained access control to services without having to build complex authentication and authorization logic into the services themselves. Access can be managed dynamically using standard Kubernetes RBAC resources.
-
-## Use Case: Integration with OpenShift OAuth Proxy
-
-A common and robust real-world use case involves integrating `kube-rbac-proxy` within a larger authentication flow, such as with OpenShift's `oauth-proxy`. This pattern is effective for protecting services that need to serve both human users (via a browser) and programmatic clients.
-
-Consider the following topology:
-
-`OpenShift Route` -> `oauth-proxy` -> `Gateway API` -> `kube-rbac-proxy` -> `Upstream Container`
-
-This flow works as follows:
-
-1.  **User Authentication (`oauth-proxy`):** A user first hits the OpenShift Route, and the request is directed to the `oauth-proxy`. This component handles the entire interactive login flow with the user, redirecting them to the OpenShift login page if necessary. Upon successful authentication, `oauth-proxy` obtains the user's access token from the OpenShift OAuth server.
-
-2.  **The Secure Hand-off:** The critical step is how `oauth-proxy` communicates the user's identity to `kube-rbac-proxy`. For this to work securely, `oauth-proxy` must be configured to pass the user's access token upstream by setting the `Authorization: Bearer <users-openshift-token>` header on the requests it forwards.
-
-3.  **Networking (`Gateway API`):** The Gateway API resource routes the request from `oauth-proxy` to the correct backend service where `kube-rbac-proxy` is running as a sidecar. It should be configured to pass the `Authorization` header through transparently.
-
-4.  **Per-Request Authorization (`kube-rbac-proxy`):**
-    -   `kube-rbac-proxy` receives the request containing the user's OpenShift token.
-    -   Its `WithAuthentication` filter extracts the token and performs a `TokenReview` against the OpenShift API server.
-    -   The OpenShift API validates the token and returns the user's verified identity.
-    -   `kube-rbac-proxy` then proceeds with the `SubjectAccessReview` to authorize the request for that specific user.
-
-This pattern creates a powerful, layered security model. `oauth-proxy` manages the session and user-facing login, while `kube-rbac-proxy` enforces fine-grained, per-request RBAC, leveraging native platform security features without trusting insecure headers. In this scenario, `kube-rbac-proxy`'s OIDC flags are not needed, as the `TokenReview` mechanism provides the correct integration.
-
-## Example: Sidecar Deployment
-
-Here is a complete example of how to use `kube-rbac-proxy` as a sidecar to protect an application's `/metrics` endpoint.
-
-In this scenario, only users who have permission to `get` the `services/metrics` resource will be able to access the endpoint. All traffic must go through the proxy on port `8443`.
+- Uses Kubernetes `TokenReview` API to validate JWT tokens
+- Supports audience validation for enhanced security
+- Automatically extracts user and group information
 
 ```yaml
----
+# Example: Client with service account token
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: my-app-sa
----
-# This ClusterRole defines the permission a user needs to have
-# in order to access the metrics.
+  name: metrics-reader
+```
+
+### 2. Client TLS Certificates
+
+- Validates X.509 client certificates against configured CA
+- Uses certificate CommonName as username
+- Supports certificate-based authentication
+
+```bash
+# Configure client CA
+--client-ca-file=/path/to/ca.crt
+```
+
+### 3. OIDC (OpenID Connect)
+
+- Validates JWT tokens from external OIDC providers
+- Configurable claims mapping for username and groups
+- Supports multiple signing algorithms
+
+```bash
+# OIDC configuration
+--oidc-issuer=https://example.com
+--oidc-clientID=my-client
+--oidc-username-claim=email
+--oidc-groups-claim=groups
+```
+
+## Authorization Configuration
+
+### Resource Attributes
+
+The most common authorization method - checks if user has permission on specific Kubernetes resources:
+
+```yaml
+authorization:
+  resourceAttributes:
+    namespace: default
+    apiVersion: v1
+    resource: services
+    subresource: proxy
+    name: kube-rbac-proxy
+```
+
+This requires the client to have permission like:
+
+```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: my-app-metrics-reader
+  name: metrics-reader
 rules:
-- apiGroups: [""]
-  resources: ["services"]
-  # The "resourceName" must match the name of the Service that exposes the metrics.
-  resourceNames: ["my-app-metrics"]
-  verbs: ["get"]
----
-# Grant a specific user (e.g., prometheus-user) the ability
-# to read the metrics.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: read-my-app-metrics
-subjects:
-- kind: User
-  name: "prometheus-user"
-  apiGroup: rbac.authorization.k8s.io
-roleRef:
-  kind: ClusterRole
-  name: my-app-metrics-reader
-  apiGroup: rbac.authorization.k8s.io
----
-# The Service exposes the proxy's secure port (8443), not the
-# application's port. All traffic must go through the proxy.
-apiVersion: v1
-kind: Service
-metadata:
-  name: my-app-metrics
-  labels:
-    app: my-app
-spec:
-  ports:
-  - name: https
-    port: 8443
-    targetPort: 8443
-  selector:
-    app: my-app
----
-# This ConfigMap holds the configuration for kube-rbac-proxy.
-# It tells the proxy what authorization checks to perform.
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    verbs: ["get"]
+```
+
+### Static Authorization
+
+Hardcoded authorization rules for specific scenarios:
+
+```yaml
+authorization:
+  static:
+    - user:
+        name: "system:serviceaccount:monitoring:prometheus"
+      verb: "get"
+      resource: "metrics"
+      resourceRequest: false
+      path: "/metrics"
+```
+
+### Request Rewrites
+
+Dynamic authorization based on request parameters:
+
+```yaml
+authorization:
+  resourceAttributes:
+    namespace: "{{.Value}}" # Template using query parameter
+    resource: "pods"
+  rewrites:
+    byQueryParameter:
+      name: "namespace"
+```
+
+## Key Code Components
+
+### 1. Main Application (`cmd/kube-rbac-proxy/app/kube-rbac-proxy.go`)
+
+- Sets up HTTP server with TLS
+- Configures authentication and authorization chains
+- Implements request filtering pipeline
+- Manages upstream proxy connection
+
+### 2. Authentication Layer (`pkg/authn/`)
+
+- **DelegatingAuthenticator**: Kubernetes TokenReview integration
+- **OIDC Authenticator**: External OIDC provider support
+- **Certificate validation**: X.509 client certificate handling
+
+### 3. Authorization Layer (`pkg/authz/`)
+
+- **SAR Authorizer**: SubjectAccessReview API integration
+- **Static Authorizer**: Hardcoded authorization rules
+- **Union Authorizer**: Combines multiple authorization methods
+
+### 4. Filter Chain (`pkg/filters/`)
+
+```go
+// Request processing pipeline
+handlerFunc := proxy.ServeHTTP
+handlerFunc = filters.WithAuthHeaders(cfg.auth.Authentication.Header, handlerFunc)
+handlerFunc = filters.WithAuthorization(authorizer, cfg.auth.Authorization, handlerFunc)
+handlerFunc = filters.WithAuthentication(authenticator, cfg.auth.Authentication.Token.Audiences, handlerFunc)
+```
+
+### 5. Proxy Configuration (`pkg/proxy/`)
+
+- Request attribute generation based on HTTP method
+- Template-based resource attribute rewriting
+- User context management
+
+## Configuration Examples
+
+### Basic Metrics Protection
+
+```yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -137,97 +197,252 @@ data:
   config.yaml: |
     authorization:
       resourceAttributes:
-        # For an incoming request, the proxy will check if the user
-        # has the "get" verb on the "services" resource.
-        verb: "get"
-        resource: "services"
-        # The API group and resource name should match the target Service.
-        apiGroup: ""
-        resourceName: "my-app-metrics"
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: my-app
-  labels:
-    app: my-app
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: my-app
-  template:
-    metadata:
-      labels:
-        app: my-app
-    spec:
-      serviceAccountName: my-app-sa
-      containers:
-      # This is the main application container.
-      # It runs on port 8080 and is only reachable from within the Pod.
-      - name: my-app
-        image: instrumentisto/go-http-server
-        args:
-          - "-p=8080"
-          - "--response-body=Hello from my-app!"
-        ports:
-        - name: http
-          containerPort: 8080
-
-      # This is the kube-rbac-proxy sidecar.
-      # It listens on port 8443, performs AuthN/AuthZ, and
-      # forwards valid requests to the application on port 8080.
-      - name: kube-rbac-proxy
-        image: quay.io/brancz/kube-rbac-proxy:v0.15.0
-        args:
-        - "--secure-listen-address=0.0.0.0:8443"
-        - "--upstream=http://127.0.0.1:8080/"
-        - "--config-file=/etc/kube-rbac-proxy/config.yaml"
-        - "--logtostderr=true"
-        ports:
-        - name: https
-          containerPort: 8443
-        volumeMounts:
-        - name: config
-          mountPath: /etc/kube-rbac-proxy
-          readOnly: true
-      volumes:
-      - name: config
-        configMap:
-          name: kube-rbac-proxy-config
+        namespace: monitoring
+        resource: services
+        subresource: proxy
+        name: prometheus
 ```
 
-### Breakdown of the Components
+### OIDC Integration
 
-1.  **ServiceAccount (`my-app-sa`):** Provides an identity for the Pod itself.
-2.  **ClusterRole (`my-app-metrics-reader`):** This is **not** for the Pod, but for the *user*. It defines the permission that `kube-rbac-proxy` will check for. Any user who wants to access the metrics needs this role.
-3.  **ClusterRoleBinding (`read-my-app-metrics`):** This grants the `my-app-metrics-reader` role to a user named `prometheus-user`. This is how you control who has access.
-4.  **Service (`my-app-metrics`):** This exposes the `kube-rbac-proxy`'s secure port (`8443`) to the cluster. It's crucial that the service targets the proxy, not the application container directly.
-5.  **ConfigMap (`kube-rbac-proxy-config`):** This file tells `kube-rbac-proxy` what check to perform. The `resourceAttributes` section instructs it to fire a `SubjectAccessReview` for the `get` verb on the `services` resource with the name `my-app-metrics`.
-6.  **Deployment (`my-app`):**
-    *   The `my-app` container runs the actual application, listening on `localhost:8080`, so it cannot be accessed directly from outside the Pod.
-    *   The `kube-rbac-proxy` container listens on port `8443`, mounts the `ConfigMap`, and is configured with the `--upstream=http://127.0.0.1:8080/` flag to forward authorized requests to the application container.
+```bash
+kube-rbac-proxy \
+  --secure-listen-address=0.0.0.0:8443 \
+  --upstream=http://localhost:8080/ \
+  --oidc-issuer=https://keycloak.example.com/auth/realms/kubernetes \
+  --oidc-clientID=kube-rbac-proxy \
+  --oidc-username-claim=preferred_username \
+  --oidc-groups-claim=groups
+```
 
-## Choosing the Right Tool: Is kube-rbac-proxy Always the Answer?
+### Multi-tenant with Rewrites
 
-While `kube-rbac-proxy` is a powerful tool, it's not always the best fit for every use case. A common question is whether to place it in front of a service, like a dashboard, that should be accessible to "all users". The answer depends entirely on the definition of "all users".
+```yaml
+authorization:
+  resourceAttributes:
+    namespace: "{{.Value}}"
+    resource: "pods"
+    name: "{{.Value}}"
+  rewrites:
+    byQueryParameter:
+      name: "tenant"
+```
 
-### Case 1: A Truly Public, Unauthenticated Service
+## Security Considerations
 
-If "all users" means **anyone on the internet, without requiring a login**, then `kube-rbac-proxy` is the wrong tool. Its primary function is to *enforce* authentication and then check RBAC permissions. It will reject unauthenticated requests by default.
+### Token Security
 
-**Recommendation:** For truly public services, expose them directly via a standard Kubernetes Ingress, OpenShift Route, or Gateway API resource without an authentication proxy.
+- **Service account tokens**: Receiving service can impersonate the client
+- **Recommendation**: Use mTLS for high-privilege scenarios
+- **Best practice**: Use low-privilege tokens specifically for authorization
 
-### Case 2: Any User Authenticated to the Cluster
+### TLS Configuration
 
-If "all users" means **any user who can successfully log in to the Kubernetes/OpenShift cluster**, `kube-rbac-proxy` can work, but may be inefficient.
+- **Always use HTTPS** in production environments
+- **Client certificate authentication** provides better security properties
+- **Proper CA management** is crucial for certificate-based auth
 
-It would require creating a `ClusterRoleBinding` that grants access to the `system:authenticated` group. However, this means `kube-rbac-proxy` will perform a `SubjectAccessReview` *for every single HTTP request* to the dashboard (including CSS, JS, images, etc.), which can create unnecessary load on the Kubernetes API server.
+### Network Policies
 
-**Recommendation:** For services that only need to verify that a user is logged in, a session-based tool like `oauth-proxy` is often a more efficient choice. It authenticates the user once, establishes a session cookie, and allows subsequent requests based on that session, avoiding constant checks against the API server.
+- kube-rbac-proxy **complements** but doesn't replace NetworkPolicies
+- NetworkPolicies don't apply to HostNetworking pods
+- Combined approach provides defense in depth
 
-### Case 3: A Broad but Defined Group of Authenticated Users
+## Deployment Patterns
 
-If "all users" means **all members of a specific, but potentially large, group** (e.g., all employees, all members of the `developers` team), then `kube-rbac-proxy` is an excellent choice.
+### Sidecar Pattern
 
-**Recommendation:** This is the ideal use case for `kube-rbac-proxy`. It allows you to manage access declaratively using standard Kubernetes RBAC resources. You can grant access to a specific group, and all permissions are handled centrally through the Kubernetes API, providing a consistent and secure access control model. 
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: my-app:latest
+          args: ["--listen=127.0.0.1:8080"]
+        - name: kube-rbac-proxy
+          image: quay.io/brancz/kube-rbac-proxy:v0.19.1
+          args:
+            - "--secure-listen-address=0.0.0.0:8443"
+            - "--upstream=http://127.0.0.1:8080/"
+            - "--config-file=/etc/config/config.yaml"
+```
+
+### Standalone Service
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: kube-rbac-proxy
+          image: quay.io/brancz/kube-rbac-proxy:v0.19.1
+          args:
+            - "--secure-listen-address=0.0.0.0:8443"
+            - "--upstream=http://backend-service:8080/"
+```
+
+## Integration with RHOAI/OpenShift
+
+### OpenShift Fork Differences
+
+The OpenShift downstream version ([github.com/openshift/kube-rbac-proxy](https://github.com/openshift/kube-rbac-proxy)) includes several OpenShift-specific enhancements:
+
+#### **Hardcoded Metrics Authorizer**
+
+The downstream version includes a hardcoded authorizer specifically for OpenShift monitoring:
+
+```go
+// pkg/hardcodedauthorizer/metrics.go
+func (metricsAuthorizer) Authorize(ctx context.Context, a authorizer.Attributes) (authorized authorizer.Decision, reason string, err error) {
+    if a.GetUser().GetName() != "system:serviceaccount:openshift-monitoring:prometheus-k8s" {
+        return authorizer.DecisionNoOpinion, "", nil
+    }
+    if !a.IsResourceRequest() && a.GetVerb() == "get" && a.GetPath() == "/metrics" {
+        return authorizer.DecisionAllow, "requesting metrics is allowed", nil
+    }
+    return authorizer.DecisionNoOpinion, "", nil
+}
+```
+
+This authorizer:
+
+- **Hardcodes permission** for the `system:serviceaccount:openshift-monitoring:prometheus-k8s` service account
+- **Allows GET requests** to `/metrics` endpoint without additional RBAC checks
+- **Reduces API server load** by avoiding SubjectAccessReview calls for Prometheus scraping
+- **Temporary solution** until Cluster Monitoring Operator (CMO) implements static authorizer configuration
+
+#### **OpenShift-specific Build Process**
+
+- **Dockerfile.ocp**: Uses OpenShift-specific base images (`registry.ci.openshift.org/ocp/builder:rhel-9-golang-1.23-openshift-4.19`)
+- **CI Integration**: Uses OpenShift CI/CD pipeline with `.ci-operator.yaml`
+- **Vendored Dependencies**: Includes full vendor directory for offline builds complying with ART policies
+- **OWNERS file**: OpenShift-specific maintainers and reviewers (Red Hat employees)
+
+#### **Enhanced Testing**
+
+- **Hardcoded authorizer tests**: Specific test scenarios for OpenShift monitoring integration
+- **OpenShift namespace tests**: Tests using `openshift-monitoring` namespace
+- **Service account validation**: Tests for `prometheus-k8s` service account access
+
+#### **Authorization Chain Order**
+
+The downstream version places the hardcoded authorizer first in the authorization chain:
+
+```go
+authorizer := union.New(
+    // prefix the authorizer with the permissions for metrics scraping which are well known.
+    // openshift RBAC policy will always allow this user to read metrics.
+    // TODO: remove this, once CMO lands static authorizer configuration.
+    hardcodedauthorizer.NewHardCodedMetricsAuthorizer(),
+    staticAuthorizer,
+    sarAuthorizer,
+)
+```
+
+### Service Mesh Integration
+
+- Works alongside Istio/Envoy for additional security layers
+- Can be used as ingress point before service mesh
+- Provides Kubernetes-native RBAC that service mesh may not support
+
+### OpenShift OAuth Integration
+
+- Can integrate with OpenShift's OAuth server for user authentication
+- Supports OpenShift service account tokens
+- Compatible with OpenShift RBAC policies
+
+### Monitoring Stack Protection
+
+- **Built-in Prometheus integration**: Downstream version includes hardcoded authorization for Prometheus
+- Commonly used to protect Prometheus, Grafana, and other monitoring tools
+- Enables fine-grained access control for metrics endpoints
+- Supports multi-tenant monitoring scenarios
+
+## Performance and Scalability
+
+### Resource Usage
+
+- Lightweight proxy with minimal overhead
+- Memory usage scales with number of concurrent connections
+- CPU usage primarily from cryptographic operations (TLS, JWT validation)
+
+### Caching
+
+- Built-in caching for authentication decisions (2-minute default TTL)
+- Authorization decisions cached separately (5-minute allow, 30-second deny)
+- Reduces load on Kubernetes API server
+
+### HTTP/2 Support
+
+- Native HTTP/2 support for both client and upstream connections
+- Configurable connection limits and frame sizes
+- Can force HTTP/2 cleartext (h2c) for upstream connections
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Authentication failures**: Check token validity and audience configuration
+2. **Authorization denials**: Verify RBAC policies match resource attributes
+3. **TLS errors**: Ensure certificate validity and CA configuration
+4. **Upstream connection issues**: Verify upstream URL and network connectivity
+
+### Debugging
+
+```bash
+# Enable verbose logging
+--v=10 --logtostderr=true
+
+# Check specific components
+--auth-header-fields-enabled=true  # Debug header injection
+--proxy-endpoints-port=8444        # Separate health check port
+```
+
+### Monitoring
+
+- Built-in `/healthz` endpoint for health checks
+- Prometheus metrics available (when properly configured)
+- Structured logging for audit trails
+
+## Future Considerations
+
+### Project Status
+
+- Currently in **alpha** stage with potential breaking changes
+- Seeking acceptance as official Kubernetes project
+- Active development with regular security updates
+
+### Planned Changes
+
+- Deprecation of some flags for Kubernetes alignment
+- Enhanced security features
+- Better integration with sig-auth standards
+
+## Summary: Upstream vs OpenShift Fork
+
+| Feature                    | Upstream (brancz/kube-rbac-proxy)                     | OpenShift Fork (openshift/kube-rbac-proxy)                    |
+| -------------------------- | ----------------------------------------------------- | ------------------------------------------------------------- |
+| **Core Functionality**     | Standard RBAC proxy with authentication/authorization | Same + OpenShift-specific enhancements                        |
+| **Authorization Chain**    | Static → SAR authorizers                              | **Hardcoded** → Static → SAR authorizers                      |
+| **Prometheus Integration** | Requires full RBAC configuration                      | **Hardcoded permission** for `prometheus-k8s` service account |
+| **Build Process**          | Standard Go build with distroless images              | **OpenShift CI/CD** with RHEL-based images                    |
+| **Dependencies**           | Standard go.mod dependencies                          | **Vendored dependencies** for offline builds                  |
+| **Target Environment**     | Generic Kubernetes                                    | **OpenShift-optimized**                                       |
+| **Maintenance**            | Community-driven                                      | **Red Hat OpenShift team**                                    |
+| **Performance**            | Standard SubjectAccessReview for all requests         | **Optimized for Prometheus** (skips API calls)                |
+
+### Key Takeaways
+
+1. **The OpenShift fork is primarily optimized for monitoring use cases** with hardcoded permissions for Prometheus
+2. **Both versions maintain the same core architecture** and API compatibility
+3. **The hardcoded authorizer is a temporary optimization** until better static configuration is available
+4. **OpenShift version includes enterprise build and security practices** (vendored deps, RHEL images, CI/CD)
+5. **For non-OpenShift environments**, the upstream version is more appropriate
+6. **For OpenShift monitoring stacks**, the downstream version provides better performance
+
+This analysis is based on examination of both the upstream kube-rbac-proxy source code and the OpenShift downstream fork, providing a comprehensive understanding of their differences, capabilities, and usage patterns within Kubernetes and OpenShift environments.
