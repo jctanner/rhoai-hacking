@@ -101,7 +101,11 @@ print(
 ## model prediction example
 
 ```
-$ curl -sS -k -H "Authorization: Bearer ${TOKEN}"   -H 'Content-Type: application/json'   -d '{"instances":[[0.12,-0.5,0.3,1.0,0.0,-1.2,0.7,0.2,-0.9,0.05]]}'   $HOST/v1/models/mlpregressor:predict ; echo ""
+$ curl -sS -k \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H 'Content-Type: application/json' \
+    -d '{"instances":[[0.12,-0.5,0.3,1.0,0.0,-1.2,0.7,0.2,-0.9,0.05]]}' \
+    $HOST/v1/models/mlpregressor:predict ; echo ""
 {
     "predictions": [[-0.409755319]
     ]
