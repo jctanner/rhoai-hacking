@@ -2,9 +2,9 @@
 
 ## workflow
 
-1. create a new data science project
-2. open the datascience project
-3. click on the "connections" tab
+1. open the rhoai dashboard
+2. create a new data science project open it
+3. Click on the "connections" tab to define an S3 bucket
    1. create a connection
    2. type: s3
    3. set the access key
@@ -12,10 +12,24 @@
    5. use the fully qualified endpoint with the region like: `https://s3.us-east-2.amazonaws.com`
    6. set the region directly: `us-east-2`
    7. set the bucket name
-4. create a pytorch workbench
+4. Create a pytorch workbench to create the model
    1. open the workbench and create a default notebook
    2. name the file "train.ipynb"
-   3.
+   3. fill in cells per the train.ipynb example of this doc
+   4. run all cells
+5. Open the "models" tab in the project page within the dashboard
+   1. click deploy model
+   2. set the name to "mlpregressor"
+   3. set openvino for the serving runtime
+   4. set deployment mode to standard
+   5. check the box for "make deployed models availalbe through an external route"
+   6. leave the "require token authentication" box checked and service account name s "default-name"
+   7. under source model location choose the connection we created previously
+   8. for the path use "openvino/mlpregressor" ... this is very important
+   9. click deploy
+6. Get the auth token for the model
+   1. expand the `>` icon to the left of the model name under the models section in the project
+   2. the token is the last line in the expanded menu
 
 ## train.ipynb
 
