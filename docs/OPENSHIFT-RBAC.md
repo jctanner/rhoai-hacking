@@ -544,23 +544,216 @@ oc get clusterroles | grep -E "admin|edit|view|cluster-admin"
 
 ### Security Context Constraints (SCCs)
 
-SCCs work alongside RBAC to control pod security:
+SCCs work alongside RBAC to control pod security. OpenShift provides several built-in SCCs with different security levels:
+
+#### **Built-in SCCs (Most Restrictive to Least Restrictive)**
+
+```bash
+# List all SCCs
+oc get scc
+
+# View specific SCC details
+oc describe scc restricted
+```
+
+**1. `restricted` (Most Secure - Default)**
+
+- **Use Case**: Standard applications, most pods
+- **Capabilities**: Minimal security permissions
+- **RunAsUser**: MustRunAsRange (non-root)
+- **SELinux**: MustRunAs
+- **Volumes**: ConfigMap, DownwardAPI, EmptyDir, PersistentVolumeClaim, Projected, Secret
+- **Host Access**: None
+
+**2. `restricted-v2`**
+
+- **Use Case**: Enhanced version of restricted for newer security standards
+- **Capabilities**: Similar to restricted but with Pod Security Standards compliance
+- **Additional Controls**: Seccomp, capabilities dropping enforced
+
+**3. `nonroot`**
+
+- **Use Case**: Applications that need slightly more flexibility but still run as non-root
+- **RunAsUser**: MustRunAsNonRoot
+- **Capabilities**: Limited set allowed
+- **Host Access**: None
+
+**4. `nonroot-v2`**
+
+- **Use Case**: Enhanced nonroot with Pod Security Standards
+- **Similar to nonroot**: But with additional security controls
+
+**5. `anyuid`**
+
+- **Use Case**: Applications that must run as specific UIDs (including root)
+- **RunAsUser**: RunAsAny (can run as root)
+- **Capabilities**: Limited
+- **Host Access**: None
+- **Risk**: Medium - allows root but no host access
+
+**6. `hostmount-anyuid`**
+
+- **Use Case**: Applications needing host volume mounts
+- **RunAsUser**: RunAsAny
+- **Volumes**: Includes HostPath
+- **Host Access**: Limited host volume access
+- **Risk**: High - host filesystem access
+
+**7. `hostnetwork`**
+
+- **Use Case**: Applications needing host network (like CNI pods)
+- **Network**: Host network access
+- **Ports**: Can bind to host ports
+- **Risk**: High - network access to host
+
+**8. `hostnetwork-v2`**
+
+- **Use Case**: Enhanced hostnetwork with additional controls
+
+**9. `node-exporter`**
+
+- **Use Case**: Monitoring agents like Prometheus node-exporter
+- **Capabilities**: Specific monitoring capabilities
+- **Host Access**: Read-only host access for metrics
+
+**10. `privileged` (Least Secure)**
+
+- **Use Case**: System pods, infrastructure components
+- **Capabilities**: ALL capabilities
+- **RunAsUser**: RunAsAny
+- **Host Access**: Full host access
+- **Risk**: Maximum - equivalent to root on host
+
+#### **SCC Assignment Examples**
 
 ```yaml
-# Example: Allow a service account to use privileged SCC
+# Restrict service account to most secure SCC
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: privileged-scc-binding
+  name: my-app-restricted
 subjects:
   - kind: ServiceAccount
-    name: my-service-account
+    name: my-app
     namespace: my-namespace
+roleRef:
+  kind: ClusterRole
+  name: system:openshift:scc:restricted
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Allow service account to run as any UID (including root)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: legacy-app-anyuid
+subjects:
+  - kind: ServiceAccount
+    name: legacy-app
+    namespace: my-namespace
+roleRef:
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Full privileges for system component
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system-component-privileged
+subjects:
+  - kind: ServiceAccount
+    name: system-component
+    namespace: kube-system
 roleRef:
   kind: ClusterRole
   name: system:openshift:scc:privileged
   apiGroup: rbac.authorization.k8s.io
 ```
+
+#### **SCC Management Commands**
+
+```bash
+# Check which SCC a pod is using
+oc get pod my-pod -o yaml | grep "openshift.io/scc"
+
+# Check what SCC a service account can use
+oc policy scc-subject-review --serviceaccount=my-sa --namespace=my-namespace
+
+# Check what SCC would be used for a pod spec
+oc policy scc-review --serviceaccount=my-sa --filename=pod.yaml
+
+# Add SCC to service account (alternative to ClusterRoleBinding)
+oc adm policy add-scc-to-user anyuid --serviceaccount=my-sa --namespace=my-namespace
+
+# Remove SCC from service account
+oc adm policy remove-scc-from-user anyuid --serviceaccount=my-sa --namespace=my-namespace
+
+# Add SCC to group
+oc adm policy add-scc-to-group anyuid system:authenticated
+```
+
+#### **SCC Selection Priority**
+
+When multiple SCCs are available to a service account, OpenShift selects based on:
+
+1. **Priority**: Higher priority SCCs are preferred
+2. **Restrictiveness**: More restrictive SCCs are preferred when priorities are equal
+3. **Order**: Alphabetical order as tiebreaker
+
+```bash
+# View SCC priorities
+oc get scc -o custom-columns=NAME:.metadata.name,PRIORITY:.priority
+```
+
+#### **Custom SCCs**
+
+You can create custom SCCs for specific needs:
+
+```yaml
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: custom-scc
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegedContainer: false
+allowedCapabilities: []
+defaultAddCapabilities: []
+fsGroup:
+  type: MustRunAs
+  ranges:
+    - min: 1000
+      max: 2000
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - ALL
+runAsUser:
+  type: MustRunAsRange
+  uidRangeMin: 1000
+  uidRangeMax: 2000
+seLinuxContext:
+  type: MustRunAs
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+```
+
+#### **Best Practices**
+
+1. **Start Restrictive**: Use `restricted` by default
+2. **Escalate Minimally**: Only grant the minimum SCC needed
+3. **Avoid Privileged**: Use `privileged` only for system components
+4. **Document Exceptions**: Clearly document why non-restricted SCCs are needed
+5. **Regular Review**: Periodically audit SCC assignments
 
 ### Project vs Namespace
 
@@ -892,8 +1085,8 @@ RBAC is just one layer of access control in Kubernetes/OpenShift. Understanding 
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
-│                   AUTHORIZATION (RBAC)                     │
-│  (What can you do? - API access permissions)               │
+│                   AUTHORIZATION (RBAC)                      │
+│  (What can you do? - API access permissions)                │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
