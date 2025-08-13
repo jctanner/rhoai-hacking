@@ -303,6 +303,193 @@ You'll likely see these terms in the same context:
 
 ---
 
+## **OpenShift vs Kubernetes RBAC Differences**
+
+OpenShift extends Kubernetes RBAC with additional features and concepts. Understanding these differences is crucial when working with OpenShift.
+
+### **Core RBAC Compatibility**
+
+OpenShift is **fully compatible** with standard Kubernetes RBAC:
+
+- All K8s RBAC resources work identically (Role, ClusterRole, RoleBinding, ClusterRoleBinding)
+- Standard `kubectl auth can-i` commands work
+- YAML manifests are interchangeable
+
+### **OpenShift Extensions and Differences**
+
+#### **1. Security Context Constraints (SCCs)**
+
+**OpenShift-specific** security layer that works alongside RBAC:
+
+```yaml
+# Kubernetes: Only RBAC controls what you can create
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-creator
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create"]
+
+---
+# OpenShift: RBAC + SCC both must allow the action
+# Need both pod creation permission AND SCC permission
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: allow-privileged-scc
+subjects:
+  - kind: ServiceAccount
+    name: my-app
+    namespace: my-namespace
+roleRef:
+  kind: ClusterRole
+  name: system:openshift:scc:privileged # OpenShift-specific
+  apiGroup: rbac.authorization.k8s.io
+```
+
+#### **2. Built-in Roles and Groups**
+
+OpenShift provides additional built-in roles:
+
+**OpenShift Built-in Roles:**
+
+- `admin` - Full namespace access (can manage RBAC within namespace)
+- `edit` - Create/modify most resources (cannot manage RBAC)
+- `view` - Read-only access
+- `self-provisioner` - Can create new projects
+- `cluster-reader` - Read-only cluster access
+
+**OpenShift Built-in Groups:**
+
+- `system:cluster-readers` - Read-only cluster access
+- `system:cluster-admins` - Full cluster access
+- `system:masters` - Legacy cluster admin group
+
+```bash
+# OpenShift-specific commands
+oc policy add-role-to-user admin alice --namespace my-project
+oc policy add-cluster-role-to-user cluster-reader bob
+
+# vs Kubernetes equivalent
+kubectl create rolebinding admin-binding --clusterrole=admin --user=alice --namespace=my-project
+```
+
+#### **3. Project vs Namespace**
+
+OpenShift **Projects** are Kubernetes namespaces with additional metadata:
+
+```yaml
+# Kubernetes: Just a namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: my-namespace
+
+---
+# OpenShift: Project with additional annotations and labels
+apiVersion: project.openshift.io/v1
+kind: Project
+metadata:
+  name: my-project
+  annotations:
+    openshift.io/description: "My application project"
+    openshift.io/display-name: "My Project"
+    openshift.io/requester: "alice"
+```
+
+#### **4. Enhanced Policy Commands**
+
+OpenShift provides additional policy management commands:
+
+```bash
+# OpenShift-specific policy commands
+oc policy who-can create pods --namespace my-project
+oc policy add-role-to-user admin alice --namespace my-project
+oc policy remove-role-from-user edit bob --namespace my-project
+oc policy add-role-to-group view developers --namespace my-project
+
+# Check SCC permissions (OpenShift-only)
+oc policy scc-subject-review --serviceaccount=my-sa
+oc policy scc-review --serviceaccount=my-sa
+```
+
+#### **5. OAuth Integration**
+
+OpenShift has built-in OAuth server with RBAC integration:
+
+```yaml
+# OpenShift OAuth client configuration
+apiVersion: oauth.openshift.io/v1
+kind: OAuthClient
+metadata:
+  name: my-app
+secret: my-secret
+redirectURIs:
+  - https://my-app.example.com/callback
+grantMethod: auto
+
+---
+# Map OAuth groups to roles
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oauth-developers
+subjects:
+  - kind: Group
+    name: my-oauth-group # From OAuth provider
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: edit
+  apiGroup: rbac.authorization.k8s.io
+```
+
+#### **6. Default Service Account Behavior**
+
+Different default permissions:
+
+```bash
+# Kubernetes: default SA has minimal permissions
+kubectl auth can-i list pods --as=system:serviceaccount:default:default
+# Usually: no
+
+# OpenShift: More restrictive by default, explicit SCC requirements
+oc policy can-i create pods --as=system:serviceaccount:default:default
+# Requires explicit SCC binding
+```
+
+### **Migration Considerations**
+
+**From Kubernetes to OpenShift:**
+
+- Add SCC bindings for service accounts that need special privileges
+- Review default service account permissions
+- Consider using OpenShift built-in roles instead of custom ones
+- Update policy management scripts to use `oc policy` commands
+
+**From OpenShift to Kubernetes:**
+
+- Remove SCC-related ClusterRoleBindings
+- Replace OpenShift built-in roles with equivalent Kubernetes ones
+- Remove Project resources (use Namespaces)
+- Update OAuth configuration for different identity providers
+
+### **Compatibility Matrix**
+
+| Feature             | Kubernetes | OpenShift | Notes                    |
+| ------------------- | ---------- | --------- | ------------------------ |
+| **Basic RBAC**      | ✅         | ✅        | Fully compatible         |
+| **Custom Roles**    | ✅         | ✅        | Identical syntax         |
+| **Built-in Roles**  | Limited    | Extended  | OpenShift has more       |
+| **SCCs**            | ❌         | ✅        | OpenShift-only           |
+| **Projects**        | ❌         | ✅        | OpenShift extension      |
+| **OAuth Server**    | Manual     | Built-in  | OpenShift integrated     |
+| **Policy Commands** | Basic      | Enhanced  | `oc policy` vs `kubectl` |
+
+---
+
 ## **Practical Permission Debugging**
 
 When you get "access denied" errors, here's how to troubleshoot:
