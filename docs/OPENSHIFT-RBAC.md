@@ -1,19 +1,65 @@
-# OpenShift Authorization Concepts: RBAC, SAR, SSAR, and Role Bindings
+# OpenShift Authorization Concepts: RBAC and Security
 
-## **RBAC (Role-Based Access Control)**
+A comprehensive guide to Role-Based Access Control (RBAC) in OpenShift and Kubernetes, covering core concepts, OpenShift extensions, and practical implementation.
 
-RBAC is the **system that controls who can do what** in the cluster.
+---
 
-- **Role** – Defines _what actions_ are allowed on _what resources_, but only within a **single namespace**.
-- **ClusterRole** – Same idea as Role, but applies cluster-wide (across all namespaces).
-- **RoleBinding** – Grants a Role to a user, group, or service account in a namespace.
-- **ClusterRoleBinding** – Grants a ClusterRole to a user, group, or service account across the whole cluster.
+## **Part 1: Foundation - Understanding Authorization**
 
-Example Role:
+### **What is RBAC?**
 
+RBAC (Role-Based Access Control) is the **system that controls who can do what** in Kubernetes and OpenShift clusters. It's the authorization layer that determines whether authenticated users, groups, or service accounts can perform specific actions on cluster resources.
+
+### **RBAC in the Security Stack**
+
+RBAC is one layer in a comprehensive security model:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    AUTHENTICATION                           │
+│  (Who are you? - OIDC, LDAP, certificates, tokens)        │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│                   AUTHORIZATION (RBAC)                     │
+│  (What can you do? - API access permissions)               │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│              ADMISSION CONTROL                              │
+│  (How can you do it? - SCCs, Pod Security, Quotas)        │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│                 NETWORK POLICIES                            │
+│  (Who can talk to whom? - Network-level access control)    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### **RBAC vs Other Access Controls**
+
+**RBAC is responsible for:**
+- API access permissions (create, read, update, delete resources)
+- Who can perform administrative actions
+- Service account permissions for applications
+- Cross-namespace access controls
+
+**RBAC is NOT responsible for:**
+- Network traffic between pods (use Network Policies)
+- Pod security contexts (use SCCs/Pod Security Standards)
+- Resource consumption limits (use Quotas/Limit Ranges)
+- Image security scanning (use Admission Controllers)
+
+---
+
+## **Part 2: Core RBAC Components**
+
+### **Roles and ClusterRoles**
+
+**Role** - Defines permissions within a **single namespace**:
 ```yaml
-kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
 metadata:
   name: pod-reader
   namespace: my-namespace
@@ -23,86 +69,35 @@ rules:
     verbs: ["get", "list"]
 ```
 
-Example RoleBinding:
-
+**ClusterRole** - Defines permissions **cluster-wide** (across all namespaces):
 ```yaml
-kind: RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
 metadata:
-  name: read-pods
-  namespace: my-namespace
-subjects:
-  - kind: User
-    name: alice
-roleRef:
-  kind: Role
-  name: pod-reader
-  apiGroup: rbac.authorization.k8s.io
+  name: pod-reader-cluster
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
 ```
 
----
+### **RoleBindings and ClusterRoleBindings**
 
-## **SAR (SubjectAccessReview)**
-
-A **SAR** is a cluster API request to ask:  
-_"Can this user do this action?"_
-
-Example:
-
-```bash
-oc create -f - <<EOF
-apiVersion: authorization.k8s.io/v1
-kind: SubjectAccessReview
-spec:
-  user: alice
-  resourceAttributes:
-    namespace: my-namespace
-    verb: get
-    resource: pods
-EOF
-```
-
-The API server checks RBAC and replies with `allowed: true` or `allowed: false`.
-
----
-
-## **SSAR (SelfSubjectAccessReview)**
-
-A **SSAR** is the same idea as a SAR, but it’s for the **current logged-in user**.  
-You don’t have to specify the user; the API infers it from your token.
-
-Example:
-
-```bash
-oc auth can-i get pods --namespace my-namespace
-```
-
-This runs a SSAR behind the scenes.
-
----
-
-## **Role Bindings**
-
-RoleBindings and ClusterRoleBindings are what actually **link** a Role/ClusterRole to subjects (users, groups, service accounts). Without a binding, Roles don't do anything.
-
-### **RoleBinding vs ClusterRoleBinding**
+These **link** roles to subjects (users, groups, service accounts). Without bindings, roles do nothing.
 
 **RoleBinding:**
-
 - Grants permissions within a **single namespace**
 - Can bind either a Role OR a ClusterRole to subjects
 - When binding a ClusterRole, permissions are limited to the namespace where the RoleBinding exists
 
 **ClusterRoleBinding:**
-
 - Grants permissions **cluster-wide** (across all namespaces)
 - Can only bind ClusterRoles (not namespace-scoped Roles)
 - Subjects get the permissions everywhere in the cluster
 
-### **Examples**
+#### **Examples**
 
 **RoleBinding with a Role** (namespace-scoped permissions):
-
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -114,12 +109,11 @@ subjects:
     name: alice
 roleRef:
   kind: Role
-  name: pod-reader # Role defined in same namespace
+  name: pod-reader
   apiGroup: rbac.authorization.k8s.io
 ```
 
-**RoleBinding with a ClusterRole** (ClusterRole permissions limited to this namespace):
-
+**RoleBinding with a ClusterRole** (ClusterRole permissions limited to namespace):
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -136,7 +130,6 @@ roleRef:
 ```
 
 **ClusterRoleBinding** (cluster-wide permissions):
-
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -147,40 +140,27 @@ subjects:
     name: charlie
 roleRef:
   kind: ClusterRole
-  name: cluster-admin # Full cluster access
+  name: cluster-admin
   apiGroup: rbac.authorization.k8s.io
 ```
 
-### **When to Use Which**
-
+#### **When to Use Which**
 - **RoleBinding + Role**: Custom permissions for a specific namespace
 - **RoleBinding + ClusterRole**: Reuse common ClusterRole permissions in specific namespaces
 - **ClusterRoleBinding + ClusterRole**: Grant cluster-wide access (use sparingly!)
 
----
+### **Subjects: Users, Groups, and Service Accounts**
 
-## **Subjects: Users, Groups, and Service Accounts**
+RBAC bindings grant permissions to **subjects**. Understanding the different subject types is crucial for effective authorization design.
 
-RBAC bindings grant permissions to **subjects**. Understanding the different subject types and their capabilities is crucial for effective authorization design.
-
-### **Users**
-
+#### **Users**
 - **What they are**: Human identities authenticated by external systems (OIDC, LDAP, etc.)
 - **Where they come from**: Authentication providers, not stored as cluster resources
 - **Naming**: Usually email addresses or usernames (e.g., `alice@company.com`, `system:admin`)
 - **Capabilities**: Can perform any action their RBAC permissions allow
 - **Lifecycle**: Managed externally; OpenShift only sees them after authentication
 
-```yaml
-# Binding permissions to a user
-subjects:
-  - kind: User
-    name: alice@company.com
-    apiGroup: rbac.authorization.k8s.io
-```
-
-### **Groups**
-
+#### **Groups**
 - **What they are**: Collections of users, typically from external identity providers
 - **Where they come from**: LDAP/AD groups, OIDC claims, or OpenShift built-in groups
 - **Naming**: Varies by provider (e.g., `/developers`, `system:authenticated`)
@@ -188,81 +168,50 @@ subjects:
 - **Benefits**: Easier management - add/remove users from groups instead of individual bindings
 
 **Common Built-in Groups:**
-
 - `system:authenticated` - All authenticated users
 - `system:unauthenticated` - Anonymous users
 - `system:cluster-admins` - Cluster administrators
 
-```yaml
-# Binding permissions to a group
-subjects:
-  - kind: Group
-    name: /developers
-    apiGroup: rbac.authorization.k8s.io
-```
-
-### **Service Accounts**
-
+#### **Service Accounts**
 - **What they are**: Kubernetes-native identities for workloads (pods, deployments)
 - **Where they come from**: Created as cluster resources in namespaces
 - **Naming**: `system:serviceaccount:namespace:name`
 - **Capabilities**: Limited to what pods need; cannot perform user-specific actions
 - **Lifecycle**: Managed within Kubernetes, can be created/deleted like other resources
 
-```yaml
-# Service account as a cluster resource
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: my-app
-  namespace: production
+#### **Subject Comparison**
 
----
-# Binding permissions to a service account
-subjects:
-  - kind: ServiceAccount
-    name: my-app
-    namespace: production
-```
+| Aspect | Users | Groups | Service Accounts |
+|--------|--------|--------|------------------|
+| **Authentication** | External providers | External providers | Kubernetes tokens |
+| **Storage** | Not stored in cluster | Not stored in cluster | Stored as K8s resources |
+| **Token Management** | External | External | Kubernetes manages |
+| **Impersonation** | Can impersonate others* | Can impersonate others* | Limited impersonation |
+| **Interactive Access** | Yes (kubectl, web console) | Yes (through members) | No (pods only) |
+| **Cross-namespace** | Yes | Yes | No (namespace-scoped) |
 
-### **Key Differences and Capabilities**
+*Requires impersonation permissions
 
-| Aspect                 | Users                      | Groups                   | Service Accounts        |
-| ---------------------- | -------------------------- | ------------------------ | ----------------------- |
-| **Authentication**     | External providers         | External providers       | Kubernetes tokens       |
-| **Storage**            | Not stored in cluster      | Not stored in cluster    | Stored as K8s resources |
-| **Token Management**   | External                   | External                 | Kubernetes manages      |
-| **Impersonation**      | Can impersonate others\*   | Can impersonate others\* | Limited impersonation   |
-| **Interactive Access** | Yes (kubectl, web console) | Yes (through members)    | No (pods only)          |
-| **Cross-namespace**    | Yes                        | Yes                      | No (namespace-scoped)   |
-
-\*Requires impersonation permissions
-
-### **Best Practices by Subject Type**
+#### **Best Practices by Subject Type**
 
 **Users:**
-
 - Use for human access to clusters
 - Prefer group-based permissions over individual user bindings
 - Use impersonation for testing permissions
 
 **Groups:**
-
 - Primary method for managing human permissions
 - Map external groups to OpenShift roles
 - Use built-in groups for common patterns
 
 **Service Accounts:**
-
 - Use for pod-to-API communication
 - Follow principle of least privilege
 - Create dedicated SAs for different application components
 - Never use for human access
 
-### **Subject Examples in Practice**
-
+#### **Multi-Subject Binding Example**
 ```yaml
-# Multi-subject binding - common pattern
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -287,96 +236,172 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
+### **Permission Checking: SAR and SSAR**
+
+#### **SAR (SubjectAccessReview)**
+A **SAR** is a cluster API request to ask: _"Can this user do this action?"_
+
+```bash
+oc create -f - <<EOF
+apiVersion: authorization.k8s.io/v1
+kind: SubjectAccessReview
+spec:
+  user: alice
+  resourceAttributes:
+    namespace: my-namespace
+    verb: get
+    resource: pods
+EOF
+```
+
+The API server checks RBAC and replies with `allowed: true` or `allowed: false`.
+
+#### **SSAR (SelfSubjectAccessReview)**
+A **SSAR** is the same idea as a SAR, but for the **current logged-in user**. You don't have to specify the user; the API infers it from your token.
+
+```bash
+oc auth can-i get pods --namespace my-namespace
+```
+
+This runs a SSAR behind the scenes.
+
 ---
 
-## **Extra Terminology**
+## **Part 3: OpenShift Extensions**
 
-You'll likely see these terms in the same context:
-
-- **Group** – A collection of users (e.g., `system:authenticated` for all logged-in users).
-- **ServiceAccount** – A special Kubernetes identity for workloads (pods) to interact with the API.
-- **Verb** – The action (e.g., `get`, `list`, `create`, `update`, `delete`, `watch`, `patch`).
-- **Resource** – A Kubernetes object type (e.g., `pods`, `deployments`, `configmaps`).
-- **NonResourceURL** – RBAC rules for API endpoints that are not tied to a resource (e.g., `/healthz`, `/metrics`).
-- **Impersonation** – Temporarily act as another user to check permissions.
-- **ClusterRole Aggregation** – Combine multiple roles via labels into a single aggregate role.
-
----
-
-## **OpenShift vs Kubernetes RBAC Differences**
-
-OpenShift extends Kubernetes RBAC with additional features and concepts. Understanding these differences is crucial when working with OpenShift.
+OpenShift extends Kubernetes RBAC with additional features and concepts while maintaining full compatibility with standard Kubernetes RBAC.
 
 ### **Core RBAC Compatibility**
 
 OpenShift is **fully compatible** with standard Kubernetes RBAC:
-
 - All K8s RBAC resources work identically (Role, ClusterRole, RoleBinding, ClusterRoleBinding)
 - Standard `kubectl auth can-i` commands work
 - YAML manifests are interchangeable
 
-### **OpenShift Extensions and Differences**
+### **Security Context Constraints (SCCs)**
 
-#### **1. Security Context Constraints (SCCs)**
+**OpenShift-specific** security layer that works alongside RBAC. Both RBAC AND SCC permissions must allow an action.
 
-**OpenShift-specific** security layer that works alongside RBAC:
+#### **Built-in SCCs (Most Restrictive to Least Restrictive)**
+
+```bash
+# List all SCCs
+oc get scc
+
+# View specific SCC details
+oc describe scc restricted
+```
+
+**1. `restricted` (Most Secure - Default)**
+- **Use Case**: Standard applications, most pods
+- **RunAsUser**: MustRunAsRange (non-root)
+- **Host Access**: None
+- **Risk**: Minimal
+
+**2. `restricted-v2`**
+- **Use Case**: Enhanced version with Pod Security Standards compliance
+- **Additional Controls**: Seccomp, capabilities dropping enforced
+
+**3. `nonroot`**
+- **Use Case**: Applications needing flexibility but still non-root
+- **RunAsUser**: MustRunAsNonRoot
+
+**4. `nonroot-v2`**
+- **Use Case**: Enhanced nonroot with Pod Security Standards
+
+**5. `anyuid`**
+- **Use Case**: Applications that must run as specific UIDs (including root)
+- **RunAsUser**: RunAsAny (can run as root)
+- **Risk**: Medium - allows root but no host access
+
+**6. `hostmount-anyuid`**
+- **Use Case**: Applications needing host volume mounts
+- **Volumes**: Includes HostPath
+- **Risk**: High - host filesystem access
+
+**7. `hostnetwork`**
+- **Use Case**: Applications needing host network (like CNI pods)
+- **Network**: Host network access
+- **Risk**: High - network access to host
+
+**8. `hostnetwork-v2`**
+- **Use Case**: Enhanced hostnetwork with additional controls
+
+**9. `node-exporter`**
+- **Use Case**: Monitoring agents like Prometheus node-exporter
+- **Host Access**: Read-only host access for metrics
+
+**10. `privileged` (Least Secure)**
+- **Use Case**: System pods, infrastructure components
+- **Capabilities**: ALL capabilities
+- **Host Access**: Full host access
+- **Risk**: Maximum - equivalent to root on host
+
+#### **SCC Assignment Examples**
 
 ```yaml
-# Kubernetes: Only RBAC controls what you can create
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: pod-creator
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["create"]
-
----
-# OpenShift: RBAC + SCC both must allow the action
-# Need both pod creation permission AND SCC permission
+# Most secure - restrict to default SCC
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: allow-privileged-scc
+  name: my-app-restricted
 subjects:
   - kind: ServiceAccount
     name: my-app
     namespace: my-namespace
 roleRef:
   kind: ClusterRole
-  name: system:openshift:scc:privileged # OpenShift-specific
+  name: system:openshift:scc:restricted
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Allow running as any UID (including root)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: legacy-app-anyuid
+subjects:
+  - kind: ServiceAccount
+    name: legacy-app
+    namespace: my-namespace
+roleRef:
+  kind: ClusterRole
+  name: system:openshift:scc:anyuid
   apiGroup: rbac.authorization.k8s.io
 ```
 
-#### **2. Built-in Roles and Groups**
+#### **SCC Management Commands**
 
-OpenShift provides additional built-in roles:
+```bash
+# Check which SCC a pod is using
+oc get pod my-pod -o yaml | grep "openshift.io/scc"
 
-**OpenShift Built-in Roles:**
+# Check what SCC a service account can use
+oc policy scc-subject-review --serviceaccount=my-sa --namespace=my-namespace
 
+# Add SCC to service account
+oc adm policy add-scc-to-user anyuid --serviceaccount=my-sa --namespace=my-namespace
+
+# Remove SCC from service account
+oc adm policy remove-scc-from-user anyuid --serviceaccount=my-sa --namespace=my-namespace
+```
+
+### **Built-in Roles and Groups**
+
+#### **OpenShift Built-in Roles**
 - `admin` - Full namespace access (can manage RBAC within namespace)
 - `edit` - Create/modify most resources (cannot manage RBAC)
 - `view` - Read-only access
 - `self-provisioner` - Can create new projects
 - `cluster-reader` - Read-only cluster access
+- `cluster-admin` - Full cluster access
 
-**OpenShift Built-in Groups:**
-
+#### **OpenShift Built-in Groups**
 - `system:cluster-readers` - Read-only cluster access
 - `system:cluster-admins` - Full cluster access
 - `system:masters` - Legacy cluster admin group
 
-```bash
-# OpenShift-specific commands
-oc policy add-role-to-user admin alice --namespace my-project
-oc policy add-cluster-role-to-user cluster-reader bob
-
-# vs Kubernetes equivalent
-kubectl create rolebinding admin-binding --clusterrole=admin --user=alice --namespace=my-project
-```
-
-#### **3. Project vs Namespace**
+### **Projects vs Namespaces**
 
 OpenShift **Projects** are Kubernetes namespaces with additional metadata:
 
@@ -399,7 +424,15 @@ metadata:
     openshift.io/requester: "alice"
 ```
 
-#### **4. Enhanced Policy Commands**
+```bash
+# Create project (creates namespace + project metadata)
+oc new-project my-project
+
+# Grant project admin to user
+oc policy add-role-to-user admin alice --namespace my-project
+```
+
+### **Enhanced Policy Commands**
 
 OpenShift provides additional policy management commands:
 
@@ -413,9 +446,12 @@ oc policy add-role-to-group view developers --namespace my-project
 # Check SCC permissions (OpenShift-only)
 oc policy scc-subject-review --serviceaccount=my-sa
 oc policy scc-review --serviceaccount=my-sa
+
+# vs Kubernetes equivalent
+kubectl create rolebinding admin-binding --clusterrole=admin --user=alice --namespace=my-project
 ```
 
-#### **5. OAuth Integration**
+### **OAuth Integration**
 
 OpenShift has built-in OAuth server with RBAC integration:
 
@@ -446,55 +482,29 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-#### **6. Default Service Account Behavior**
-
-Different default permissions:
-
-```bash
-# Kubernetes: default SA has minimal permissions
-kubectl auth can-i list pods --as=system:serviceaccount:default:default
-# Usually: no
-
-# OpenShift: More restrictive by default, explicit SCC requirements
-oc policy can-i create pods --as=system:serviceaccount:default:default
-# Requires explicit SCC binding
-```
-
 ### **Migration Considerations**
 
 **From Kubernetes to OpenShift:**
-
 - Add SCC bindings for service accounts that need special privileges
 - Review default service account permissions
 - Consider using OpenShift built-in roles instead of custom ones
 - Update policy management scripts to use `oc policy` commands
 
 **From OpenShift to Kubernetes:**
-
 - Remove SCC-related ClusterRoleBindings
 - Replace OpenShift built-in roles with equivalent Kubernetes ones
 - Remove Project resources (use Namespaces)
 - Update OAuth configuration for different identity providers
 
-### **Compatibility Matrix**
-
-| Feature             | Kubernetes | OpenShift | Notes                    |
-| ------------------- | ---------- | --------- | ------------------------ |
-| **Basic RBAC**      | ✅         | ✅        | Fully compatible         |
-| **Custom Roles**    | ✅         | ✅        | Identical syntax         |
-| **Built-in Roles**  | Limited    | Extended  | OpenShift has more       |
-| **SCCs**            | ❌         | ✅        | OpenShift-only           |
-| **Projects**        | ❌         | ✅        | OpenShift extension      |
-| **OAuth Server**    | Manual     | Built-in  | OpenShift integrated     |
-| **Policy Commands** | Basic      | Enhanced  | `oc policy` vs `kubectl` |
-
 ---
 
-## **Practical Permission Debugging**
+## **Part 4: Practical Implementation**
+
+### **Permission Debugging**
 
 When you get "access denied" errors, here's how to troubleshoot:
 
-### Check Current Permissions
+#### **Check Current Permissions**
 
 ```bash
 # Check if you can perform a specific action
@@ -507,7 +517,7 @@ oc auth can-i --list --namespace my-namespace
 oc auth can-i create pods --as alice --namespace my-namespace
 ```
 
-### Find Who Has Permissions
+#### **Find Who Has Permissions**
 
 ```bash
 # See who can perform an action
@@ -517,261 +527,30 @@ oc policy who-can create pods --namespace my-namespace
 oc policy who-can create clusterroles
 ```
 
-### Common Permission Issues
-
+#### **Common Permission Issues**
 - **Missing RoleBinding**: Role exists but isn't bound to the user
 - **Wrong namespace**: User has permissions in different namespace
 - **Insufficient cluster permissions**: Need ClusterRole instead of Role
 - **Resource vs subresource**: Need `pods/exec` not just `pods`
 
----
-
-## **OpenShift-Specific Extensions**
-
-### Built-in ClusterRoles
-
-OpenShift provides several pre-defined roles:
+#### **Debugging Different Layers**
 
 ```bash
-# View built-in roles
-oc get clusterroles | grep -E "admin|edit|view|cluster-admin"
+# RBAC issues:
+oc auth can-i create pods --namespace my-app
+
+# Network Policy issues:
+oc get networkpolicies --namespace my-app
+oc describe networkpolicy my-policy --namespace my-app
+
+# SCC/Pod Security issues:
+oc get pod my-pod -o yaml | grep -A 10 securityContext
+oc policy scc-subject-review --serviceaccount=my-sa
 ```
 
-- **cluster-admin**: Full cluster access (equivalent to root)
-- **admin**: Full access to a project/namespace
-- **edit**: Create/modify resources but not view/modify roles
-- **view**: Read-only access to most resources
+### **Service Account Management**
 
-### Security Context Constraints (SCCs)
-
-SCCs work alongside RBAC to control pod security. OpenShift provides several built-in SCCs with different security levels:
-
-#### **Built-in SCCs (Most Restrictive to Least Restrictive)**
-
-```bash
-# List all SCCs
-oc get scc
-
-# View specific SCC details
-oc describe scc restricted
-```
-
-**1. `restricted` (Most Secure - Default)**
-
-- **Use Case**: Standard applications, most pods
-- **Capabilities**: Minimal security permissions
-- **RunAsUser**: MustRunAsRange (non-root)
-- **SELinux**: MustRunAs
-- **Volumes**: ConfigMap, DownwardAPI, EmptyDir, PersistentVolumeClaim, Projected, Secret
-- **Host Access**: None
-
-**2. `restricted-v2`**
-
-- **Use Case**: Enhanced version of restricted for newer security standards
-- **Capabilities**: Similar to restricted but with Pod Security Standards compliance
-- **Additional Controls**: Seccomp, capabilities dropping enforced
-
-**3. `nonroot`**
-
-- **Use Case**: Applications that need slightly more flexibility but still run as non-root
-- **RunAsUser**: MustRunAsNonRoot
-- **Capabilities**: Limited set allowed
-- **Host Access**: None
-
-**4. `nonroot-v2`**
-
-- **Use Case**: Enhanced nonroot with Pod Security Standards
-- **Similar to nonroot**: But with additional security controls
-
-**5. `anyuid`**
-
-- **Use Case**: Applications that must run as specific UIDs (including root)
-- **RunAsUser**: RunAsAny (can run as root)
-- **Capabilities**: Limited
-- **Host Access**: None
-- **Risk**: Medium - allows root but no host access
-
-**6. `hostmount-anyuid`**
-
-- **Use Case**: Applications needing host volume mounts
-- **RunAsUser**: RunAsAny
-- **Volumes**: Includes HostPath
-- **Host Access**: Limited host volume access
-- **Risk**: High - host filesystem access
-
-**7. `hostnetwork`**
-
-- **Use Case**: Applications needing host network (like CNI pods)
-- **Network**: Host network access
-- **Ports**: Can bind to host ports
-- **Risk**: High - network access to host
-
-**8. `hostnetwork-v2`**
-
-- **Use Case**: Enhanced hostnetwork with additional controls
-
-**9. `node-exporter`**
-
-- **Use Case**: Monitoring agents like Prometheus node-exporter
-- **Capabilities**: Specific monitoring capabilities
-- **Host Access**: Read-only host access for metrics
-
-**10. `privileged` (Least Secure)**
-
-- **Use Case**: System pods, infrastructure components
-- **Capabilities**: ALL capabilities
-- **RunAsUser**: RunAsAny
-- **Host Access**: Full host access
-- **Risk**: Maximum - equivalent to root on host
-
-#### **SCC Assignment Examples**
-
-```yaml
-# Restrict service account to most secure SCC
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: my-app-restricted
-subjects:
-  - kind: ServiceAccount
-    name: my-app
-    namespace: my-namespace
-roleRef:
-  kind: ClusterRole
-  name: system:openshift:scc:restricted
-  apiGroup: rbac.authorization.k8s.io
-
----
-# Allow service account to run as any UID (including root)
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: legacy-app-anyuid
-subjects:
-  - kind: ServiceAccount
-    name: legacy-app
-    namespace: my-namespace
-roleRef:
-  kind: ClusterRole
-  name: system:openshift:scc:anyuid
-  apiGroup: rbac.authorization.k8s.io
-
----
-# Full privileges for system component
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: system-component-privileged
-subjects:
-  - kind: ServiceAccount
-    name: system-component
-    namespace: kube-system
-roleRef:
-  kind: ClusterRole
-  name: system:openshift:scc:privileged
-  apiGroup: rbac.authorization.k8s.io
-```
-
-#### **SCC Management Commands**
-
-```bash
-# Check which SCC a pod is using
-oc get pod my-pod -o yaml | grep "openshift.io/scc"
-
-# Check what SCC a service account can use
-oc policy scc-subject-review --serviceaccount=my-sa --namespace=my-namespace
-
-# Check what SCC would be used for a pod spec
-oc policy scc-review --serviceaccount=my-sa --filename=pod.yaml
-
-# Add SCC to service account (alternative to ClusterRoleBinding)
-oc adm policy add-scc-to-user anyuid --serviceaccount=my-sa --namespace=my-namespace
-
-# Remove SCC from service account
-oc adm policy remove-scc-from-user anyuid --serviceaccount=my-sa --namespace=my-namespace
-
-# Add SCC to group
-oc adm policy add-scc-to-group anyuid system:authenticated
-```
-
-#### **SCC Selection Priority**
-
-When multiple SCCs are available to a service account, OpenShift selects based on:
-
-1. **Priority**: Higher priority SCCs are preferred
-2. **Restrictiveness**: More restrictive SCCs are preferred when priorities are equal
-3. **Order**: Alphabetical order as tiebreaker
-
-```bash
-# View SCC priorities
-oc get scc -o custom-columns=NAME:.metadata.name,PRIORITY:.priority
-```
-
-#### **Custom SCCs**
-
-You can create custom SCCs for specific needs:
-
-```yaml
-apiVersion: security.openshift.io/v1
-kind: SecurityContextConstraints
-metadata:
-  name: custom-scc
-allowHostDirVolumePlugin: false
-allowHostIPC: false
-allowHostNetwork: false
-allowHostPID: false
-allowHostPorts: false
-allowPrivilegedContainer: false
-allowedCapabilities: []
-defaultAddCapabilities: []
-fsGroup:
-  type: MustRunAs
-  ranges:
-    - min: 1000
-      max: 2000
-readOnlyRootFilesystem: false
-requiredDropCapabilities:
-  - ALL
-runAsUser:
-  type: MustRunAsRange
-  uidRangeMin: 1000
-  uidRangeMax: 2000
-seLinuxContext:
-  type: MustRunAs
-volumes:
-  - configMap
-  - downwardAPI
-  - emptyDir
-  - persistentVolumeClaim
-  - projected
-  - secret
-```
-
-#### **Best Practices**
-
-1. **Start Restrictive**: Use `restricted` by default
-2. **Escalate Minimally**: Only grant the minimum SCC needed
-3. **Avoid Privileged**: Use `privileged` only for system components
-4. **Document Exceptions**: Clearly document why non-restricted SCCs are needed
-5. **Regular Review**: Periodically audit SCC assignments
-
-### Project vs Namespace
-
-In OpenShift, projects are namespaces with additional metadata:
-
-```bash
-# Create project (creates namespace + project metadata)
-oc new-project my-project
-
-# Grant project admin to user
-oc policy add-role-to-user admin alice --namespace my-project
-```
-
----
-
-## **Service Account Token Management**
-
-### How Service Accounts Work with RBAC
+#### **Complete Service Account Setup**
 
 ```yaml
 # Service account with custom permissions
@@ -806,7 +585,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ```
 
-### Using Service Account in Pods
+#### **Using Service Account in Pods**
 
 ```yaml
 apiVersion: v1
@@ -821,7 +600,7 @@ spec:
       image: my-app:latest
 ```
 
-### Token Access from Pods
+#### **Token Access from Pods**
 
 ```bash
 # Inside a pod, the SA token is mounted at:
@@ -833,123 +612,9 @@ curl -H "Authorization: Bearer $TOKEN" \
      -k https://kubernetes.default.svc/api/v1/namespaces/my-namespace/configmaps
 ```
 
----
+### **Real-World Examples**
 
-## **Advanced RBAC Patterns**
-
-### Restricting Access to Specific Resources
-
-```yaml
-# Only allow access to specific configmaps
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: specific-configmap-access
-  namespace: my-namespace
-rules:
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    resourceNames: ["app-config", "db-config"] # Only these specific ones
-    verbs: ["get", "update"]
-```
-
-### Subresource Permissions
-
-```yaml
-# Allow viewing pods but also exec into them
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: pod-executor
-  namespace: my-namespace
-rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list"]
-  - apiGroups: [""]
-    resources: ["pods/exec"] # Subresource for exec
-    verbs: ["create"]
-```
-
-### Wildcard Usage
-
-```yaml
-# Access to all resources in specific API groups
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: app-operator
-rules:
-  - apiGroups: ["apps", "extensions"]
-    resources: ["*"] # All resources in these groups
-    verbs: ["*"] # All verbs
-```
-
----
-
-## **Expanded Terminology**
-
-### ClusterRole Aggregation
-
-Combine multiple ClusterRoles into one using labels:
-
-```yaml
-# Base aggregated role
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: monitoring-reader
-aggregationRule:
-  clusterRoleSelectors:
-    - matchLabels:
-        rbac.example.com/aggregate-to-monitoring: "true"
-rules: [] # Rules will be automatically populated
-
----
-# Component role that gets aggregated
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: prometheus-reader
-  labels:
-    rbac.example.com/aggregate-to-monitoring: "true"
-rules:
-  - apiGroups: [""]
-    resources: ["pods", "services", "endpoints"]
-    verbs: ["get", "list", "watch"]
-```
-
-### Impersonation Examples
-
-```bash
-# Impersonate another user to test their permissions
-oc auth can-i create pods --as alice --namespace my-namespace
-
-# Impersonate a service account
-oc auth can-i list secrets --as system:serviceaccount:my-namespace:my-sa
-
-# Create resources as another user (requires impersonation permissions)
-oc create deployment nginx --image nginx --as alice
-```
-
-### NonResourceURL Examples
-
-```yaml
-# Allow access to cluster info endpoints
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: cluster-info-reader
-rules:
-  - nonResourceURLs: ["/healthz", "/healthz/*", "/version", "/api", "/api/*"]
-    verbs: ["get"]
-```
-
----
-
-## **Real-World Workflow Examples**
-
-### Complete Multi-Tenant Setup
+#### **Complete Multi-Tenant Setup**
 
 ```bash
 # 1. Create project for team
@@ -980,7 +645,7 @@ oc create serviceaccount ci-deployer --namespace team-alpha
 oc policy add-role-to-user team-alpha-developer system:serviceaccount:team-alpha:ci-deployer
 ```
 
-### CI/CD Pipeline Permissions
+#### **CI/CD Pipeline Permissions**
 
 ```yaml
 # Service account for CI/CD with minimal required permissions
@@ -1010,115 +675,7 @@ rules:
     verbs: ["get", "list"]
 ```
 
----
-
-## **Common Error Messages and Solutions**
-
-### "Forbidden" Errors
-
-```
-Error: pods is forbidden: User "alice" cannot create resource "pods" in API group "" in the namespace "default"
-```
-
-**Solution**: Check if user has appropriate Role and RoleBinding in the namespace.
-
-### "Unknown User" Errors
-
-```
-Error: the server doesn't have a resource type "user"
-```
-
-**Solution**: Users don't exist as cluster resources; they're authenticated externally.
-
-### SCC-Related Errors
-
-```
-Error: pods "my-pod" is forbidden: unable to validate against any security context constraint
-```
-
-**Solution**: Grant appropriate SCC permissions to the service account.
-
----
-
-## **Integration with Identity Providers**
-
-### OAuth/OIDC Integration
-
-```yaml
-# Example: Map OIDC groups to OpenShift roles
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: oidc-developers
-subjects:
-  - kind: Group
-    name: /developers # Group from OIDC provider
-    apiGroup: rbac.authorization.k8s.io
-roleRef:
-  kind: ClusterRole
-  name: edit
-  apiGroup: rbac.authorization.k8s.io
-```
-
-### Group Synchronization
-
-```bash
-# View groups a user belongs to
-oc get identity
-
-# Check group memberships
-oc describe user alice
-```
-
----
-
-## **RBAC vs Other Access Controls**
-
-RBAC is just one layer of access control in Kubernetes/OpenShift. Understanding how it relates to other security mechanisms is crucial for comprehensive security design.
-
-### **Access Control Layers**
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    AUTHENTICATION                           │
-│  (Who are you? - OIDC, LDAP, certificates, tokens)          │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                   AUTHORIZATION (RBAC)                      │
-│  (What can you do? - API access permissions)                │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│              ADMISSION CONTROL                              │
-│  (How can you do it? - SCCs, Pod Security, Quotas)          │
-└─────────────────────────────────────────────────────────────┘
-                            ↓
-┌─────────────────────────────────────────────────────────────┐
-│                 NETWORK POLICIES                            │
-│  (Who can talk to whom? - Network-level access control)     │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### **RBAC vs Network Policies**
-
-**RBAC (Role-Based Access Control):**
-
-- **Layer**: API Server authorization
-- **Scope**: Controls access to Kubernetes API resources
-- **Question**: "Can user Alice create a Pod in namespace X?"
-- **Enforcement**: API server before resource creation/modification
-- **Subjects**: Users, Groups, Service Accounts
-
-**Network Policies:**
-
-- **Layer**: Network traffic control
-- **Scope**: Controls pod-to-pod network communication
-- **Question**: "Can Pod A talk to Pod B on port 8080?"
-- **Enforcement**: CNI plugin at network level after pods are running
-- **Subjects**: Pods (selected by labels)
-
-### **Example: Complete Access Control**
+#### **Complete Access Control Example**
 
 ```yaml
 # 1. RBAC: Allow service account to create pods
@@ -1193,85 +750,212 @@ spec:
           port: 5432
 ```
 
-### **When Each Layer Applies**
+### **Common Error Messages and Solutions**
 
-**Scenario**: Alice wants to create a pod that connects to a database
-
-1. **Authentication**: "Is Alice who she claims to be?" ✓
-2. **RBAC**: "Can Alice create pods in this namespace?" ✓
-3. **Admission Control**: "Can this pod run with these security settings?" ✓
-4. **Pod Creation**: Pod is created successfully ✓
-5. **Network Policy**: "Can this pod connect to the database pod?" ✓/❌
-
-### **Other Access Control Mechanisms**
-
-**Pod Security Standards/SCCs:**
-
-```yaml
-# Controls what pods can do (not network access)
-apiVersion: v1
-kind: Pod
-spec:
-  securityContext:
-    runAsNonRoot: true # Enforced by Pod Security/SCC
-    runAsUser: 1000
-  containers:
-    - name: app
-      securityContext:
-        allowPrivilegeEscalation: false
-        capabilities:
-          drop: ["ALL"]
+#### **"Forbidden" Errors**
 ```
+Error: pods is forbidden: User "alice" cannot create resource "pods" in API group "" in the namespace "default"
+```
+**Solution**: Check if user has appropriate Role and RoleBinding in the namespace.
 
-**Resource Quotas:**
+#### **"Unknown User" Errors**
+```
+Error: the server doesn't have a resource type "user"
+```
+**Solution**: Users don't exist as cluster resources; they're authenticated externally.
 
+#### **SCC-Related Errors**
+```
+Error: pods "my-pod" is forbidden: unable to validate against any security context constraint
+```
+**Solution**: Grant appropriate SCC permissions to the service account.
+
+---
+
+## **Part 5: Advanced Topics**
+
+### **Advanced RBAC Patterns**
+
+#### **Restricting Access to Specific Resources**
 ```yaml
-# Controls resource consumption (not API access)
-apiVersion: v1
-kind: ResourceQuota
+# Only allow access to specific configmaps
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
 metadata:
-  name: compute-quota
-  namespace: app-namespace
-spec:
-  hard:
-    requests.cpu: "4"
-    requests.memory: 8Gi
-    persistentvolumeclaims: "10"
+  name: specific-configmap-access
+  namespace: my-namespace
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["app-config", "db-config"] # Only these specific ones
+    verbs: ["get", "update"]
 ```
 
-**Limit Ranges:**
+#### **Subresource Permissions**
+```yaml
+# Allow viewing pods but also exec into them
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-executor
+  namespace: my-namespace
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"] # Subresource for exec
+    verbs: ["create"]
+```
+
+#### **Wildcard Usage**
+```yaml
+# Access to all resources in specific API groups
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: app-operator
+rules:
+  - apiGroups: ["apps", "extensions"]
+    resources: ["*"] # All resources in these groups
+    verbs: ["*"] # All verbs
+```
+
+### **ClusterRole Aggregation**
+
+Combine multiple ClusterRoles into one using labels:
 
 ```yaml
-# Controls individual resource limits
-apiVersion: v1
-kind: LimitRange
+# Base aggregated role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
 metadata:
-  name: mem-limit-range
-  namespace: app-namespace
-spec:
-  limits:
-    - default:
-        memory: "512Mi"
-      defaultRequest:
-        memory: "256Mi"
-      type: Container
+  name: monitoring-reader
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.example.com/aggregate-to-monitoring: "true"
+rules: [] # Rules will be automatically populated
+
+---
+# Component role that gets aggregated
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-reader
+  labels:
+    rbac.example.com/aggregate-to-monitoring: "true"
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
 ```
 
-### **Key Takeaways**
+### **Impersonation**
 
-**RBAC is NOT responsible for:**
+```bash
+# Impersonate another user to test their permissions
+oc auth can-i create pods --as alice --namespace my-namespace
 
-- Network traffic between pods (use Network Policies)
-- Pod security contexts (use SCCs/Pod Security Standards)
-- Resource consumption limits (use Quotas/Limit Ranges)
-- Image security scanning (use Admission Controllers)
+# Impersonate a service account
+oc auth can-i list secrets --as system:serviceaccount:my-namespace:my-sa
 
-**RBAC IS responsible for:**
+# Create resources as another user (requires impersonation permissions)
+oc create deployment nginx --image nginx --as alice
+```
 
-- API access permissions (create, read, update, delete resources)
-- Who can perform administrative actions
-- Service account permissions for applications
-- Cross-namespace access controls
+### **NonResourceURL Permissions**
+
+```yaml
+# Allow access to cluster info endpoints
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-info-reader
+rules:
+  - nonResourceURLs: ["/healthz", "/healthz/*", "/version", "/api", "/api/*"]
+    verbs: ["get"]
+```
+
+### **Custom SCCs**
+
+```yaml
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: custom-scc
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegedContainer: false
+allowedCapabilities: []
+defaultAddCapabilities: []
+fsGroup:
+  type: MustRunAs
+  ranges:
+    - min: 1000
+      max: 2000
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - ALL
+runAsUser:
+  type: MustRunAsRange
+  uidRangeMin: 1000
+  uidRangeMax: 2000
+seLinuxContext:
+  type: MustRunAs
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - persistentVolumeClaim
+  - projected
+  - secret
+```
+
+### **Identity Provider Integration**
+
+#### **OAuth/OIDC Integration**
+```yaml
+# Example: Map OIDC groups to OpenShift roles
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oidc-developers
+subjects:
+  - kind: Group
+    name: /developers # Group from OIDC provider
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: edit
+  apiGroup: rbac.authorization.k8s.io
+```
+
+#### **Group Synchronization**
+```bash
+# View groups a user belongs to
+oc get identity
+
+# Check group memberships
+oc describe user alice
+```
+
+---
+
+## **Reference: Terminology and Best Practices**
+
+### **Key Terms**
+
+- **Group** – A collection of users (e.g., `system:authenticated` for all logged-in users)
+- **ServiceAccount** – A special Kubernetes identity for workloads (pods) to interact with the API
+- **Verb** – The action (e.g., `get`, `list`, `create`, `update`, `delete`, `watch`, `patch`)
+- **Resource** – A Kubernetes object type (e.g., `pods`, `deployments`, `configmaps`)
+- **NonResourceURL** – RBAC rules for API endpoints not tied to a resource (e.g., `/healthz`, `/metrics`)
+- **Impersonation** – Temporarily act as another user to check permissions
+- **ClusterRole Aggregation** – Combine multiple roles via labels into a single aggregate role
 
 ### **Best Practices for Layered Security**
 
@@ -1281,32 +965,27 @@ spec:
 4. **Set Resource Limits**: Prevent resource exhaustion
 5. **Use Admission Controllers**: Add custom validation/mutation logic
 
-```bash
-# Debugging different layers
-# RBAC issues:
-oc auth can-i create pods --namespace my-app
+### **SCC Best Practices**
 
-# Network Policy issues:
-oc get networkpolicies --namespace my-app
-oc describe networkpolicy my-policy --namespace my-app
-
-# SCC/Pod Security issues:
-oc get pod my-pod -o yaml | grep -A 10 securityContext
-oc policy scc-subject-review --serviceaccount=my-sa
-```
+1. **Start Restrictive**: Use `restricted` by default
+2. **Escalate Minimally**: Only grant the minimum SCC needed
+3. **Avoid Privileged**: Use `privileged` only for system components
+4. **Document Exceptions**: Clearly document why non-restricted SCCs are needed
+5. **Regular Review**: Periodically audit SCC assignments
 
 ---
 
-## **How They Work Together**
+## **How It All Works Together**
 
-1. **RBAC** defines the allowed actions in Roles/ClusterRoles.
-2. **RoleBindings** / **ClusterRoleBindings** grant those roles to users, groups, or service accounts.
-3. **SAR / SSAR** let you ask the API if a particular action is allowed.
-4. The API server evaluates RBAC rules and returns **allowed** or **denied**.
-5. **SCCs** (OpenShift-specific) add an additional security layer for pod permissions.
-6. **Identity providers** handle authentication, while RBAC handles authorization.
-7. **Network Policies** control pod-to-pod communication after RBAC allows resource creation.
-8. **Other admission controllers** add additional validation and security controls.
+1. **Authentication** determines who you are (external identity providers)
+2. **RBAC** defines what actions are allowed in Roles/ClusterRoles
+3. **RoleBindings/ClusterRoleBindings** grant those roles to users, groups, or service accounts
+4. **SAR/SSAR** let you ask the API if a particular action is allowed
+5. **SCCs** (OpenShift-specific) add an additional security layer for pod permissions
+6. **Network Policies** control pod-to-pod communication after RBAC allows resource creation
+7. **Other admission controllers** add additional validation and security controls
+
+The API server evaluates all these layers and returns **allowed** or **denied** for each request.
 
 ---
 
