@@ -879,6 +879,231 @@ oc describe user alice
 
 ---
 
+## **RBAC vs Other Access Controls**
+
+RBAC is just one layer of access control in Kubernetes/OpenShift. Understanding how it relates to other security mechanisms is crucial for comprehensive security design.
+
+### **Access Control Layers**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    AUTHENTICATION                           │
+│  (Who are you? - OIDC, LDAP, certificates, tokens)          │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│                   AUTHORIZATION (RBAC)                     │
+│  (What can you do? - API access permissions)               │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│              ADMISSION CONTROL                              │
+│  (How can you do it? - SCCs, Pod Security, Quotas)          │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│                 NETWORK POLICIES                            │
+│  (Who can talk to whom? - Network-level access control)     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### **RBAC vs Network Policies**
+
+**RBAC (Role-Based Access Control):**
+
+- **Layer**: API Server authorization
+- **Scope**: Controls access to Kubernetes API resources
+- **Question**: "Can user Alice create a Pod in namespace X?"
+- **Enforcement**: API server before resource creation/modification
+- **Subjects**: Users, Groups, Service Accounts
+
+**Network Policies:**
+
+- **Layer**: Network traffic control
+- **Scope**: Controls pod-to-pod network communication
+- **Question**: "Can Pod A talk to Pod B on port 8080?"
+- **Enforcement**: CNI plugin at network level after pods are running
+- **Subjects**: Pods (selected by labels)
+
+### **Example: Complete Access Control**
+
+```yaml
+# 1. RBAC: Allow service account to create pods
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-manager
+  namespace: app-namespace
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: app-pod-manager
+  namespace: app-namespace
+subjects:
+  - kind: ServiceAccount
+    name: app-deployer
+    namespace: app-namespace
+roleRef:
+  kind: Role
+  name: pod-manager
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 2. SCC/Pod Security: Control what the pod can do
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: app-scc-binding
+subjects:
+  - kind: ServiceAccount
+    name: app-deployer
+    namespace: app-namespace
+roleRef:
+  kind: ClusterRole
+  name: system:openshift:scc:restricted
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# 3. Network Policy: Control pod network access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: app-network-policy
+  namespace: app-namespace
+spec:
+  podSelector:
+    matchLabels:
+      app: my-app
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              role: frontend
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              role: database
+      ports:
+        - protocol: TCP
+          port: 5432
+```
+
+### **When Each Layer Applies**
+
+**Scenario**: Alice wants to create a pod that connects to a database
+
+1. **Authentication**: "Is Alice who she claims to be?" ✓
+2. **RBAC**: "Can Alice create pods in this namespace?" ✓
+3. **Admission Control**: "Can this pod run with these security settings?" ✓
+4. **Pod Creation**: Pod is created successfully ✓
+5. **Network Policy**: "Can this pod connect to the database pod?" ✓/❌
+
+### **Other Access Control Mechanisms**
+
+**Pod Security Standards/SCCs:**
+
+```yaml
+# Controls what pods can do (not network access)
+apiVersion: v1
+kind: Pod
+spec:
+  securityContext:
+    runAsNonRoot: true # Enforced by Pod Security/SCC
+    runAsUser: 1000
+  containers:
+    - name: app
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+```
+
+**Resource Quotas:**
+
+```yaml
+# Controls resource consumption (not API access)
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: compute-quota
+  namespace: app-namespace
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    persistentvolumeclaims: "10"
+```
+
+**Limit Ranges:**
+
+```yaml
+# Controls individual resource limits
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mem-limit-range
+  namespace: app-namespace
+spec:
+  limits:
+    - default:
+        memory: "512Mi"
+      defaultRequest:
+        memory: "256Mi"
+      type: Container
+```
+
+### **Key Takeaways**
+
+**RBAC is NOT responsible for:**
+
+- Network traffic between pods (use Network Policies)
+- Pod security contexts (use SCCs/Pod Security Standards)
+- Resource consumption limits (use Quotas/Limit Ranges)
+- Image security scanning (use Admission Controllers)
+
+**RBAC IS responsible for:**
+
+- API access permissions (create, read, update, delete resources)
+- Who can perform administrative actions
+- Service account permissions for applications
+- Cross-namespace access controls
+
+### **Best Practices for Layered Security**
+
+1. **Start with RBAC**: Define who can do what with API resources
+2. **Add Network Policies**: Control pod-to-pod communication
+3. **Apply Pod Security**: Restrict what containers can do
+4. **Set Resource Limits**: Prevent resource exhaustion
+5. **Use Admission Controllers**: Add custom validation/mutation logic
+
+```bash
+# Debugging different layers
+# RBAC issues:
+oc auth can-i create pods --namespace my-app
+
+# Network Policy issues:
+oc get networkpolicies --namespace my-app
+oc describe networkpolicy my-policy --namespace my-app
+
+# SCC/Pod Security issues:
+oc get pod my-pod -o yaml | grep -A 10 securityContext
+oc policy scc-subject-review --serviceaccount=my-sa
+```
+
+---
+
 ## **How They Work Together**
 
 1. **RBAC** defines the allowed actions in Roles/ClusterRoles.
@@ -887,6 +1112,8 @@ oc describe user alice
 4. The API server evaluates RBAC rules and returns **allowed** or **denied**.
 5. **SCCs** (OpenShift-specific) add an additional security layer for pod permissions.
 6. **Identity providers** handle authentication, while RBAC handles authorization.
+7. **Network Policies** control pod-to-pod communication after RBAC allows resource creation.
+8. **Other admission controllers** add additional validation and security controls.
 
 ---
 
