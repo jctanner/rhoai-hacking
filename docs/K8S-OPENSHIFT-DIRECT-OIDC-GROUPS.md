@@ -8,6 +8,12 @@ IdP group APIs work.
 
 ## Architecture Overview
 
+The diagram below illustrates the complete OIDC group management ecosystem, showing three distinct workflows:
+
+1. **User Authentication Flow** (top path): Users authenticate with the IdP and receive tokens containing group claims for Kubernetes API access
+2. **Administrative Group Management** (middle path): Service accounts use IdP admin APIs to enumerate groups and manage membership  
+3. **GitOps RBAC Management** (bottom path): RBAC policies are declaratively managed in Git and applied to the cluster
+
 ```mermaid
 graph TD
     A["User"] --> B["Identity Provider<br/>(Keycloak/Entra)"]
@@ -24,6 +30,12 @@ graph TD
     L["GitOps Repository"] --> M["RBAC Manifests<br/>(Roles, Bindings)"]
     M --> D
 ```
+
+**Key Points:**
+- **Group membership** is managed entirely in the IdP, not in Kubernetes
+- **RBAC policies** reference IdP group names/IDs as subjects in role bindings
+- **Administrative tasks** (listing groups, managing membership) require separate access tokens with appropriate scopes
+- **GitOps workflows** ensure RBAC stays in sync and avoids configuration drift
 
 ------------------------------------------------------------------------
 
