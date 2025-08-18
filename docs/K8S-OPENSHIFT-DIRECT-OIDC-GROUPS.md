@@ -47,11 +47,64 @@ graph LR
     D --> E["Applied RBAC Policies"]
 ```
 
+### 4. Token Types and Usage
+
+Understanding the different token types and their purposes is crucial:
+
+```mermaid
+graph LR
+    A["User Login"] --> B["ID Token"]
+    A --> C["Access Token"]
+    
+    B --> D["Kubernetes API<br/>Authentication"]
+    B --> E["Contains: sub, groups<br/>Audience: client-id"]
+    
+    C --> F["IdP Admin APIs<br/>Group Management"]
+    C --> G["Contains: scopes<br/>Audience: IdP/Graph API"]
+    
+    subgraph "ID Token Usage"
+        D
+        E
+    end
+    
+    subgraph "Access Token Usage"
+        F
+        G
+    end
+    
+    H["Client Credentials Flow"] --> I["Service Account<br/>Access Token"]
+    I --> F
+```
+
+### 5. Authentication and Authorization Flow
+
+The complete flow from user login to resource access:
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant IdP as Identity Provider
+    participant K8s as Kubernetes API Server
+    participant RBAC as RBAC Engine
+    
+    User->>IdP: 1. Authenticate (username/password)
+    IdP->>IdP: 2. Validate credentials
+    IdP->>IdP: 3. Lookup user groups
+    IdP->>User: 4. Return ID Token (with groups claim)
+    User->>K8s: 5. API Request + Bearer Token
+    K8s->>K8s: 6. Validate token signature
+    K8s->>K8s: 7. Extract username and groups
+    K8s->>RBAC: 8. Check permissions (user, groups, resource)
+    RBAC->>K8s: 9. Allow/Deny decision
+    K8s->>User: 10. API Response
+```
+
 **Key Points:**
 - **Group membership** is managed entirely in the IdP, not in Kubernetes
 - **RBAC policies** reference IdP group names/IDs as subjects in role bindings (managed via GitOps)
 - **Group discovery** (listing available groups, querying membership) requires separate access tokens with admin scopes
 - **GitOps workflows** manage the RBAC policy definitions, but actual group membership changes happen in the IdP
+- **Token types matter**: ID tokens for authentication, access tokens for admin APIs
 
 ------------------------------------------------------------------------
 
@@ -152,34 +205,9 @@ curl -X POST https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token \
 - **IdP Configuration**: Configure group claims to include all necessary groups in ID tokens, avoiding admin API calls entirely
 - **Group Synchronization**: Periodically sync group information to a local cache or database
 
-### Token Types and Usage
+## 2. Group Management Challenges
 
-```mermaid
-graph LR
-    A["User Login"] --> B["ID Token"]
-    A --> C["Access Token"]
-    
-    B --> D["Kubernetes API<br/>Authentication"]
-    B --> E["Contains: sub, groups<br/>Audience: client-id"]
-    
-    C --> F["IdP Admin APIs<br/>Group Management"]
-    C --> G["Contains: scopes<br/>Audience: IdP/Graph API"]
-    
-    subgraph "ID Token Usage"
-        D
-        E
-    end
-    
-    subgraph "Access Token Usage"
-        F
-        G
-    end
-    
-    H["Client Credentials Flow"] --> I["Service Account<br/>Access Token"]
-    I --> F
-```
-
-### Group Dependency Caveats
+### Token Size Limits and Group Overage
 
 While embedding groups in OIDC tokens is convenient, there are several important limitations to consider:
 
@@ -230,9 +258,9 @@ Both IdPs have mechanisms to handle large group lists:
 1. **Group Filtering**: Configure IdP to include only relevant groups in tokens
 2. **Role-Based Claims**: Use roles instead of groups (`--oidc-groups-claim=roles`)
 3. **Group Hierarchies**: Structure groups to minimize membership overlap
-4. **Lazy Loading**: Fetch detailed group information on-demand via admin APIs
-5. **Proxy Services**: Use intermediary services to manage group resolution
-6. **Token Compression**: Some IdPs support compressed tokens (rarely practical)
+4. **OIDC Brokers**: Use Dex or Pinniped to expand groups into new tokens
+5. **Lazy Loading**: Fetch detailed group information on-demand via admin APIs
+6. **Proxy Services**: Use intermediary services to manage group resolution
 
 **Monitoring and Alerting:**
 - Monitor token sizes in production
@@ -241,7 +269,7 @@ Both IdPs have mechanisms to handle large group lists:
 
 ------------------------------------------------------------------------
 
-## 2. Kubernetes with OIDC: Suggested Approach
+## 3. Kubernetes with OIDC: Configuration
 
 ### Use IdP Groups Directly
 
@@ -269,67 +297,82 @@ subjects:
   name: oidc:team-platform
 ```
 
-### Authentication and Authorization Flow
+------------------------------------------------------------------------
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant IdP as Identity Provider
-    participant K8s as Kubernetes API Server
-    participant RBAC as RBAC Engine
-    
-    User->>IdP: 1. Authenticate (username/password)
-    IdP->>IdP: 2. Validate credentials
-    IdP->>IdP: 3. Lookup user groups
-    IdP->>User: 4. Return ID Token (with groups claim)
-    User->>K8s: 5. API Request + Bearer Token
-    K8s->>K8s: 6. Validate token signature
-    K8s->>K8s: 7. Extract username and groups
-    K8s->>RBAC: 8. Check permissions (user, groups, resource)
-    RBAC->>K8s: 9. Allow/Deny decision
-    K8s->>User: 10. API Response
+## 4. Recommended Implementation Patterns
+
+### GitOps RBAC Management
+
+-   OpenShift provided first-class `Group` objects. Kubernetes does not.
+-   Manage RBAC declaratively using **GitOps** (Helm/Kustomize) with Role/ClusterRoleBindings that reference IdP group strings.
+-   Keep RBAC policies in version control and apply via CI/CD pipelines.
+
+``` yaml
+# Example GitOps RBAC structure
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: developers-view
+  labels:
+    managed-by: gitops
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+- kind: Group
+  name: oidc:developers
+  apiGroup: rbac.authorization.k8s.io
 ```
 
-### Handle Group Overage
+### Service Account Pattern for Admin APIs
 
--   **Preferred:** Configure IdP to emit group names or IDs under the
-    claim threshold.
--   **Alternative:** Use an OIDC broker (Dex, Pinniped) that expands
-    groups into a new token.
--   **Or:** Use roles instead of groups (`--oidc-groups-claim=roles`).
+For applications needing group information:
 
-### Replace OpenShift Group APIs
+1. **Use client credentials flow** with dedicated service accounts
+2. **Minimize permissions** - only grant necessary IdP read access
+3. **Cache appropriately** - group information doesn't change frequently
+4. **Handle errors gracefully** - IdP APIs may be temporarily unavailable
 
--   OpenShift provided first-class `Group` objects. Kubernetes does
-    not.
--   Manage RBAC in **GitOps** (Helm/Kustomize) with
-    Role/ClusterRoleBindings that reference IdP group strings.
--   If automation is needed, query IdP APIs (Keycloak Admin API or
-    Microsoft Graph) and render RBAC YAML.
+``` bash
+# Example service account setup for Keycloak
+# 1. Create service account client
+# 2. Assign minimal roles (view-groups, view-users)  
+# 3. Use client credentials in your application
 
-### Application Group Lookups
+curl -X POST https://<KEYCLOAK>/realms/<realm>/protocol/openid-connect/token \
+  -d grant_type=client_credentials \
+  -d client_id=<service-account-client> \
+  -d client_secret=<secret>
+```
 
--   Apps needing "list all groups" should query IdP APIs, not
-    Kubernetes.\
--   Use **service accounts** or **client credentials** for backend
-    calls.
+### Proxy Service Pattern
 
-### Naming & Stability
+For complex group operations, consider building a lightweight proxy:
 
--   Prefer **group IDs** if possible (immutable).
--   If using names, standardize conventions.
--   Use `--oidc-groups-prefix` to avoid collisions.
+-   **Centralized access** to IdP APIs with proper credentials management
+-   **Caching layer** to reduce IdP API calls
+-   **Authorization checks** before returning group information
+-   **Audit logging** of group queries and modifications
 
-### Common Pitfalls
+### Naming and Stability Best Practices
 
--   Expecting Kubernetes to expand group overage links.
--   Creating Kubernetes `Group` objects (they have no effect).
--   Calling IdP APIs directly from browser apps (CORS/perms issues).
--   Confusing ID tokens with access tokens.
+-   **Prefer group IDs** over names when possible (immutable)
+-   **Standardize naming conventions** for group names
+-   **Use `--oidc-groups-prefix`** to avoid collisions with local Kubernetes groups
+-   **Document group naming** in your organization's runbooks
+
+### Common Pitfalls to Avoid
+
+-   **Expecting Kubernetes to expand group overage links** - handle this at the application layer
+-   **Creating Kubernetes `Group` objects** - they have no effect on OIDC authentication  
+-   **Calling IdP APIs directly from browser apps** - CORS and permissions issues
+-   **Confusing ID tokens with access tokens** - wrong audience and scopes will fail
+-   **Storing admin credentials in application config** - use proper secret management
 
 ------------------------------------------------------------------------
 
-## 3. Custom Group Management UI Feasibility
+## 5. Custom Group Management UI Feasibility
 
 Teams migrating from OpenShift often consider building custom UIs for group management, similar to OpenShift's native group administration. However, this approach faces significant challenges with external OIDC providers.
 
@@ -443,20 +486,19 @@ Focus your engineering efforts on integrating with IdP group information rather 
 
 ------------------------------------------------------------------------
 
-## 4. Day-0 Checklist
+## 6. Day-0 Checklist
 
 1.  Configure apiserver OIDC flags (issuer, client, username, groups,
     prefix).
 2.  Ensure IdP emits groups/roles you plan to bind.
-3.  Create baseline RBAC bindings in GitOps.\
-4.  Use IdP APIs for group enumeration, not Kubernetes.\
+3.  Create baseline RBAC bindings in GitOps.
+4.  Use IdP APIs for group enumeration, not Kubernetes.
 5.  Manage membership only in the IdP.
 
 ------------------------------------------------------------------------
 
 **Summary:**
 - Groups should be **managed in the IdP**.
-- Kubernetes consumes groups as strings from OIDC claims.\
-- If you need all groups or membership data, query the **IdP's
-Admin/Graph API** with a proper access token.
+- Kubernetes consumes groups as strings from OIDC claims.
+- If you need all groups or membership data, query the **IdP's Admin/Graph API** with a proper access token.
 - Keep RBAC declarative in Git, and avoid drift between K8s and the IdP.
