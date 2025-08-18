@@ -49,8 +49,8 @@ graph TD
     -   `GET /{realm}/groups` → list all groups (paginated).
     -   `GET /{realm}/groups/{id}` → details for one group.
     -   `GET /{realm}/users/{id}/groups` → groups for a specific user.
--   Requires an **access token** with appropriate roles (`view-groups`),
-    not just an ID token from login.
+-   Requires an **access token** with appropriate roles (`view-groups`,
+    `view-users`), not just an ID token from login.
 
 **Example:**
 
@@ -91,6 +91,51 @@ curl -H "Authorization: Bearer <graph_access_token>"   https://graph.microsoft.c
 - An **ID token from login is not enough**. You need an **access token**
 with the right `aud` and scopes.
 
+### Admin API Access Token Requirements
+
+Both Keycloak and Microsoft Entra ID share similar challenges when it comes to accessing group information via their admin APIs.
+
+**The Core Problem:**
+
+The ID token from user login is designed for authentication and contains user claims (including groups if configured). However, both IdP admin APIs require a separate access token with admin privileges. This creates a chicken-and-egg problem: you need admin access to list groups, but users typically shouldn't have admin roles.
+
+**Token Exchange Solution:**
+
+OAuth 2.0 Token Exchange (RFC 8693) can help bridge this gap:
+
+``` bash
+# Keycloak token exchange
+curl -X POST https://<KEYCLOAK>/realms/<realm>/protocol/openid-connect/token \
+  -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+  -d client_id=<your-client> \
+  -d client_secret=<secret> \
+  -d subject_token=<user-id-token> \
+  -d requested_token_type=urn:ietf:params:oauth:token-type:access_token \
+  -d audience=<admin-client-id>
+
+# Microsoft Entra ID on-behalf-of flow (similar concept)
+curl -X POST https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token \
+  -d grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer \
+  -d client_id=<client-id> \
+  -d client_secret=<secret> \
+  -d assertion=<user-access-token> \
+  -d scope=https://graph.microsoft.com/.default \
+  -d requested_token_use=on_behalf_of
+```
+
+**Remaining Challenges:**
+- **Permission Model**: Users still need admin roles assigned, which may violate least-privilege principles
+- **Security Scope**: Exchanged tokens might grant broader admin access than needed
+- **Token Lifetime**: Admin tokens may have different expiration policies than user tokens
+- **Complexity**: Additional token management logic in applications
+- **Delegation Rights**: Requires careful configuration of delegation permissions
+
+**Better Alternatives:**
+- **Service Account Pattern**: Use client credentials flow with a dedicated service account that has only the necessary group read permissions
+- **Proxy Service**: Build a lightweight API that handles group lookups with proper authorization and caching
+- **IdP Configuration**: Configure group claims to include all necessary groups in ID tokens, avoiding admin API calls entirely
+- **Group Synchronization**: Periodically sync group information to a local cache or database
+
 ### Token Types and Usage
 
 ```mermaid
@@ -117,6 +162,66 @@ graph LR
     H["Client Credentials Flow"] --> I["Service Account<br/>Access Token"]
     I --> F
 ```
+
+### Group Dependency Caveats
+
+While embedding groups in OIDC tokens is convenient, there are several important limitations to consider:
+
+**Token Size Limits:**
+
+OIDC tokens are typically transmitted in HTTP headers, which have size constraints:
+- **Web servers**: Nginx default is 4KB-8KB, Apache 8KB
+- **Load balancers**: Often 16KB-32KB limits
+- **Browsers**: Vary widely, some as low as 2KB for cookies
+- **Proxies**: Corporate proxies may have strict limits
+
+When users belong to many groups, tokens can exceed these limits, causing authentication failures.
+
+**Group Overage Handling:**
+
+Both IdPs have mechanisms to handle large group lists:
+
+``` bash
+# Keycloak: Groups may be omitted if token becomes too large
+# Check realm settings for "Access Token Lifespan" and group claim limits
+
+# Microsoft Entra ID: Returns overage claim instead of groups
+{
+  "aud": "your-app-id",
+  "sub": "user-id", 
+  "groups": ["group1", "group2"],  # Only partial list
+  "_claim_names": {
+    "groups": "src1"
+  },
+  "_claim_sources": {
+    "src1": {
+      "endpoint": "https://graph.microsoft.com/v1.0/me/memberOf"
+    }
+  }
+}
+```
+
+**Important:** The endpoint in `_claim_sources` requires a Microsoft Graph access token, NOT the user's ID token. This creates the same token access challenge discussed earlier - you need a separate token with `aud: https://graph.microsoft.com` and appropriate scopes like `Group.Read.All`.
+
+**Performance Impacts:**
+- **Network overhead**: Large tokens increase bandwidth usage
+- **Parsing cost**: Applications must parse larger JSON structures
+- **Memory usage**: Tokens stored in session state consume more memory
+- **Caching complexity**: Large tokens complicate caching strategies
+
+**Recommended Mitigations:**
+
+1. **Group Filtering**: Configure IdP to include only relevant groups in tokens
+2. **Role-Based Claims**: Use roles instead of groups (`--oidc-groups-claim=roles`)
+3. **Group Hierarchies**: Structure groups to minimize membership overlap
+4. **Lazy Loading**: Fetch detailed group information on-demand via admin APIs
+5. **Proxy Services**: Use intermediary services to manage group resolution
+6. **Token Compression**: Some IdPs support compressed tokens (rarely practical)
+
+**Monitoring and Alerting:**
+- Monitor token sizes in production
+- Alert on authentication failures due to header size limits
+- Track group membership growth over time
 
 ------------------------------------------------------------------------
 
