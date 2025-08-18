@@ -47,9 +47,9 @@ graph LR
     D --> E["Applied RBAC Policies"]
 ```
 
-### 4. Token Types and Usage
+### Understanding Token Types
 
-Understanding the different token types and their purposes is crucial:
+The ecosystem relies on different token types for different purposes:
 
 ```mermaid
 graph LR
@@ -76,9 +76,9 @@ graph LR
     I --> F
 ```
 
-### 5. Authentication and Authorization Flow
+### Detailed Authentication Sequence
 
-The complete flow from user login to resource access:
+Here's the step-by-step process when a user accesses Kubernetes resources:
 
 ```mermaid
 sequenceDiagram
