@@ -51,16 +51,84 @@ graph LR
 
 The OIDC ecosystem relies on different OAuth 2.0 grant types and token formats, each serving specific purposes. **Critically important for group management: only ID tokens reliably contain group claims for Kubernetes authentication.** Understanding which tokens contain groups and which do not is essential for successful implementation.
 
+**📚 OAuth 2.0 vs OpenID Connect - What Tokens You Get:**
+
+The key conceptual distinction is whether you're doing **authorization** (OAuth 2.0) or **authentication** (OpenID Connect):
+
+| Flow Type | Scopes Requested | Tokens Returned | Purpose |
+|-----------|------------------|-----------------|---------|
+| **Pure OAuth 2.0** | `scope=api read write` | **Access Token only** | API authorization (what you can do) |
+| **OpenID Connect** | `scope=openid profile groups` | **ID Token + Access Token** | User authentication (who you are) |
+| **OIDC + OAuth** | `scope=openid groups api read` | **ID Token + Access Token + Refresh** | Both authentication & authorization |
+
+**The Magic is in the `openid` Scope:**
+- **Without `openid` scope**: You get OAuth 2.0 flow → Access tokens only
+- **With `openid` scope**: You get OIDC flow → ID tokens (+ access tokens)
+
+``` bash
+# Same Authorization Code flow, different scopes = different tokens!
+
+# Example 1: Pure OAuth 2.0 (no openid scope)
+https://keycloak/auth?client_id=myapp&scope=read%20write&response_type=code
+# Result: Access Token only (no groups, no user info)
+
+# Example 2: OpenID Connect (with openid scope)  
+https://keycloak/auth?client_id=k8s&scope=openid%20groups&response_type=code
+# Result: ID Token (with groups!) + Access Token
+
+# Example 3: Client Credentials (service account - never gets ID tokens)
+curl -d "grant_type=client_credentials&scope=view-groups" ...
+# Result: Access Token only (services don't have identity)
+```
+
+**🔍 Real Token Response Examples:**
+
+``` bash
+# OAuth 2.0 Authorization Code (scope=api)
+{
+  "access_token": "eyJhbGc...",     # Only this!
+  "token_type": "bearer",
+  "expires_in": 3600
+}
+
+# OIDC Authorization Code (scope=openid groups)  
+{
+  "access_token": "eyJhbGc...",     # For APIs
+  "id_token": "eyJhbGc...",         # For authentication (has groups!)
+  "refresh_token": "abc123...",     # For renewal
+  "token_type": "bearer",
+  "expires_in": 3600
+}
+```
+
 **Grant Types and Use Cases:**
 
 | Grant Type | Purpose | Tokens Received | Use Case in Group Management |
 |------------|---------|-----------------|------------------------------|
-| **Authorization Code** | User interactive login | ID Token + Access Token + (Refresh Token) | User authentication to Kubernetes |
-| **Client Credentials** | Service-to-service auth | Access Token | Service accounts querying IdP APIs |
-| **Password Grant (ROPC)** | Direct username/password auth | ID Token + Access Token + (Refresh Token) | Testing, legacy apps, CLI tools |
-| **Refresh Token** | Token renewal without user interaction | New Access Token + (New Refresh Token) | Long-running services, token refresh |
-| **On-Behalf-Of** | Token exchange for different audience | Access Token with new audience | Microsoft Graph API access |
-| **Token Exchange (RFC 8693)** | Transform tokens for different services | Access Token with different scopes/audience | Keycloak admin API access |
+| **Authorization Code** | User interactive login | **Depends on scopes** - Access Token only (OAuth) or ID+Access+Refresh (OIDC) | User authentication to Kubernetes (with `openid` scope) |
+| **Client Credentials** | Service-to-service auth | **Access Token only** - No ID tokens ever | Service accounts querying IdP APIs |
+| **Password Grant (ROPC)** | Direct username/password auth | **Depends on scopes** - Access Token only (OAuth) or ID+Access+Refresh (OIDC) | Testing, legacy apps, CLI tools (with `openid` scope) |
+| **Refresh Token** | Token renewal without user interaction | **New Access Token** + (New Refresh Token) - Usually no new ID token | Long-running services, token refresh |
+| **On-Behalf-Of** | Token exchange for different audience | **Access Token with new audience** - No ID tokens | Microsoft Graph API access |
+| **Token Exchange (RFC 8693)** | Transform tokens for different services | **Access Token with different scopes/audience** - No ID tokens | Keycloak admin API access |
+
+**🎯 Key Takeaway for Kubernetes:**
+
+For Kubernetes OIDC authentication, you **MUST**:
+1. Use a grant type that supports user identity (Authorization Code or Password Grant)
+2. Include `openid` and `groups` scopes in your request
+3. Use the resulting **ID token** (not access token) for kubectl/API access
+
+``` bash
+# ✅ CORRECT - Will get ID token with groups for Kubernetes:
+https://keycloak/auth?client_id=k8s-client&scope=openid%20groups&response_type=code
+
+# ❌ WRONG - Will only get access token (no groups for K8s):
+https://keycloak/auth?client_id=k8s-client&scope=read%20write&response_type=code
+
+# ❌ WRONG - Service accounts never get ID tokens:
+curl -d "grant_type=client_credentials" # No matter what scopes!
+```
 
 **Token Types and Groups Claims:**
 
