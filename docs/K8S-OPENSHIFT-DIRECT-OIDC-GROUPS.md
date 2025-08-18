@@ -49,7 +49,7 @@ graph LR
 
 ### Understanding Token Types
 
-The OIDC ecosystem relies on different OAuth 2.0 grant types and token formats, each serving specific purposes. Understanding these distinctions is crucial for implementing secure group management.
+The OIDC ecosystem relies on different OAuth 2.0 grant types and token formats, each serving specific purposes. **Critically important for group management: only ID tokens reliably contain group claims for Kubernetes authentication.** Understanding which tokens contain groups and which do not is essential for successful implementation.
 
 **Grant Types and Use Cases:**
 
@@ -62,22 +62,23 @@ The OIDC ecosystem relies on different OAuth 2.0 grant types and token formats, 
 | **On-Behalf-Of** | Token exchange for different audience | Access Token with new audience | Microsoft Graph API access |
 | **Token Exchange (RFC 8693)** | Transform tokens for different services | Access Token with different scopes/audience | Keycloak admin API access |
 
-**Token Types and Formats:**
+**Token Types and Groups Claims:**
 
-| Token Type | Format | Contains | Lifetime | Primary Use |
-|------------|--------|----------|----------|-------------|
-| **ID Token** | JWT (always) | User identity, groups claim | Short (5-60 min) | Kubernetes authentication |
-| **Access Token** | JWT or Opaque | Scopes, audience, permissions | Short-Medium (15min-1hr) | API authorization |
-| **Refresh Token** | Opaque (usually) | Token renewal capability | Long (days-months) | Token renewal without re-auth |
-| **Bearer Token** | Any format | Generic authorization | Varies | HTTP Authorization header |
+| Token Type | Format | Contains Groups? | Groups Reliability | Primary Use | K8s Auth? |
+|------------|--------|------------------|-------------------|-------------|-----------|
+| **ID Token** | JWT (always) | ✅ **YES** - Standard claim | **Reliable** - Designed for this | Kubernetes authentication | ✅ **YES** |
+| **Access Token** | JWT or Opaque | ⚠️ **MAYBE** - IdP dependent | **Variable** - Not guaranteed | API authorization | ❌ **NO** |
+| **Refresh Token** | Opaque (usually) | ❌ **NO** - Only renewal info | **N/A** - No claims | Token renewal | ❌ **NO** |
+| **Bearer Token** | Any format | 🔄 **Depends on underlying token** | **Variable** - Check token type | HTTP transport mechanism | 🔄 **Depends** |
 
 **Critical Distinctions:**
 
-1. **ID Tokens vs Access Tokens**: ID tokens prove identity (who you are), access tokens grant permissions (what you can do)
-2. **JWT vs Opaque**: JWT tokens are self-contained and readable, opaque tokens require validation at the issuer
-3. **Audience Matters**: Access tokens are scoped to specific APIs - a Kubernetes token won't work for Microsoft Graph
-4. **Bearer Tokens**: Generic term for any token carried in the `Authorization: Bearer <token>` header
-5. **Offline Tokens**: Long-lived refresh tokens that work even when the user is offline
+1. **🔑 GROUPS CLAIMS**: Only ID tokens reliably contain groups for Kubernetes authentication - never use access/refresh tokens for K8s auth
+2. **ID Tokens vs Access Tokens**: ID tokens prove identity (who you are + groups), access tokens grant API permissions (what you can do)
+3. **JWT vs Opaque**: JWT tokens are self-contained and readable, opaque tokens require validation at the issuer
+4. **Audience Matters**: Access tokens are scoped to specific APIs - a Kubernetes token won't work for Microsoft Graph
+5. **Bearer Tokens**: Generic term for any token in `Authorization: Bearer <token>` header - check underlying token type
+6. **Refresh Tokens Never Contain Groups**: They're purely for token renewal, not authentication or authorization
 
 **Token Flow Visualization:**
 
@@ -142,6 +143,65 @@ curl -X POST https://login.microsoftonline.com/tenant/oauth2/v2.0/token \
   -d "scope=https://graph.microsoft.com/.default"
 # Returns: Access Token (aud: https://graph.microsoft.com)
 ```
+
+**🔍 Verifying Groups in Tokens:**
+
+``` bash
+# Check if a JWT token contains groups (decode without verification for inspection)
+# ID Token example - Groups claim present:
+echo "eyJhbGc..." | base64 -d | jq .
+{
+  "iss": "https://keycloak/realms/myrealm",
+  "aud": "kubernetes-client",
+  "sub": "user123",
+  "groups": ["developers", "platform-team"],  ← Groups present!
+  "preferred_username": "alice",
+  "exp": 1640995200
+}
+
+# Access Token example - Groups may be missing:
+{
+  "iss": "https://keycloak/realms/myrealm", 
+  "aud": "account",
+  "sub": "user123",
+  "scope": "view-groups view-users",  ← No groups claim!
+  "exp": 1640995200
+}
+
+# Use jwt.io, jwt-cli, or jq to inspect token payloads:
+# jwt decode <token>  # Using jwt-cli tool
+# echo "<token>" | cut -d. -f2 | base64 -d | jq .  # Manual decode
+```
+
+**🚨 CRITICAL: Common Token Mistakes**
+
+❌ **WRONG - Using Access Token for Kubernetes:**
+```yaml
+# This will fail or not include groups!
+apiVersion: v1
+kind: Config
+users:
+- name: alice
+  user:
+    token: <access-token>  # ❌ Wrong token type!
+```
+
+✅ **CORRECT - Using ID Token for Kubernetes:**
+```yaml
+# This works and includes groups
+apiVersion: v1
+kind: Config  
+users:
+- name: alice
+  user:
+    token: <id-token>  # ✅ Correct token type!
+```
+
+**Why Access Tokens Fail:**
+- Access tokens are for API authorization, not user authentication
+- Group claims are optional and IdP-dependent in access tokens
+- Kubernetes expects ID tokens for OIDC authentication
+- Wrong audience (`aud`) claim for Kubernetes API server
 
 **⚠️ Security Considerations for Password Grants:**
 
