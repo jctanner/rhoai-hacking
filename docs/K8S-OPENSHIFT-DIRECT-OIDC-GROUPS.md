@@ -718,3 +718,274 @@ Focus your engineering efforts on integrating with IdP group information rather 
 - Kubernetes consumes groups as strings from OIDC claims.
 - If you need all groups or membership data, query the **IdP's Admin/Graph API** with a proper access token.
 - Keep RBAC declarative in Git, and avoid drift between K8s and the IdP.
+
+------------------------------------------------------------------------
+
+## Appendix: Keycloak Admin API Example
+
+Here's a practical Python script demonstrating how to authenticate with Keycloak's admin API and retrieve group information using the service account pattern discussed in this document.
+
+``` python
+#!/usr/bin/env python3
+"""
+Keycloak Admin API Group Listing Example
+
+This script demonstrates:
+1. Using client credentials flow to get an admin access token
+2. Querying Keycloak Admin API to list groups in a realm
+3. Proper error handling and token management
+
+Prerequisites:
+- pip install requests
+- Keycloak service account client with view-groups permission
+"""
+
+import requests
+import json
+import sys
+from typing import Dict, List, Optional
+
+# =============================================================================
+# Configuration - Modify these for your environment
+# =============================================================================
+KEYCLOAK_URL = "https://keycloak.example.com"
+REALM_NAME = "myrealm"
+ADMIN_CLIENT_ID = "group-service"
+ADMIN_CLIENT_SECRET = "your-service-account-secret"
+
+# Optional: Verify SSL certificates (set to False for dev/testing)
+VERIFY_SSL = True
+
+# =============================================================================
+# Keycloak Admin API Functions
+# =============================================================================
+
+def get_admin_token() -> Optional[str]:
+    """
+    Get an access token using client credentials flow.
+    
+    Returns:
+        Access token string if successful, None if failed
+    """
+    token_url = f"{KEYCLOAK_URL}/realms/{REALM_NAME}/protocol/openid-connect/token"
+    
+    data = {
+        "grant_type": "client_credentials",
+        "client_id": ADMIN_CLIENT_ID,
+        "client_secret": ADMIN_CLIENT_SECRET
+    }
+    
+    try:
+        response = requests.post(token_url, data=data, verify=VERIFY_SSL)
+        response.raise_for_status()
+        
+        token_data = response.json()
+        return token_data.get("access_token")
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Failed to get admin token: {e}")
+        return None
+
+def list_groups(access_token: str) -> Optional[List[Dict]]:
+    """
+    List all groups in the realm using admin API.
+    
+    Args:
+        access_token: Admin access token from get_admin_token()
+        
+    Returns:
+        List of group dictionaries if successful, None if failed
+    """
+    groups_url = f"{KEYCLOAK_URL}/admin/realms/{REALM_NAME}/groups"
+    
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.get(groups_url, headers=headers, verify=VERIFY_SSL)
+        response.raise_for_status()
+        
+        return response.json()
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Failed to list groups: {e}")
+        return None
+
+def get_group_members(access_token: str, group_id: str) -> Optional[List[Dict]]:
+    """
+    Get members of a specific group.
+    
+    Args:
+        access_token: Admin access token
+        group_id: UUID of the group
+        
+    Returns:
+        List of user dictionaries if successful, None if failed
+    """
+    members_url = f"{KEYCLOAK_URL}/admin/realms/{REALM_NAME}/groups/{group_id}/members"
+    
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.get(members_url, headers=headers, verify=VERIFY_SSL)
+        response.raise_for_status()
+        
+        return response.json()
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Failed to get group members: {e}")
+        return None
+
+# =============================================================================
+# Main Execution
+# =============================================================================
+
+def main():
+    """Main function demonstrating the admin API workflow."""
+    
+    print(f"🔐 Connecting to Keycloak: {KEYCLOAK_URL}")
+    print(f"🏰 Realm: {REALM_NAME}")
+    print(f"👤 Client ID: {ADMIN_CLIENT_ID}")
+    print()
+    
+    # Step 1: Get admin access token
+    print("📝 Step 1: Getting admin access token...")
+    access_token = get_admin_token()
+    
+    if not access_token:
+        print("❌ Failed to get access token. Check your configuration.")
+        sys.exit(1)
+    
+    print("✅ Got admin access token")
+    print(f"   Token preview: {access_token[:20]}...")
+    print()
+    
+    # Step 2: List groups
+    print("📋 Step 2: Listing groups in realm...")
+    groups = list_groups(access_token)
+    
+    if groups is None:
+        print("❌ Failed to list groups.")
+        sys.exit(1)
+    
+    print(f"✅ Found {len(groups)} groups:")
+    print()
+    
+    # Display group information
+    for group in groups:
+        group_name = group.get("name", "Unknown")
+        group_id = group.get("id", "Unknown")
+        group_path = group.get("path", "Unknown")
+        member_count = len(group.get("subGroups", []))
+        
+        print(f"  📁 {group_name}")
+        print(f"     ID: {group_id}")
+        print(f"     Path: {group_path}")
+        print(f"     Subgroups: {member_count}")
+        
+        # Optionally show group members (uncomment to enable)
+        # members = get_group_members(access_token, group_id)
+        # if members:
+        #     print(f"     Members: {len(members)}")
+        #     for member in members[:3]:  # Show first 3 members
+        #         print(f"       👤 {member.get('username', 'Unknown')}")
+        #     if len(members) > 3:
+        #         print(f"       ... and {len(members) - 3} more")
+        
+        print()
+    
+    # Step 3: Example RBAC generation
+    print("🔧 Step 3: Example RBAC generation...")
+    print("# Generated ClusterRoleBindings for GitOps:")
+    print()
+    
+    for group in groups:
+        group_name = group.get("name", "unknown")
+        sanitized_name = group_name.lower().replace(" ", "-")
+        
+        rbac_yaml = f"""---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {sanitized_name}-view
+  labels:
+    managed-by: gitops
+    group-source: keycloak
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+- kind: Group
+  name: oidc:{group_name}
+  apiGroup: rbac.authorization.k8s.io"""
+        
+        print(rbac_yaml)
+        print()
+
+if __name__ == "__main__":
+    print("🚀 Keycloak Admin API Group Listing Example")
+    print("=" * 50)
+    main()
+```
+
+**Setup Instructions:**
+
+1. **Install dependencies:**
+   ``` bash
+   pip install requests
+   ```
+
+2. **Configure Keycloak service account:**
+   - Create a new client in Keycloak Admin Console
+   - Set "Access Type" to "confidential"
+   - Enable "Service Accounts Enabled"
+   - In "Service Account Roles" tab, assign "view-groups" and "view-users" roles
+   - Copy the client secret from "Credentials" tab
+
+3. **Update script configuration:**
+   - Set `KEYCLOAK_URL` to your Keycloak instance
+   - Set `REALM_NAME` to your target realm
+   - Set `ADMIN_CLIENT_ID` and `ADMIN_CLIENT_SECRET` from step 2
+
+4. **Run the script:**
+   ``` bash
+   python3 keycloak_groups.py
+   ```
+
+**Expected Output:**
+```
+🚀 Keycloak Admin API Group Listing Example
+==================================================
+🔐 Connecting to Keycloak: https://keycloak.example.com
+🏰 Realm: myrealm
+👤 Client ID: group-service
+
+📝 Step 1: Getting admin access token...
+✅ Got admin access token
+   Token preview: eyJhbGciOiJSUzI1NiIs...
+
+📋 Step 2: Listing groups in realm...
+✅ Found 3 groups:
+
+  📁 developers
+     ID: 12345678-1234-1234-1234-123456789012
+     Path: /developers
+     Subgroups: 0
+
+  📁 platform-team
+     ID: 87654321-4321-4321-4321-210987654321
+     Path: /platform-team
+     Subgroups: 1
+```
+
+**Security Notes:**
+- Store credentials in environment variables or secret management systems in production
+- Use short-lived tokens and implement proper token renewal
+- Grant minimal necessary permissions to service accounts
+- Monitor and audit admin API usage
