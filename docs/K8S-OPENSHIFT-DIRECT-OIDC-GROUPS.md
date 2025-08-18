@@ -329,7 +329,121 @@ sequenceDiagram
 
 ------------------------------------------------------------------------
 
-## 3. Day-0 Checklist
+## 3. Custom Group Management UI Feasibility
+
+Teams migrating from OpenShift often consider building custom UIs for group management, similar to OpenShift's native group administration. However, this approach faces significant challenges with external OIDC providers.
+
+### Why It Seems Appealing
+
+- **Familiar UX**: Replicate OpenShift's group management experience
+- **Centralized Control**: Single interface for both Kubernetes RBAC and group membership
+- **Custom Workflows**: Tailored approval processes, bulk operations, etc.
+- **Integration**: Embed group management into existing admin dashboards
+
+### Technical Challenges
+
+**API Complexity:**
+Each IdP has different APIs, schemas, and capabilities:
+
+``` bash
+# Keycloak: REST API with realm-specific endpoints
+GET /admin/realms/{realm}/groups
+POST /admin/realms/{realm}/users/{userId}/groups/{groupId}
+
+# Microsoft Graph: Different JSON schema, pagination, delta queries
+GET https://graph.microsoft.com/v1.0/groups
+POST https://graph.microsoft.com/v1.0/groups/{groupId}/members/$ref
+```
+
+**Authentication Requirements:**
+- **Admin Credentials**: UI needs persistent admin-level access to IdP APIs
+- **Token Management**: Handle token refresh, expiration, scope validation
+- **Multi-Tenant**: Different auth flows for different IdP configurations
+- **Security Risk**: Storing/managing admin credentials in your application
+
+**Data Complexity:**
+- **Group Hierarchies**: Nested groups, inheritance patterns vary by IdP
+- **Pagination**: Large organizations may have thousands of groups/users
+- **Schema Differences**: Group attributes, metadata, and relationships differ
+- **Sync Challenges**: Real-time updates, conflict resolution, eventual consistency
+
+### Security and Operational Concerns
+
+**Privilege Escalation:**
+Building a group management UI essentially means:
+- Your application needs admin privileges to the IdP
+- Users of your UI can potentially gain admin-level access indirectly
+- Audit trails become complex (was it the user or your service account?)
+
+**Maintenance Burden:**
+- **API Changes**: IdP vendors regularly update their APIs
+- **Error Handling**: Complex failure scenarios across different IdPs
+- **Testing**: Mock different IdP behaviors, edge cases, error conditions
+- **Documentation**: Keep UI documentation in sync with IdP capabilities
+
+### Recommended Alternatives
+
+**1. Use Native IdP Admin Interfaces**
+- **Keycloak Admin Console**: Full-featured, actively maintained
+- **Microsoft Entra Admin Center**: Enterprise-grade with proper audit trails
+- **Benefits**: No maintenance burden, full feature support, proper audit logging
+
+**2. Delegated Administration Patterns**
+Many IdPs support delegation without full admin privileges:
+
+``` yaml
+# Keycloak: Create realm-specific admin roles
+realm-admin: false
+manage-users: true
+view-users: true
+manage-groups: true
+view-groups: true
+```
+
+**3. GitOps + Self-Service Patterns**
+- Users submit group membership requests via Git PRs/issues
+- Automated workflows validate and apply changes via IdP APIs
+- Maintains audit trail and approval processes in Git
+
+**4. Integration via Webhooks/Events**
+- Configure IdP to send change notifications to your systems
+- React to group changes rather than trying to initiate them
+- Maintain read-only views with external update triggers
+
+### When Custom UIs Make Sense
+
+Limited scenarios where custom group management might be justified:
+- **Simple Read-Only Views**: Displaying group membership for awareness
+- **Specific Workflow Integration**: Approval processes tied to business logic
+- **Limited Scope**: Single IdP, small user base, simple group structures
+- **Dedicated Resources**: Team committed to long-term maintenance
+
+### Best Practices If You Must Build Custom UI
+
+**1. Minimize Scope:**
+- Focus on specific workflows, not general group management
+- Use service accounts with minimal necessary permissions
+- Implement comprehensive logging and audit trails
+
+**2. Defensive Programming:**
+- Assume IdP APIs will change or be temporarily unavailable
+- Implement proper retry logic and circuit breakers
+- Cache data appropriately but assume it may be stale
+
+**3. Security First:**
+- Never store IdP admin credentials in application config
+- Use short-lived tokens where possible
+- Implement proper authorization checks in your UI layer
+
+### Summary
+
+While technically possible, building custom group management UIs for external OIDC providers is generally **not recommended** due to complexity, security risks, and maintenance burden. The native IdP administrative interfaces are purpose-built, well-maintained, and designed for this exact use case.
+
+Focus your engineering efforts on integrating with IdP group information rather than trying to manage it.
+
+------------------------------------------------------------------------
+
+## 4. Day-0 Checklist
 
 1.  Configure apiserver OIDC flags (issuer, client, username, groups,
     prefix).
