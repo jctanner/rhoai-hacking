@@ -75,7 +75,7 @@ curl -X POST https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token   -d g
 curl -H "Authorization: Bearer <graph_access_token>"   https://graph.microsoft.com/v1.0/groups
 ```
 
-**Important:**\
+**Important:**
 - An **ID token from login is not enough**. You need an **access token**
 with the right `aud` and scopes.
 
@@ -160,17 +160,17 @@ sequenceDiagram
 ### Handle Group Overage
 
 -   **Preferred:** Configure IdP to emit group names or IDs under the
-    claim threshold.\
+    claim threshold.
 -   **Alternative:** Use an OIDC broker (Dex, Pinniped) that expands
-    groups into a new token.\
+    groups into a new token.
 -   **Or:** Use roles instead of groups (`--oidc-groups-claim=roles`).
 
 ### Replace OpenShift Group APIs
 
 -   OpenShift provided first-class `Group` objects. Kubernetes does
-    not.\
+    not.
 -   Manage RBAC in **GitOps** (Helm/Kustomize) with
-    Role/ClusterRoleBindings that reference IdP group strings.\
+    Role/ClusterRoleBindings that reference IdP group strings.
 -   If automation is needed, query IdP APIs (Keycloak Admin API or
     Microsoft Graph) and render RBAC YAML.
 
@@ -183,15 +183,15 @@ sequenceDiagram
 
 ### Naming & Stability
 
--   Prefer **group IDs** if possible (immutable).\
--   If using names, standardize conventions.\
+-   Prefer **group IDs** if possible (immutable).
+-   If using names, standardize conventions.
 -   Use `--oidc-groups-prefix` to avoid collisions.
 
 ### Common Pitfalls
 
--   Expecting Kubernetes to expand group overage links.\
--   Creating Kubernetes `Group` objects (they have no effect).\
--   Calling IdP APIs directly from browser apps (CORS/perms issues).\
+-   Expecting Kubernetes to expand group overage links.
+-   Creating Kubernetes `Group` objects (they have no effect).
+-   Calling IdP APIs directly from browser apps (CORS/perms issues).
 -   Confusing ID tokens with access tokens.
 
 ------------------------------------------------------------------------
@@ -199,17 +199,17 @@ sequenceDiagram
 ## 3. Day-0 Checklist
 
 1.  Configure apiserver OIDC flags (issuer, client, username, groups,
-    prefix).\
-2.  Ensure IdP emits groups/roles you plan to bind.\
+    prefix).
+2.  Ensure IdP emits groups/roles you plan to bind.
 3.  Create baseline RBAC bindings in GitOps.\
 4.  Use IdP APIs for group enumeration, not Kubernetes.\
 5.  Manage membership only in the IdP.
 
 ------------------------------------------------------------------------
 
-**Summary:**\
-- Groups should be **managed in the IdP**.\
+**Summary:**
+- Groups should be **managed in the IdP**.
 - Kubernetes consumes groups as strings from OIDC claims.\
 - If you need all groups or membership data, query the **IdP's
-Admin/Graph API** with a proper access token.\
+Admin/Graph API** with a proper access token.
 - Keep RBAC declarative in Git, and avoid drift between K8s and the IdP.
