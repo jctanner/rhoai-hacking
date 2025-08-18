@@ -11,8 +11,8 @@ IdP group APIs work.
 The diagram below illustrates the complete OIDC group management ecosystem, showing three distinct workflows:
 
 1. **User Authentication Flow** (top path): Users authenticate with the IdP and receive tokens containing group claims for Kubernetes API access
-2. **Administrative Group Management** (middle path): Service accounts use IdP admin APIs to enumerate groups and manage membership  
-3. **GitOps RBAC Management** (bottom path): RBAC policies are declaratively managed in Git and applied to the cluster
+2. **Administrative Group Discovery** (middle path): Service accounts use IdP admin APIs to enumerate available groups and discover membership (for automation/tooling)
+3. **GitOps RBAC Policy Management** (bottom path): RBAC policies that reference IdP group names are declaratively managed in Git and applied to the cluster
 
 ```mermaid
 graph TD
@@ -25,17 +25,17 @@ graph TD
     
     H["Admin/Service Account"] --> I["IdP Admin API<br/>(Keycloak Admin/MS Graph)"]
     I --> J["Access Token<br/>with appropriate scopes"]
-    J --> K["Group Enumeration<br/>User Management"]
+    J --> K["Group Discovery<br/>Membership Queries"]
     
-    L["GitOps Repository"] --> M["RBAC Manifests<br/>(Roles, Bindings)"]
+    L["GitOps Repository"] --> M["RBAC Policy Manifests<br/>(RoleBindings referencing IdP groups)"]
     M --> D
 ```
 
 **Key Points:**
 - **Group membership** is managed entirely in the IdP, not in Kubernetes
-- **RBAC policies** reference IdP group names/IDs as subjects in role bindings
-- **Administrative tasks** (listing groups, managing membership) require separate access tokens with appropriate scopes
-- **GitOps workflows** ensure RBAC stays in sync and avoids configuration drift
+- **RBAC policies** reference IdP group names/IDs as subjects in role bindings (managed via GitOps)
+- **Group discovery** (listing available groups, querying membership) requires separate access tokens with admin scopes
+- **GitOps workflows** manage the RBAC policy definitions, but actual group membership changes happen in the IdP
 
 ------------------------------------------------------------------------
 
