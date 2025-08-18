@@ -49,7 +49,37 @@ graph LR
 
 ### Understanding Token Types
 
-The ecosystem relies on different token types for different purposes:
+The OIDC ecosystem relies on different OAuth 2.0 grant types and token formats, each serving specific purposes. Understanding these distinctions is crucial for implementing secure group management.
+
+**Grant Types and Use Cases:**
+
+| Grant Type | Purpose | Tokens Received | Use Case in Group Management |
+|------------|---------|-----------------|------------------------------|
+| **Authorization Code** | User interactive login | ID Token + Access Token + (Refresh Token) | User authentication to Kubernetes |
+| **Client Credentials** | Service-to-service auth | Access Token | Service accounts querying IdP APIs |
+| **Password Grant (ROPC)** | Direct username/password auth | ID Token + Access Token + (Refresh Token) | Testing, legacy apps, CLI tools |
+| **Refresh Token** | Token renewal without user interaction | New Access Token + (New Refresh Token) | Long-running services, token refresh |
+| **On-Behalf-Of** | Token exchange for different audience | Access Token with new audience | Microsoft Graph API access |
+| **Token Exchange (RFC 8693)** | Transform tokens for different services | Access Token with different scopes/audience | Keycloak admin API access |
+
+**Token Types and Formats:**
+
+| Token Type | Format | Contains | Lifetime | Primary Use |
+|------------|--------|----------|----------|-------------|
+| **ID Token** | JWT (always) | User identity, groups claim | Short (5-60 min) | Kubernetes authentication |
+| **Access Token** | JWT or Opaque | Scopes, audience, permissions | Short-Medium (15min-1hr) | API authorization |
+| **Refresh Token** | Opaque (usually) | Token renewal capability | Long (days-months) | Token renewal without re-auth |
+| **Bearer Token** | Any format | Generic authorization | Varies | HTTP Authorization header |
+
+**Critical Distinctions:**
+
+1. **ID Tokens vs Access Tokens**: ID tokens prove identity (who you are), access tokens grant permissions (what you can do)
+2. **JWT vs Opaque**: JWT tokens are self-contained and readable, opaque tokens require validation at the issuer
+3. **Audience Matters**: Access tokens are scoped to specific APIs - a Kubernetes token won't work for Microsoft Graph
+4. **Bearer Tokens**: Generic term for any token carried in the `Authorization: Bearer <token>` header
+5. **Offline Tokens**: Long-lived refresh tokens that work even when the user is offline
+
+**Token Flow Visualization:**
 
 ```mermaid
 graph LR
@@ -75,6 +105,64 @@ graph LR
     H["Client Credentials Flow"] --> I["Service Account<br/>Access Token"]
     I --> F
 ```
+
+**Common Token Scenarios:**
+
+``` bash
+# Scenario 1: User logs in to kubectl
+# Authorization Code flow returns:
+# - ID Token (aud: k8s-client-id, groups claim present) → Used by kubectl
+# - Access Token (aud: k8s-client-id) → Not typically used
+# - Refresh Token → Used by kubectl to get new tokens
+
+# Scenario 2: Service needs to list groups from Keycloak
+# Client Credentials flow returns:
+curl -X POST https://keycloak/realms/myrealm/protocol/openid-connect/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=group-service" \
+  -d "client_secret=secret"
+# Returns: Access Token (aud: account, scope: view-groups)
+
+# Scenario 3: CLI tool or testing with username/password
+# Password Grant (ROPC) - ⚠️ Use with caution:
+curl -X POST https://keycloak/realms/myrealm/protocol/openid-connect/token \
+  -d "grant_type=password" \
+  -d "client_id=cli-client" \
+  -d "username=testuser" \
+  -d "password=testpass" \
+  -d "scope=openid groups"
+# Returns: ID Token + Access Token + Refresh Token (same as Authorization Code)
+
+# Scenario 4: App needs Microsoft Graph access
+# On-Behalf-Of flow returns:
+curl -X POST https://login.microsoftonline.com/tenant/oauth2/v2.0/token \
+  -d "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer" \
+  -d "client_id=myapp" \
+  -d "assertion=<user-access-token>" \
+  -d "scope=https://graph.microsoft.com/.default"
+# Returns: Access Token (aud: https://graph.microsoft.com)
+```
+
+**⚠️ Security Considerations for Password Grants:**
+
+**When Password Grants Are Acceptable:**
+- Local development and testing environments
+- Legacy applications that cannot support browser-based flows
+- Trusted CLI tools where user enters credentials directly
+- Migration scenarios from basic auth systems
+
+**When to Avoid Password Grants:**
+- Production web applications (use Authorization Code + PKCE instead)
+- Third-party applications (never share user credentials)
+- Public/mobile clients (credentials can be extracted)
+- Any scenario where Authorization Code flow is feasible
+
+**Best Practices for Password Grants:**
+- Require explicit IdP configuration to enable (often disabled by default)
+- Use only with confidential clients that can protect credentials
+- Implement credential validation and account lockout policies
+- Consider it a temporary solution while migrating to proper OIDC flows
+- Always use HTTPS to protect credentials in transit
 
 ### Detailed Authentication Sequence
 
