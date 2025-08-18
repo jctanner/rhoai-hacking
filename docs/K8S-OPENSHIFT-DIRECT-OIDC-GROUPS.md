@@ -750,8 +750,17 @@ from typing import Dict, List, Optional
 # =============================================================================
 KEYCLOAK_URL = "https://keycloak.example.com"
 REALM_NAME = "myrealm"
-ADMIN_CLIENT_ID = "group-service"
-ADMIN_CLIENT_SECRET = "your-service-account-secret"
+
+# Option 1: Use existing admin user (simpler setup)
+USE_ADMIN_USER = True
+ADMIN_USERNAME = "admin"  # Your Keycloak admin username
+ADMIN_PASSWORD = "admin-password"  # Your Keycloak admin password
+ADMIN_CLIENT_ID = "admin-cli"  # Built-in client for admin access
+
+# Option 2: Use service account client (more secure for production)
+# USE_ADMIN_USER = False
+# ADMIN_CLIENT_ID = "group-service"
+# ADMIN_CLIENT_SECRET = "your-service-account-secret"
 
 # Optional: Verify SSL certificates (set to False for dev/testing)
 VERIFY_SSL = True
@@ -762,18 +771,31 @@ VERIFY_SSL = True
 
 def get_admin_token() -> Optional[str]:
     """
-    Get an access token using client credentials flow.
+    Get an access token using either admin user credentials or service account.
     
     Returns:
         Access token string if successful, None if failed
     """
-    token_url = f"{KEYCLOAK_URL}/realms/{REALM_NAME}/protocol/openid-connect/token"
+    # Use master realm for admin authentication (even if querying different realm)
+    token_url = f"{KEYCLOAK_URL}/realms/master/protocol/openid-connect/token"
     
-    data = {
-        "grant_type": "client_credentials",
-        "client_id": ADMIN_CLIENT_ID,
-        "client_secret": ADMIN_CLIENT_SECRET
-    }
+    if USE_ADMIN_USER:
+        # Option 1: Use admin user with password grant
+        data = {
+            "grant_type": "password",
+            "client_id": ADMIN_CLIENT_ID,  # admin-cli
+            "username": ADMIN_USERNAME,
+            "password": ADMIN_PASSWORD
+        }
+        print(f"🔐 Authenticating as admin user: {ADMIN_USERNAME}")
+    else:
+        # Option 2: Use service account with client credentials
+        data = {
+            "grant_type": "client_credentials", 
+            "client_id": ADMIN_CLIENT_ID,
+            "client_secret": ADMIN_CLIENT_SECRET
+        }
+        print(f"🔐 Authenticating as service account: {ADMIN_CLIENT_ID}")
     
     try:
         response = requests.post(token_url, data=data, verify=VERIFY_SSL)
@@ -784,6 +806,10 @@ def get_admin_token() -> Optional[str]:
         
     except requests.exceptions.RequestException as e:
         print(f"❌ Failed to get admin token: {e}")
+        if response.status_code == 401:
+            print("   💡 Check your username/password or client credentials")
+        elif response.status_code == 403:
+            print("   💡 User may not have admin permissions")
         return None
 
 def list_groups(access_token: str) -> Optional[List[Dict]]:
@@ -850,7 +876,11 @@ def main():
     
     print(f"🔐 Connecting to Keycloak: {KEYCLOAK_URL}")
     print(f"🏰 Realm: {REALM_NAME}")
-    print(f"👤 Client ID: {ADMIN_CLIENT_ID}")
+    if USE_ADMIN_USER:
+        print(f"👤 Admin User: {ADMIN_USERNAME}")
+        print(f"🔑 Client: {ADMIN_CLIENT_ID} (built-in)")
+    else:
+        print(f"🤖 Service Account: {ADMIN_CLIENT_ID}")
     print()
     
     # Step 1: Get admin access token
@@ -941,32 +971,42 @@ if __name__ == "__main__":
    pip install requests
    ```
 
-2. **Configure Keycloak service account:**
+2. **Choose authentication method:**
+
+   **Option A: Use existing admin user (simplest)**
+   - Keep `USE_ADMIN_USER = True` in the script
+   - Set `ADMIN_USERNAME` and `ADMIN_PASSWORD` to your Keycloak admin credentials
+   - No additional Keycloak configuration needed!
+
+   **Option B: Create service account (more secure for production)**
+   - Set `USE_ADMIN_USER = False` in the script
    - Create a new client in Keycloak Admin Console
-   - Set "Access Type" to "confidential"
+   - Set "Access Type" to "confidential" 
    - Enable "Service Accounts Enabled"
    - In "Service Account Roles" tab, assign "view-groups" and "view-users" roles
-   - Copy the client secret from "Credentials" tab
+   - Copy the client secret and update `ADMIN_CLIENT_SECRET`
 
 3. **Update script configuration:**
    - Set `KEYCLOAK_URL` to your Keycloak instance
    - Set `REALM_NAME` to your target realm
-   - Set `ADMIN_CLIENT_ID` and `ADMIN_CLIENT_SECRET` from step 2
+   - Choose Option A or B above for authentication
 
 4. **Run the script:**
    ``` bash
    python3 keycloak_groups.py
    ```
 
-**Expected Output:**
+**Expected Output (using admin user):**
 ```
 🚀 Keycloak Admin API Group Listing Example
 ==================================================
 🔐 Connecting to Keycloak: https://keycloak.example.com
 🏰 Realm: myrealm
-👤 Client ID: group-service
+👤 Admin User: admin
+🔑 Client: admin-cli (built-in)
 
 📝 Step 1: Getting admin access token...
+🔐 Authenticating as admin user: admin
 ✅ Got admin access token
    Token preview: eyJhbGciOiJSUzI1NiIs...
 
@@ -984,8 +1024,14 @@ if __name__ == "__main__":
      Subgroups: 1
 ```
 
+**Important Notes:**
+- **Authentication realm**: The script authenticates against the `master` realm (where admin users live) but queries groups from your target realm
+- **Admin permissions**: Your admin user needs to have admin permissions for the target realm
+- **Cross-realm access**: Keycloak master realm admins can access any realm's data via admin APIs
+
 **Security Notes:**
 - Store credentials in environment variables or secret management systems in production
-- Use short-lived tokens and implement proper token renewal
-- Grant minimal necessary permissions to service accounts
+- Use short-lived tokens and implement proper token renewal  
+- Consider service account approach (Option B) for production automation
 - Monitor and audit admin API usage
+- Never hardcode passwords in production scripts
