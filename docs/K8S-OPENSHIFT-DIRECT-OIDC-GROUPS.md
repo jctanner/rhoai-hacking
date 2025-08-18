@@ -8,27 +8,43 @@ IdP group APIs work.
 
 ## Architecture Overview
 
-The diagram below illustrates the complete OIDC group management ecosystem, showing three distinct workflows:
+The OIDC group management ecosystem involves three distinct workflows:
 
-1. **User Authentication Flow** (top path): Users authenticate with the IdP and receive tokens containing group claims for Kubernetes API access
-2. **Administrative Group Discovery** (middle path): Service accounts use IdP admin APIs to enumerate available groups and discover membership (for automation/tooling)
-3. **GitOps RBAC Policy Management** (bottom path): RBAC policies that reference IdP group names are declaratively managed in Git and applied to the cluster
+### 1. User Authentication Flow
+
+How users authenticate and access Kubernetes resources:
 
 ```mermaid
-graph TD
+graph LR
     A["User"] --> B["Identity Provider<br/>(Keycloak/Entra)"]
     B --> C["OIDC ID Token<br/>with groups claim"]
     C --> D["Kubernetes API Server<br/>--oidc-groups-claim=groups"]
     D --> E["RBAC Evaluation"]
-    E --> F["ClusterRoleBinding<br/>subjects: Group"]
-    F --> G["Access Granted/Denied"]
-    
-    H["Admin/Service Account"] --> I["IdP Admin API<br/>(Keycloak Admin/MS Graph)"]
-    I --> J["Access Token<br/>with appropriate scopes"]
-    J --> K["Group Discovery<br/>Membership Queries"]
-    
-    L["GitOps Repository"] --> M["RBAC Policy Manifests<br/>(RoleBindings referencing IdP groups)"]
-    M --> D
+    E --> F["Access Granted/Denied"]
+```
+
+### 2. Administrative Group Discovery Flow
+
+How automation and tooling discover available groups and membership:
+
+```mermaid
+graph LR
+    A["Admin/Service Account"] --> B["IdP Admin API<br/>(Keycloak Admin/MS Graph)"]
+    B --> C["Access Token<br/>with appropriate scopes"]
+    C --> D["Group Discovery<br/>Membership Queries"]
+    D --> E["Tooling/Automation<br/>(Scripts, Dashboards)"]
+```
+
+### 3. GitOps RBAC Policy Management
+
+How RBAC policies that reference IdP groups are managed:
+
+```mermaid
+graph LR
+    A["GitOps Repository"] --> B["RBAC Policy Manifests<br/>(RoleBindings referencing IdP groups)"]
+    B --> C["GitOps Controller<br/>(ArgoCD, Flux)"]
+    C --> D["Kubernetes API Server"]
+    D --> E["Applied RBAC Policies"]
 ```
 
 **Key Points:**
