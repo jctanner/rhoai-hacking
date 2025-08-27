@@ -241,7 +241,30 @@ While both proxies can perform authorization, their different designs make them 
 -   You also need to enforce strict, per-request RBAC checks for the backend API (`kube-rbac-proxy`).
 -   This hybrid model provides layered security, leveraging the strengths of both tools.
 
+## Performance and API Load Considerations
+
+A critical factor in choosing between `oauth-proxy` and `kube-rbac-proxy` is the potential load on the Kubernetes API server. Your observation that the per-request check model of `kube-rbac-proxy` generates more traffic is correct and has significant architectural implications.
+
+Consider a dashboard UI that loads dozens of assets (CSS files, JavaScript files, images, etc.) and makes several API calls on a single page load.
+
+-   With **`oauth-proxy`**, only the initial login triggers a `SubjectAccessReview`. All subsequent requests for assets are authorized based on the session cookie, resulting in **no additional load** on the API server.
+-   With **`kube-rbac-proxy`**, every single one of those asset requests would trigger its own `SubjectAccessReview`. This could generate a burst of dozens or even hundreds of requests to the API server from a single user action, potentially impacting its performance and responsiveness for the entire cluster.
+
+### Mitigation: The Role of Caching
+
+Fortunately, this load is mitigated by caching. The Kubernetes API server itself is highly optimized, and the client libraries used by `kube-rbac-proxy` include a built-in, configurable cache for authorization decisions. When a `SubjectAccessReview` is performed, the "allow" or "deny" result is cached for a short period (the default is typically a few minutes for "allow" and shorter for "deny"). Subsequent requests for the same user and resource attributes will be served from this cache, avoiding a round-trip to the API server.
+
+### Recommendations
+
+Even with caching, the difference in request patterns leads to clear recommendations:
+
+-   **For UIs and web applications**, the high volume of requests for static assets makes `oauth-proxy`'s session-based model far more efficient and the recommended approach.
+-   **For APIs and service endpoints**, where requests are typically less frequent and more deliberate, the per-request security guarantee of `kube-rbac-proxy` is ideal. The manageable API server load is a worthwhile trade-off for real-time authorization.
+-   **The Hybrid Model** is the best solution for applications with both a UI and an API, as it uses the most efficient tool for each job.
+
 ## Migration Guide: From `--openshift-sar` to `kube-rbac-proxy`
+
+> **Important Performance Consideration:** Before migrating, it is critical to understand the difference in how these proxies generate load. `oauth-proxy` performs an RBAC check **once at login**, while `kube-rbac-proxy` performs one for **every single request**. For a UI with many assets, this will significantly increase the number of requests to the Kubernetes API server. Please read the [Performance and API Load Considerations](#performance-and-api-load-considerations) section for a full analysis.
 
 If you are currently using `oauth-proxy` with the `--openshift-sar` flag and wish to migrate to `kube-rbac-proxy` for per-request authorization, the conversion is straightforward.
 
