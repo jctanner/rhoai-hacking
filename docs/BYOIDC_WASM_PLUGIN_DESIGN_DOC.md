@@ -61,7 +61,7 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
          │                        │                        │                        │
          │  1. HTTP Request       │                        │                        │
          │──────────────────────→ │                        │                        │
-         │                        │  2. WASM Filter        │                        │
+         │                        │  2. Route to WASM      │                        │
          │                        │──────────────────────→ │                        │
          │                        │                        │  3. dispatch_http_call │
          │                        │                        │──────────────────────→ │
@@ -77,9 +77,10 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 #### 1. WASM Plugin (Our Implementation)
 - **Language**: Rust (using proxy-wasm-rust-sdk)
 - **Function**: Universal authentication filter - calls kube-auth-proxy for ALL requests
-- **Location**: Runs inside Istio's Envoy proxies
+- **Location**: Runs inside Istio's Envoy proxies (Layer 7 HTTP processing)
 - **Configuration**: Via WasmPlugin CRD pluginConfig (path-agnostic)
 - **Key Design**: No hardcoded routes - applies authentication to all gateway traffic
+- **HTTP Processing**: Forwards headers transparently, makes HTTP calls to auth service, forwards responses
 
 #### 2. kube-auth-proxy (Existing Service)
 - **Repository**: [`opendatahub-io/kube-auth-proxy`](https://github.com/opendatahub-io/kube-auth-proxy/)
@@ -89,7 +90,13 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 - **Auth Endpoint**: `/auth` (auth-only endpoint for external authorization)
 - **Security**: **TLS-encrypted communication required** (HTTPS only)
 
-#### 3. Dynamic Routing (OpenShift Ingress Controller)
+#### 3. Istio Gateway (Traffic Routing)
+- **Function**: Layer 4 proxy - routes traffic based on hostname/port
+- **No HTTP Awareness**: Does not inspect cookies, headers, or HTTP content
+- **Configuration**: Gateway and HTTPRoute CRDs define routing rules
+- **WASM Integration**: Routes traffic to Envoy proxy where WASM plugin runs
+
+#### 4. Dynamic Routing (OpenShift Ingress Controller)
 - **HTTPRoute Creation**: Services dynamically create HTTPRoute CRDs as they spin up
 - **Examples**: Notebook services create routes like `/notebooks/user-1/my-notebook`
 - **Envoy Updates**: OpenShift ingress controller automatically updates Envoy configuration
@@ -127,11 +134,15 @@ impl HttpContext for AuthProxy {
         // Path-agnostic authentication - apply to ALL requests
         // Dynamic HTTPRoute CRs handle routing, WASM handles universal auth
         
-        // Extract headers needed for auth decision
-        let auth_headers = vec![
-            ("authorization", self.get_header("authorization")),
-            ("cookie", self.get_header("cookie")),
-            ("x-forwarded-user", self.get_header("x-forwarded-user")),
+        // Forward all authentication-relevant headers transparently
+        // WASM plugin does NOT parse/validate cookies - just forwards them
+        // The auth service (kube-auth-proxy) will extract and validate what it needs
+        let forwarded_headers = vec![
+            ("cookie", self.get_http_request_header("cookie").unwrap_or_default()),
+            ("authorization", self.get_http_request_header("authorization").unwrap_or_default()),
+            ("x-forwarded-user", self.get_http_request_header("x-forwarded-user").unwrap_or_default()),
+            ("x-forwarded-for", self.get_http_request_header("x-forwarded-for").unwrap_or_default()),
+            ("user-agent", self.get_http_request_header("user-agent").unwrap_or_default()),
         ];
         
         // Get auth service config from plugin configuration
@@ -157,7 +168,7 @@ impl HttpContext for AuthProxy {
                 (":scheme", scheme),                  // "https" or "http"
             ],
             None,  // No body
-            vec![],  // Headers from original request
+            forwarded_headers,  // Forward auth-relevant headers to auth service
             Duration::from_millis(auth_config.timeout),  // From config: 5000ms
         ) {
             Ok(_) => Action::Pause,  // Wait for response
@@ -500,12 +511,13 @@ stringData:
    Cookie: session=abc123
 
 2. Istio Gateway → WASM Plugin:
-   - Plugin applies universal authentication (path-agnostic)
-   - Extracts Cookie header
+   - Gateway routes traffic to WASM plugin (Layer 4 routing)
+   - WASM plugin applies universal authentication (path-agnostic)
+   - WASM plugin forwards ALL headers transparently to auth service
 
 3. WASM Plugin → kube-auth-proxy:
    GET https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
-   Cookie: session=abc123
+   [All original request headers forwarded transparently]
    (HTTPS connection with OpenShift serving certificate)
 
 4. kube-auth-proxy Response:
@@ -532,7 +544,8 @@ stringData:
 
 2. WASM Plugin → kube-auth-proxy:
    GET https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
-   (no auth headers, HTTPS connection with serving certificate)
+   [All original request headers forwarded transparently - in this case, no auth headers]
+   (HTTPS connection with serving certificate)
 
 3. kube-auth-proxy Response:
    401 Unauthorized
@@ -837,7 +850,7 @@ pluginConfig:
 ### Functional Requirements
 
 ✅ **Auth Integration**: Successfully call kube-auth-proxy and handle 202/401/403 responses  
-✅ **Header Forwarding**: Pass through user/group information from auth service  
+✅ **Header Forwarding**: Forward request headers to auth service, pass through user/group headers from auth service response  
 ✅ **Universal Authentication**: Apply authentication to all requests (path-agnostic)  
 ✅ **Error Handling**: Graceful fallback when auth service is unavailable  
 ✅ **Response Transparency**: Forward auth service responses (redirects, errors, headers) unchanged  
