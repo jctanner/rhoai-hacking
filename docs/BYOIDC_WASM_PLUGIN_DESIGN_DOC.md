@@ -110,8 +110,9 @@ impl HttpContext for AuthProxy {
             "kube-auth-proxy",  // Cluster name
             vec![
                 (":method", "GET"),
-                (":path", "/auth"),  // kube-auth-proxy auth-only endpoint
+                (":path", "/auth"),  // kube-auth-proxy auth-only endpoint  
                 (":authority", "kube-auth-proxy.auth-system.svc.cluster.local:4180"),
+                (":scheme", "https"),  // HTTPS connection
             ],
             None,  // No body
             vec![],  // Headers from original request
@@ -181,7 +182,7 @@ struct AuthServiceConfig {
     endpoint: String,           // "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"
     verify_path: String,        // "/auth" (auth-only endpoint)
     timeout: u64,               // 5000 (milliseconds)
-    tls: TlsConfig,             // TLS configuration for secure communication
+    tls: TlsConfig,             // TLS configuration (verify_cert: false for serving certs)
 }
 
 #[derive(Deserialize)]
@@ -232,17 +233,14 @@ spec:
   url: oci://my-registry/byoidc-wasm-plugin:v1.0.0
   
   pluginConfig:
-    # Auth service configuration (kube-auth-proxy with TLS)
+    # Auth service configuration (using OpenShift serving certificates)
     auth_service:
       cluster_name: "outbound|4180||kube-auth-proxy.auth-system.svc.cluster.local"
-      endpoint: "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"
+      endpoint: "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"  # HTTPS with serving certs
       verify_path: "/auth"  # kube-auth-proxy auth-only endpoint
       timeout: 5000
       tls:
-        verify_cert: false  # Allow self-signed certificates
-        ca_cert_path: "/etc/ssl/certs/kube-auth-proxy-ca.crt"  # Optional: custom CA
-        # client_cert_path: "/etc/ssl/certs/client.crt"  # Optional: mutual TLS
-        # client_key_path: "/etc/ssl/private/client.key"
+        verify_cert: false  # Accept OpenShift serving certificates (self-signed by service-ca)
       
     # Route-based auth rules
     routes:
@@ -273,9 +271,86 @@ spec:
 
 #### Complete Gateway API Stack
 
+**📋 Architectural Note**: This example uses **Option 1: OpenShift Serving Certificates** (recommended approach). kube-auth-proxy runs HTTPS on port 4180 with OpenShift-generated serving certificates. This provides FIPS-compliant encryption with automatic certificate management.
+
 ```yaml
-# 1. kube-auth-proxy Service (FIPS-compliant auth proxy)
+# 1. kube-auth-proxy Deployment + Service (using OpenShift serving certificates)
 # Repository: https://github.com/opendatahub-io/kube-auth-proxy/
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-auth-proxy
+  namespace: auth-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kube-auth-proxy
+  template:
+    metadata:
+      labels:
+        app: kube-auth-proxy
+        component: authentication
+      annotations:
+        service.beta.openshift.io/serving-cert-secret-name: kube-auth-proxy-tls
+    spec:
+      containers:
+      - name: kube-auth-proxy
+        image: quay.io/opendatahub-io/kube-auth-proxy:latest
+        args:
+        - --https-address=0.0.0.0:4180  # HTTPS with serving certificates
+        - --tls-cert-file=/etc/ssl/certs/tls.crt
+        - --tls-key-file=/etc/ssl/private/tls.key
+        - --provider=oidc
+        - --oidc-issuer-url=https://your-oidc-provider.com
+        - --client-id=your-client-id
+        - --upstream=http://placeholder  # Not used in auth-only mode
+        env:
+        - name: OAUTH2_PROXY_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: kube-auth-proxy-secret
+              key: client-secret
+        - name: OAUTH2_PROXY_COOKIE_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: kube-auth-proxy-secret
+              key: cookie-secret
+        volumeMounts:
+        - name: tls-certs
+          mountPath: /etc/ssl/certs
+          readOnly: true
+        - name: tls-key
+          mountPath: /etc/ssl/private
+          readOnly: true
+        ports:
+        - containerPort: 4180
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /auth
+            port: 4180
+            scheme: HTTPS
+          initialDelaySeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /auth  
+            port: 4180
+            scheme: HTTPS
+      volumes:
+      - name: tls-certs
+        secret:
+          secretName: kube-auth-proxy-tls
+          items:
+          - key: tls.crt
+            path: tls.crt
+      - name: tls-key
+        secret:
+          secretName: kube-auth-proxy-tls
+          items:
+          - key: tls.key
+            path: tls.key
+---
 apiVersion: v1
 kind: Service
 metadata:
@@ -284,13 +359,15 @@ metadata:
   labels:
     app: kube-auth-proxy
     component: authentication
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: kube-auth-proxy-tls
 spec:
   selector:
     app: kube-auth-proxy
   ports:
   - port: 4180
     targetPort: 4180
-    name: https
+    name: https  # HTTPS with serving certificates
     protocol: TCP
 
 ---
@@ -346,7 +423,7 @@ spec:
       port: 8080
 
 ---
-# 4. Service Mesh Integration (if needed)
+# 4. Service Mesh Integration (auto-discovery should work, but explicit if needed)
 apiVersion: networking.istio.io/v1beta1
 kind: ServiceEntry
 metadata:
@@ -360,9 +437,21 @@ spec:
   ports:
   - number: 4180
     name: https
-    protocol: HTTPS
+    protocol: HTTPS  # HTTPS with serving certificates
   resolution: DNS
   location: MESH_INTERNAL
+
+---
+# 5. Secret for kube-auth-proxy
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kube-auth-proxy-secret
+  namespace: auth-system
+type: Opaque
+stringData:
+  client-secret: "your-oidc-client-secret"
+  cookie-secret: "randomly-generated-32-byte-base64-string"
 ```
 
 ## Request Flow Examples
@@ -381,7 +470,7 @@ spec:
 3. WASM Plugin → kube-auth-proxy:
    GET https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
    Cookie: session=abc123
-   (TLS connection with self-signed certificate acceptance)
+   (HTTPS connection with OpenShift serving certificate)
 
 4. kube-auth-proxy Response:
    202 Accepted
@@ -407,7 +496,7 @@ spec:
 
 2. WASM Plugin → kube-auth-proxy:
    GET https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
-   (no auth headers, TLS connection established)
+   (no auth headers, HTTPS connection with serving certificate)
 
 3. kube-auth-proxy Response:
    401 Unauthorized
@@ -478,14 +567,14 @@ cargo test --features test
 # Test against real kube-auth-proxy service
 ./examples/test-requests.sh
 
-# Test kube-auth-proxy directly (with TLS)
+# Test kube-auth-proxy directly (HTTPS with serving certificate)  
 curl -v -k -H "Cookie: session=abc123" \
      https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
 
-# Test with custom CA certificate
-curl -v --cacert /etc/ssl/certs/kube-auth-proxy-ca.crt \
-     -H "Cookie: session=abc123" \
-     https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
+# Alternative: Test with custom CA (if available)
+# curl -v --cacert /etc/ssl/certs/service-ca.crt \
+#      -H "Cookie: session=abc123" \
+#      https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
 
 # Verify different response codes via Gateway
 curl -v -H "Cookie: invalid" https://app.company.com/app/dashboard  # Expect 302 (WASM plugin redirects based on 401 from auth)
@@ -511,50 +600,187 @@ curl -v -H "Cookie: valid_session" https://app.company.com/app/dashboard  # Expe
 ✅ **Mutual TLS Option**: Support client certificate authentication when required  
 ✅ **FIPS Compliance**: Maintain FIPS-compliant TLS cipher suites and protocols  
 
-### Certificate Management Strategies
+### TLS Implementation Options
 
-#### 1. Self-Signed Certificate Acceptance (Common)
-```rust
-// WASM plugin TLS configuration for self-signed certificates
-TlsConfig {
-    verify_cert: false,  // Accept self-signed certificates
-    ca_cert_path: None,  // No custom CA needed
-    client_cert_path: None,
-    client_key_path: None,
-}
-```
+**⚠️ Important Architectural Decision**: How is TLS actually implemented between the WASM plugin and kube-auth-proxy?
 
-#### 2. Custom CA Certificate (Recommended)
+**📋 Deployment Context**: Istio is installed (for WasmPlugin support) but **NOT running as a full service mesh** - no automatic mTLS between services.
+
+#### Option 1: OpenShift Serving Certificates (Recommended)
+
+**Most practical for OpenShift environments with kube-auth-proxy:**
+
 ```yaml
-# Mount custom CA certificate into WASM plugin container
-volumes:
-- name: kube-auth-ca
-  configMap:
-    name: kube-auth-proxy-ca-cert
-volumeMounts:
-- name: kube-auth-ca
-  mountPath: /etc/ssl/certs/kube-auth-proxy-ca.crt
-  subPath: ca.crt
-  readOnly: true
-```
-
-#### 3. Service Mesh mTLS (Advanced)
-```yaml
-# Istio ServiceEntry with TLS settings
-apiVersion: networking.istio.io/v1beta1
-kind: ServiceEntry
+# kube-auth-proxy Deployment with OpenShift serving certificates
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: kube-auth-proxy-entry
+  name: kube-auth-proxy
+  namespace: auth-system
 spec:
-  hosts:
-  - kube-auth-proxy.auth-system.svc.cluster.local
+  replicas: 2
+  selector:
+    matchLabels:
+      app: kube-auth-proxy
+  template:
+    metadata:
+      labels:
+        app: kube-auth-proxy
+      annotations:
+        service.beta.openshift.io/serving-cert-secret-name: kube-auth-proxy-tls
+    spec:
+      containers:
+      - name: kube-auth-proxy
+        image: quay.io/opendatahub-io/kube-auth-proxy:latest
+        args:
+        - --https-address=0.0.0.0:4180  # HTTPS with serving certs
+        - --tls-cert-file=/etc/ssl/certs/tls.crt
+        - --tls-key-file=/etc/ssl/private/tls.key
+        - --provider=oidc
+        - --oidc-issuer-url=https://your-oidc-provider.com
+        - --client-id=your-client-id
+        volumeMounts:
+        - name: tls-certs
+          mountPath: /etc/ssl/certs
+          readOnly: true
+        - name: tls-key
+          mountPath: /etc/ssl/private
+          readOnly: true
+        ports:
+        - containerPort: 4180
+          protocol: TCP
+      volumes:
+      - name: tls-certs
+        secret:
+          secretName: kube-auth-proxy-tls
+          items:
+          - key: tls.crt
+            path: tls.crt
+      - name: tls-key
+        secret:
+          secretName: kube-auth-proxy-tls
+          items:
+          - key: tls.key
+            path: tls.key
+---
+# Service with serving certificate annotation
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-auth-proxy
+  namespace: auth-system
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: kube-auth-proxy-tls
+spec:
+  selector:
+    app: kube-auth-proxy
   ports:
-  - number: 4180
+  - port: 4180
+    targetPort: 4180
     name: https
-    protocol: HTTPS
-  resolution: DNS
-  location: MESH_INTERNAL
+    protocol: TCP
 ```
+
+**WASM Plugin Configuration:**
+```yaml
+pluginConfig:
+  auth_service:
+    endpoint: "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"  # HTTPS with serving cert
+    verify_path: "/auth"
+    timeout: 5000
+    tls:
+      verify_cert: false  # Accept OpenShift serving certificates (self-signed by service-ca)
+```
+
+**✅ Pros**: Automatic cert generation/rotation, no external dependencies, OpenShift native  
+**⚠️ Cons**: OpenShift-specific, self-signed certificates (need verify_cert: false)
+
+#### Option 2: cert-manager Integration
+
+**Using cert-manager for proper CA-signed certificates:**
+
+```yaml
+# Certificate resource (cert-manager)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kube-auth-proxy-cert
+  namespace: auth-system
+spec:
+  secretName: kube-auth-proxy-tls
+  issuerRef:
+    name: cluster-issuer  # Your cert-manager ClusterIssuer
+    kind: ClusterIssuer
+  dnsNames:
+  - kube-auth-proxy.auth-system.svc.cluster.local
+  - kube-auth-proxy.auth-system.svc
+---
+# kube-auth-proxy Deployment (same as Option 1 but with proper CA certs)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-auth-proxy
+  namespace: auth-system
+spec:
+  template:
+    spec:
+      containers:
+      - name: kube-auth-proxy
+        args:
+        - --https-address=0.0.0.0:4180
+        - --tls-cert-file=/etc/ssl/certs/tls.crt
+        - --tls-key-file=/etc/ssl/private/tls.key
+        # ... other args
+        volumeMounts:
+        - name: tls-certs
+          mountPath: /etc/ssl/certs
+          readOnly: true
+        - name: tls-key
+          mountPath: /etc/ssl/private
+          readOnly: true
+      volumes:
+      - name: tls-certs
+        secret:
+          secretName: kube-auth-proxy-tls
+          items:
+          - key: tls.crt
+            path: tls.crt
+      - name: tls-key
+        secret:
+          secretName: kube-auth-proxy-tls
+          items:
+          - key: tls.key
+            path: tls.key
+```
+
+**WASM Plugin Configuration:**
+```yaml
+pluginConfig:
+  auth_service:
+    endpoint: "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"
+    verify_path: "/auth"
+    timeout: 5000
+    tls:
+      verify_cert: true  # Can verify proper CA-signed certificates
+      ca_cert_path: "/etc/ssl/certs/ca-bundle.crt"  # System CA bundle
+```
+
+**✅ Pros**: Proper certificate validation, automatic renewal, industry standard  
+**⚠️ Cons**: Requires cert-manager, more complex setup
+
+#### Option 3: Cluster-Internal HTTP (Development Only)
+
+**⚠️ Not recommended for production - included for completeness:**
+
+```yaml
+# Both kube-auth-proxy and WASM plugin use HTTP
+pluginConfig:
+  auth_service:
+    endpoint: "http://kube-auth-proxy.auth-system.svc.cluster.local:4180"
+    # No TLS config
+```
+
+**❌ Security Risk**: Unencrypted authentication traffic
 
 ### Security Validation Checklist
 
@@ -668,10 +894,3 @@ wasm-objdump -h target/wasm32-unknown-unknown/release/byoidc_plugin.wasm
 2. **Monitoring Integration**: Metrics, logging, alerting setup
 3. **User Acceptance Testing**: Test with real auth services and workloads
 4. **Production Deployment**: Staged rollout with monitoring
-
----
-
-**Document Version**: 1.0  
-**Last Updated**: January 2025  
-**Status**: ✅ Ready for Implementation  
-**Next Review**: End of Phase 1 (Week 2)
