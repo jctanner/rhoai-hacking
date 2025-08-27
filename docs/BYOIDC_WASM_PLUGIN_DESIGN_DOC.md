@@ -6,22 +6,25 @@
 **Purpose**: Enable integration of existing OIDC/OAuth authentication services with Istio Gateway API via WASM plugins  
 **Status**: 🚧 Design Phase  
 **Target Users**: Platform teams with existing authentication services who need Gateway API integration  
+**Primary Use Case**: Integration with [kube-auth-proxy](https://github.com/opendatahub-io/kube-auth-proxy/) for OpenShift Data Hub (ODH) and Red Hat OpenShift AI (RHOAI) environments  
 
 ## Executive Summary
 
 This project delivers a **custom WASM plugin** that acts as a bridge between **Istio Gateway API** and **existing OIDC/OAuth authentication services**, enabling reuse of proven authentication logic without migrating to ext_authz or EnvoyFilter approaches.
 
-**Key Value Proposition**: Preserve existing authentication investments while gaining Gateway API portability and Istio's native WASM capabilities.
+**Key Value Proposition**: Preserve existing authentication investments while gaining Gateway API portability and Istio's native WASM capabilities. Specifically designed to integrate with [kube-auth-proxy](https://github.com/opendatahub-io/kube-auth-proxy/), a FIPS-compliant authentication proxy for OpenShift Data Hub and Red Hat OpenShift AI environments.
 
 ## Problem Statement
 
 ### Current Situation
 
-**Scenario**: Organizations have existing `kube-auth-proxy` or similar services that:
-- ✅ Handle OpenShift OAuth and OIDC authentication flows
-- ✅ Return `302 Found` (redirect) or `200 OK` responses based on header inspection  
-- ✅ Are battle-tested and working in production
-- ✅ Integrate with organizational identity providers
+**Scenario**: Organizations have deployed [`kube-auth-proxy`](https://github.com/opendatahub-io/kube-auth-proxy/) that:
+- ✅ **FIPS-compliant** authentication proxy for OpenShift Data Hub (ODH) and Red Hat OpenShift AI (RHOAI)
+- ✅ **Dual authentication support**: External OIDC providers and OpenShift's internal OAuth service
+- ✅ **Envoy ext_authz compatible**: Built with external authorization framework support
+- ✅ **Production ready**: Battle-tested replacement for oauth-proxy sidecars
+- ✅ **Drop-in compatibility**: Maintains existing oauth-proxy argument and header formats
+- ✅ Return `302 Found` (redirect) or `200 OK` responses based on authentication state
 
 ### Constraints and Requirements
 
@@ -43,8 +46,8 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌────────────────────┐    ┌─────────────────┐
-│   Client        │    │  Istio Gateway   │    │   WASM Plugin      │    │ Existing Auth   │
-│                 │    │  (Gateway API)   │    │  (Our Solution)    │    │ Service         │
+│   Client        │    │  Istio Gateway   │    │   WASM Plugin      │    │ kube-auth-proxy │
+│                 │    │  (Gateway API)   │    │  (Our Solution)    │    │ (FIPS-compliant)│
 └─────────────────┘    └──────────────────┘    └────────────────────┘    └─────────────────┘
          │                        │                        │                        │
          │  1. HTTP Request       │                        │                        │
@@ -68,9 +71,11 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 - **Location**: Runs inside Istio's Envoy proxies
 - **Configuration**: Via WasmPlugin CRD pluginConfig
 
-#### 2. Existing Auth Service (Customer's)
-- **Type**: HTTP service (e.g., kube-auth-proxy)
-- **Interface**: GET `/auth/verify` endpoint
+#### 2. kube-auth-proxy (Existing Service)
+- **Repository**: [`opendatahub-io/kube-auth-proxy`](https://github.com/opendatahub-io/kube-auth-proxy/)
+- **Type**: FIPS-compliant authentication proxy for ODH/RHOAI environments
+- **Providers**: OIDC and OpenShift OAuth support
+- **Interface**: Compatible with Envoy ext_authz framework
 - **Response Patterns**: 
   - `200 OK` with user headers → Allow request
   - `302 Found` with Location header → Redirect to auth
@@ -96,13 +101,13 @@ impl HttpContext for AuthProxy {
             ("x-forwarded-user", self.get_header("x-forwarded-user")),
         ];
         
-        // Make HTTP call to existing auth service
+        // Make HTTP call to kube-auth-proxy service
         match self.dispatch_http_call(
             "kube-auth-proxy",  // Cluster name
             vec![
                 (":method", "GET"),
-                (":path", "/auth/verify"),
-                (":authority", "kube-auth-proxy.auth-system.svc.cluster.local"),
+                (":path", "/oauth/verify"),  // kube-auth-proxy standard endpoint
+                (":authority", "kube-auth-proxy.auth-system.svc.cluster.local:4180"),
             ],
             None,  // No body
             vec![],  // Headers from original request
@@ -206,11 +211,11 @@ spec:
   url: oci://my-registry/byoidc-wasm-plugin:v1.0.0
   
   pluginConfig:
-    # Auth service configuration
+    # Auth service configuration (kube-auth-proxy)
     auth_service:
-      cluster_name: "outbound|8080||kube-auth-proxy.auth-system.svc.cluster.local"
-      endpoint: "http://kube-auth-proxy.auth-system.svc.cluster.local:8080"
-      verify_path: "/auth/verify"
+      cluster_name: "outbound|4180||kube-auth-proxy.auth-system.svc.cluster.local"
+      endpoint: "http://kube-auth-proxy.auth-system.svc.cluster.local:4180"
+      verify_path: "/oauth/verify"  # kube-auth-proxy standard endpoint
       timeout: 5000
       
     # Route-based auth rules
@@ -243,18 +248,23 @@ spec:
 #### Complete Gateway API Stack
 
 ```yaml
-# 1. Existing Auth Service (Customer's)
+# 1. kube-auth-proxy Service (FIPS-compliant auth proxy)
+# Repository: https://github.com/opendatahub-io/kube-auth-proxy/
 apiVersion: v1
 kind: Service
 metadata:
   name: kube-auth-proxy
   namespace: auth-system
+  labels:
+    app: kube-auth-proxy
+    component: authentication
 spec:
   selector:
     app: kube-auth-proxy
   ports:
-  - port: 8080
-    targetPort: 8080
+  - port: 4180
+    targetPort: 4180
+    name: http
 
 ---
 # 2. Gateway API Entry Point
@@ -313,13 +323,15 @@ spec:
 apiVersion: networking.istio.io/v1beta1
 kind: ServiceEntry
 metadata:
-  name: auth-service-entry
+  name: kube-auth-proxy-entry
   namespace: istio-system
+  labels:
+    app: byoidc-wasm-plugin
 spec:
   hosts:
   - kube-auth-proxy.auth-system.svc.cluster.local
   ports:
-  - number: 8080
+  - number: 4180
     name: http
     protocol: HTTP
   resolution: DNS
@@ -339,8 +351,8 @@ spec:
    - Plugin checks: "/app/" requires auth
    - Extracts Cookie header
 
-3. WASM Plugin → Auth Service:
-   GET http://kube-auth-proxy.auth-system.svc.cluster.local:8080/auth/verify
+3. WASM Plugin → kube-auth-proxy:
+   GET http://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
    Cookie: session=abc123
 
 4. Auth Service Response:
@@ -363,8 +375,8 @@ spec:
    GET https://app.company.com/app/dashboard
    (no auth headers)
 
-2. WASM Plugin → Auth Service:
-   GET http://kube-auth-proxy.auth-system.svc.cluster.local:8080/auth/verify
+2. WASM Plugin → kube-auth-proxy:
+   GET http://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
    (no auth headers)
 
 3. Auth Service Response:
@@ -433,10 +445,14 @@ cargo test --features test
 ### Integration Tests
 
 ```bash
-# Test against real auth service
+# Test against real kube-auth-proxy service
 ./examples/test-requests.sh
 
-# Verify different response codes
+# Test kube-auth-proxy directly
+curl -v -H "Cookie: session=abc123" \
+     http://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
+
+# Verify different response codes via Gateway
 curl -v -H "Cookie: invalid" https://app.company.com/app/dashboard  # Expect 302
 curl -v -H "Cookie: valid_session" https://app.company.com/app/dashboard  # Expect 200
 ```
@@ -519,19 +535,22 @@ wasm-objdump -h target/wasm32-unknown-unknown/release/byoidc_plugin.wasm
 
 ### Integration Opportunities
 
-- **Service Mesh Policies**: Integration with Istio AuthorizationPolicy
+- **Service Mesh Policies**: Integration with Istio AuthorizationPolicy  
 - **External Secrets**: Secure credential management via External Secrets Operator
-- **GitOps**: ArgoCD/Flux deployment patterns
+- **GitOps**: ArgoCD/Flux deployment patterns for ODH/RHOAI environments
 - **Multi-Cluster**: Cross-cluster auth service federation
+- **kube-auth-proxy Evolution**: Contribute upstream improvements to [`kube-auth-proxy`](https://github.com/opendatahub-io/kube-auth-proxy/)
+- **FIPS Compliance**: Enhanced FIPS validation and certification support
 
 ## Next Steps
 
 ### Immediate (Week 1-2)
 
 1. **Project Setup**: Initialize Rust project with proxy-wasm-rust-sdk
-2. **Core Implementation**: Basic HTTP dispatch and response handling
-3. **Configuration Parsing**: WasmPlugin config deserialization
-4. **Local Testing**: Test with standalone Envoy setup
+2. **kube-auth-proxy Analysis**: Study [`kube-auth-proxy`](https://github.com/opendatahub-io/kube-auth-proxy/) API and response patterns
+3. **Core Implementation**: Basic HTTP dispatch and response handling
+4. **Configuration Parsing**: WasmPlugin config deserialization  
+5. **Local Testing**: Test with standalone Envoy and kube-auth-proxy setup
 
 ### Short Term (Week 3-4)
 
