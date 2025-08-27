@@ -116,30 +116,10 @@ struct AuthProxy {
     config: PluginConfig,
 }
 
-impl AuthProxy {
-    // Helper to extract cluster name from endpoint URL
-    fn extract_cluster_name(&self, endpoint: &str) -> String {
-        if let Some(start) = endpoint.find("://") {
-            let without_scheme = &endpoint[start + 3..];
-            if let Some(end) = without_scheme.find(':') {
-                without_scheme[..end].to_string()
-            } else {
-                without_scheme.to_string()
-            }
-        } else {
-            endpoint.to_string()
-        }
-    }
-    
-    // Helper to extract authority (host:port) from endpoint URL
-    fn extract_authority(&self, endpoint: &str) -> String {
-        if let Some(start) = endpoint.find("://") {
-            endpoint[start + 3..].to_string()
-        } else {
-            endpoint.to_string()
-        }
-    }
-}
+// Note: In Kubernetes DNS environments, the cluster name (first parameter of dispatch_http_call)
+// and :authority header usually have the same value - the service DNS name with port.
+// - cluster name: Tells Envoy which upstream service to route to
+// - :authority header: HTTP Host header sent in the actual request
 
 // Core HTTP interception and auth decision flow
 impl HttpContext for AuthProxy {
@@ -157,20 +137,24 @@ impl HttpContext for AuthProxy {
         // Get auth service config from plugin configuration
         let auth_config = &self.config.auth_service;
         
-        // Parse endpoint URL to extract cluster name and authority
+        // Extract scheme and host from endpoint URL
         let endpoint_url = &auth_config.endpoint;
-        let cluster_name = self.extract_cluster_name(endpoint_url);
-        let authority = self.extract_authority(endpoint_url);
-        let scheme = if endpoint_url.starts_with("https") { "https" } else { "http" };
+        let (scheme, host_with_port) = if let Some(pos) = endpoint_url.find("://") {
+            let scheme = &endpoint_url[..pos];
+            let host_part = &endpoint_url[pos + 3..];
+            (scheme, host_part)
+        } else {
+            ("http", endpoint_url.as_str())  // Default to http if no scheme
+        };
         
         // Make HTTP call to kube-auth-proxy service (NO service mesh - direct DNS)
         match self.dispatch_http_call(
-            &cluster_name,  // From config: "kube-auth-proxy.auth-system.svc.cluster.local"
+            host_with_port,  // From config: "kube-auth-proxy.auth-system.svc.cluster.local:4180"
             vec![
                 (":method", "GET"),
                 (":path", &auth_config.verify_path),  // From config: "/auth"
-                (":authority", &authority),  // From config: "kube-auth-proxy.auth-system.svc.cluster.local:4180"
-                (":scheme", scheme),  // From config endpoint URL scheme
+                (":authority", host_with_port),       // Same as cluster name in simple DNS case
+                (":scheme", scheme),                  // "https" or "http"
             ],
             None,  // No body
             vec![],  // Headers from original request
