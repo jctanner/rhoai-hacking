@@ -241,48 +241,6 @@ While both proxies can perform authorization, their different designs make them 
 -   You also need to enforce strict, per-request RBAC checks for the backend API (`kube-rbac-proxy`).
 -   This hybrid model provides layered security, leveraging the strengths of both tools.
 
-## Appendix: RBAC Configuration Comparison
-
-While both proxies can interact with the Kubernetes RBAC system, they are configured in fundamentally different ways, reflecting their core design philosophies.
-
-### `kube-rbac-proxy`
-
-For `kube-rbac-proxy`, RBAC enforcement is its sole purpose. As such, its configuration is centered on defining the `SubjectAccessReview` (SAR) to be performed. This is not typically done with a single command-line flag, but through a configuration file specified by the `--config-file` argument.
-
-The key RBAC-related flag is:
-
--   `--config-file`: Points to a YAML file that defines the authorization check.
-
-Inside this file, the `authorization.resourceAttributes` section dictates the SAR request. For example:
-
-```yaml
-authorization:
-  resourceAttributes:
-    verb: "get"
-    resource: "services"
-    resourceName: "my-app-metrics"
-```
-
-This instructs the proxy to check if the authenticated user has the `get` permission on the `services` resource named `my-app-metrics` for every incoming request.
-
-### `oauth-proxy`
-
-For `oauth-proxy`, RBAC is an optional, secondary feature performed *after* authentication, typically only at login time. It offers several flags to enable different kinds of authorization checks:
-
--   `--openshift-sar`: This is the most direct equivalent to `kube-rbac-proxy`'s functionality. It takes a JSON-formatted `SubjectAccessReview` spec. If the user making the request cannot satisfy this SAR check at login time, their login is denied.
-    -   Example: `--openshift-sar='{"namespace":"app-dev","resource":"pods","verb":"list"}'`
--   `--openshift-delegate-urls`: This provides a more advanced mapping, where different URL paths within the upstream application can be gated by different `SubjectAccessReview` checks.
--   `--openshift-group`: This provides a simpler, non-SAR-based authorization check. It restricts logins to members of a specific OpenShift group or list of groups. This is a simple group membership check, not a full RBAC role check.
-
-### Key Differences Summarized
-
-| Feature                  | `kube-rbac-proxy`                                     | `oauth-proxy`                                                       |
-| ------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------- |
-| **When is RBAC checked?**  | On **every** HTTP request.                            | **Once** at user login time.                                        |
-| **Primary Configuration**  | Via a YAML file (`--config-file`)                     | Via direct CLI flags (`--openshift-sar`, `--openshift-group`, etc.) |
-| **Simple Group Check?**    | No (must use a proper Role/RoleBinding for groups)    | Yes (`--openshift-group`)                                           |
-| **Granularity**          | Extremely high (per-request, per-path)                | Lower (gates the entire session based on one check)                 |
-
 ## Migration Guide: From `--openshift-sar` to `kube-rbac-proxy`
 
 If you are currently using `oauth-proxy` with the `--openshift-sar` flag and wish to migrate to `kube-rbac-proxy` for per-request authorization, the conversion is straightforward.
@@ -344,6 +302,48 @@ kube-rbac-proxy --config-file=rbac-config.json ...
 ```
 
 With this configuration, `kube-rbac-proxy` will now perform the *exact same RBAC check* as `oauth-proxy` did, but it will do so for **every single request**, providing continuous, real-time authorization.
+
+## Appendix: RBAC Configuration Comparison
+
+While both proxies can interact with the Kubernetes RBAC system, they are configured in fundamentally different ways, reflecting their core design philosophies.
+
+### `kube-rbac-proxy`
+
+For `kube-rbac-proxy`, RBAC enforcement is its sole purpose. As such, its configuration is centered on defining the `SubjectAccessReview` (SAR) to be performed. This is not typically done with a single command-line flag, but through a configuration file specified by the `--config-file` argument.
+
+The key RBAC-related flag is:
+
+-   `--config-file`: Points to a YAML file that defines the authorization check.
+
+Inside this file, the `authorization.resourceAttributes` section dictates the SAR request. For example:
+
+```yaml
+authorization:
+  resourceAttributes:
+    verb: "get"
+    resource: "services"
+    resourceName: "my-app-metrics"
+```
+
+This instructs the proxy to check if the authenticated user has the `get` permission on the `services` resource named `my-app-metrics` for every incoming request.
+
+### `oauth-proxy`
+
+For `oauth-proxy`, RBAC is an optional, secondary feature performed *after* authentication, typically only at login time. It offers several flags to enable different kinds of authorization checks:
+
+-   `--openshift-sar`: This is the most direct equivalent to `kube-rbac-proxy`'s functionality. It takes a JSON-formatted `SubjectAccessReview` spec. If the user making the request cannot satisfy this SAR check at login time, their login is denied.
+    -   Example: `--openshift-sar='{"namespace":"app-dev","resource":"pods","verb":"list"}'`
+-   `--openshift-delegate-urls`: This provides a more advanced mapping, where different URL paths within the upstream application can be gated by different `SubjectAccessReview` checks.
+-   `--openshift-group`: This provides a simpler, non-SAR-based authorization check. It restricts logins to members of a specific OpenShift group or list of groups. This is a simple group membership check, not a full RBAC role check.
+
+### Key Differences Summarized
+
+| Feature                  | `kube-rbac-proxy`                                     | `oauth-proxy`                                                       |
+| ------------------------ | ----------------------------------------------------- | ------------------------------------------------------------------- |
+| **When is RBAC checked?**  | On **every** HTTP request.                            | **Once** at user login time.                                        |
+| **Primary Configuration**  | Via a YAML file (`--config-file`)                     | Via direct CLI flags (`--openshift-sar`, `--openshift-group`, etc.) |
+| **Simple Group Check?**    | No (must use a proper Role/RoleBinding for groups)    | Yes (`--openshift-group`)                                           |
+| **Granularity**          | Extremely high (per-request, per-path)                | Lower (gates the entire session based on one check)                 |
 
 ## Appendix: Command-Line Options
 
