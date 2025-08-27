@@ -12,11 +12,18 @@
 
 This project delivers a **custom WASM plugin** that acts as a bridge between **Istio Gateway API** and **existing OIDC/OAuth authentication services**, enabling reuse of proven authentication logic without migrating to ext_authz or EnvoyFilter approaches.
 
-**Key Value Proposition**: Preserve existing authentication investments while gaining Gateway API portability and Istio's native WASM capabilities. Specifically designed to integrate with [kube-auth-proxy](https://github.com/opendatahub-io/kube-auth-proxy/), a FIPS-compliant authentication proxy for OpenShift Data Hub and Red Hat OpenShift AI environments.
+**Key Value Proposition**: Preserve existing authentication investments while gaining Gateway API portability and Istio's native WASM capabilities. Specifically designed to integrate with [kube-auth-proxy](https://github.com/opendatahub-io/kube-auth-proxy/), a FIPS-compliant authentication proxy for OpenShift Data Hub (ODH) and Red Hat OpenShift AI (RHOAI) environments, protecting both notebook services and the ODH dashboard.
 
 ## Problem Statement
 
 **🚫 Critical Architectural Constraint**: This project requires **NO service mesh** functionality. Istio is installed **ONLY** for the `WasmPlugin` CRD - there are no service mesh features, no automatic mTLS, no sidecars, and no ServiceEntry resources.
+
+**🔒 Authentication Requirement**: **ALL services** behind the gateway require authentication. There are no public/unauthenticated endpoints.
+
+**🛤️ Dynamic Service Routing**: Services dynamically create their own `HTTPRoute` CRDs that define routing paths. The OpenShift custom ingress controller automatically adds these routes to the Envoy configuration as services spin up and down. Examples:
+- Notebook services create `HTTPRoute` CRs with paths like `/notebooks/user-1/my-notebook`
+- ODH dashboard creates `HTTPRoute` CR with fallback path `/`
+- **WASM plugin operates path-agnostically** - applies authentication to ALL requests regardless of dynamic routing
 
 ### Current Situation
 
@@ -69,9 +76,10 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 
 #### 1. WASM Plugin (Our Implementation)
 - **Language**: Rust (using proxy-wasm-rust-sdk)
-- **Function**: HTTP client that calls existing auth service
+- **Function**: Universal authentication filter - calls kube-auth-proxy for ALL requests
 - **Location**: Runs inside Istio's Envoy proxies
-- **Configuration**: Via WasmPlugin CRD pluginConfig
+- **Configuration**: Via WasmPlugin CRD pluginConfig (path-agnostic)
+- **Key Design**: No hardcoded routes - applies authentication to all gateway traffic
 
 #### 2. kube-auth-proxy (Existing Service)
 - **Repository**: [`opendatahub-io/kube-auth-proxy`](https://github.com/opendatahub-io/kube-auth-proxy/)
@@ -80,6 +88,12 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 - **Interface**: Compatible with Envoy ext_authz framework
 - **Auth Endpoint**: `/auth` (auth-only endpoint for external authorization)
 - **Security**: **TLS-encrypted communication required** (HTTPS only)
+
+#### 3. Dynamic Routing (OpenShift Ingress Controller)
+- **HTTPRoute Creation**: Services dynamically create HTTPRoute CRDs as they spin up
+- **Examples**: Notebook services create routes like `/notebooks/user-1/my-notebook`
+- **Envoy Updates**: OpenShift ingress controller automatically updates Envoy configuration
+- **Separation of Concerns**: Routing handled by HTTPRoute CRDs, authentication by WASM plugin
 - **Certificate Handling**: Support for self-signed certificates (common in Kubernetes environments)
 - **Response Patterns**: 
   - `202 Accepted` with user headers → Allow request (not 200 OK)
@@ -100,6 +114,9 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 // Core HTTP interception and auth decision flow
 impl HttpContext for AuthProxy {
     fn on_http_request_headers(&mut self) -> Action {
+        // Path-agnostic authentication - apply to ALL requests
+        // Dynamic HTTPRoute CRs handle routing, WASM handles universal auth
+        
         // Extract headers needed for auth decision
         let auth_headers = vec![
             ("authorization", self.get_header("authorization")),
@@ -196,10 +213,10 @@ struct TlsConfig {
 }
 
 #[derive(Deserialize)]
-struct RouteConfig {
-    path_prefix: String,        // "/public/", "/app/", "/admin/"
-    auth_required: bool,        // true/false
-    required_headers: Option<Vec<String>>, // ["x-admin-token"]
+struct GlobalAuthConfig {
+    enabled: bool,              // true - apply auth to ALL requests
+    // Note: No path_prefix - WASM plugin is path-agnostic
+    // Dynamic HTTPRoute CRs handle routing, WASM handles universal auth
 }
 
 #[derive(Deserialize)] 
@@ -245,15 +262,12 @@ spec:
       tls:
         verify_cert: false  # Accept OpenShift serving certificates (self-signed by service-ca)
       
-    # Route-based auth rules
-    routes:
-      - path_prefix: "/public/"
-        auth_required: false
-      - path_prefix: "/app/"  
-        auth_required: true
-      - path_prefix: "/admin/"
-        auth_required: true
-        required_headers: ["x-admin-token"]
+    # Global auth configuration (path-agnostic - applies to ALL requests)
+    # Note: No hardcoded paths since services dynamically create HTTPRoute CRs
+    global_auth:
+      enabled: true  # Apply authentication to all requests passing through gateway
+      # Optional: Special header requirements for admin functions could be handled
+      # via separate HTTPRoute filters or service-level validation
         
     # OAuth/OIDC integration
     oauth_config:
@@ -393,36 +407,55 @@ spec:
       - name: tls-cert
 
 ---
-# 3. Application Routing
+# 3. Dynamic Application Routing Example
+# Note: In reality, services create these HTTPRoute CRs dynamically as they spin up
+# OpenShift ingress controller automatically updates Envoy config
+# WASM plugin applies universal auth regardless of dynamic routing changes
+
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: protected-apps
-  namespace: gateway-system
+  name: notebook-user-123  # Created dynamically by notebook service
+  namespace: notebooks
 spec:
   parentRefs:
   - name: secure-gateway
+    namespace: istio-system
   
   hostnames:
   - "app.company.com"
   
   rules:
-  # Public endpoints (no auth required)
   - matches:
     - path:
         type: PathPrefix
-        value: "/public/"
+        value: "/notebooks/user-123/"  # Dynamic path per user/notebook
     backendRefs:
-    - name: public-service
+    - name: notebook-user-123-service  # Dynamic service per notebook
       port: 8080
-      
-  # Protected endpoints (auth required via WASM plugin)
+
+---
+# ODH Dashboard HTTPRoute (relatively static)
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: odh-dashboard-route
+  namespace: odh-dashboard
+spec:
+  parentRefs:
+  - name: secure-gateway
+    namespace: istio-system
+    
+  hostnames:
+  - "app.company.com"
+    
+  rules:
   - matches:
     - path:
         type: PathPrefix  
-        value: "/app/"
+        value: "/"  # Fallback for dashboard
     backendRefs:
-    - name: protected-app
+    - name: odh-dashboard
       port: 8080
 
 ---
@@ -450,11 +483,11 @@ stringData:
 
 ```
 1. Client Request:
-   GET https://app.company.com/app/dashboard
+   GET https://app.company.com/notebooks/user/my-notebook
    Cookie: session=abc123
 
 2. Istio Gateway → WASM Plugin:
-   - Plugin checks: "/app/" requires auth
+   - Plugin applies universal authentication (path-agnostic)
    - Extracts Cookie header
 
 3. WASM Plugin → kube-auth-proxy:
@@ -474,15 +507,15 @@ stringData:
    - Resumes request to upstream
 
 6. Request Success:
-   Request continues to protected-app with user context
+   Request continues to notebook-controller-service with user context
 ```
 
 ### Authentication Required Flow
 
 ```
 1. Client Request:
-   GET https://app.company.com/app/dashboard
-   (no auth headers)
+   GET https://app.company.com/
+   (no auth headers - accessing ODH dashboard)
 
 2. WASM Plugin → kube-auth-proxy:
    GET https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
@@ -567,8 +600,8 @@ curl -v -k -H "Cookie: session=abc123" \
 #      https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
 
 # Verify different response codes via Gateway
-curl -v -H "Cookie: invalid" https://app.company.com/app/dashboard  # Expect 302 (WASM plugin redirects based on 401 from auth)
-curl -v -H "Cookie: valid_session" https://app.company.com/app/dashboard  # Expect 200 (successful request)
+curl -v -H "Cookie: invalid" https://app.company.com/  # Expect 302 (WASM plugin redirects based on 401 from auth - ODH dashboard)
+curl -v -H "Cookie: valid_session" https://app.company.com/notebooks/user/test  # Expect 200 (successful request - notebook service)
 ```
 
 ### Performance Tests
@@ -865,6 +898,27 @@ wasm-objdump -h target/wasm32-unknown-unknown/release/byoidc_plugin.wasm
 - **Multi-Cluster**: Cross-cluster auth service federation
 - **kube-auth-proxy Evolution**: Contribute upstream improvements to [`kube-auth-proxy`](https://github.com/opendatahub-io/kube-auth-proxy/)
 - **FIPS Compliance**: Enhanced FIPS validation and certification support
+
+## Architectural Summary
+
+This design follows a **separation of concerns** pattern optimized for dynamic service environments:
+
+### 🔀 **Routing Layer** (Dynamic)
+- Services create `HTTPRoute` CRDs with their specific paths as they spin up
+- OpenShift ingress controller updates Envoy configuration automatically  
+- Examples: `/notebooks/user-123/notebook-a`, `/admin/settings`, `/` (dashboard fallback)
+
+### 🔐 **Authentication Layer** (Universal)
+- WASM plugin applies authentication to **ALL** requests regardless of path
+- No hardcoded routes in WASM configuration - completely path-agnostic
+- Single responsibility: Validate authentication via kube-auth-proxy
+
+### ✅ **Key Benefits**
+- **Flexibility**: Services can create any routing patterns without WASM plugin changes
+- **Simplicity**: WASM plugin has single concern (auth), not routing logic  
+- **Maintainability**: No need to update WASM config when adding new services or paths
+- **Performance**: No path matching overhead in WASM plugin
+- **Future-proof**: Works with any service that creates HTTPRoute CRDs
 
 ## Next Steps
 
