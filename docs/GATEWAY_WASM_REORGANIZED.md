@@ -1171,6 +1171,391 @@ The ecosystem has matured from experimental to **enterprise-ready**, with clear 
 
 ---
 
+## Appendix: Integrating Existing Auth Proxy with Istio WASM Plugins
+
+### Problem Statement
+
+**Scenario**: You have an existing `kube-auth-proxy` that:
+- Handles OpenShift OAuth and OIDC authentication
+- Returns `302` (redirect) or `200 OK` based on header inspection
+- Is a working HTTP service you want to integrate
+- **Constraints**: Can't use EnvoyFilters or ext_authz, must use WASM plugins
+- **Requirement**: Work with Istio's capabilities and Gateway API
+
+### Solution Architecture
+
+Since you can't use ext_authz (the standard way to integrate HTTP auth services), you need a **WASM plugin that acts as an HTTP client** to call your kube-auth-proxy.
+
+**Architecture Flow**:
+```
+Gateway API Request → Istio Gateway → WASM Plugin → HTTP call to kube-auth-proxy
+                                          ↓
+                    Client ← 302/200 ← WASM Plugin ← 302/200 response
+```
+
+### Implementation Approaches
+
+#### Approach 1: Custom WASM Plugin (Recommended)
+
+**Build a simple WASM plugin that calls your existing service**:
+
+```rust
+// Custom WASM plugin (Rust example)
+use proxy_wasm::traits::*;
+use proxy_wasm::types::*;
+
+impl HttpContext for AuthProxy {
+    fn on_http_request_headers(&mut self) -> Action {
+        // Extract headers needed for auth decision
+        let auth_headers = vec![
+            ("authorization", self.get_header("authorization")),
+            ("cookie", self.get_header("cookie")),
+            ("x-forwarded-user", self.get_header("x-forwarded-user")),
+        ];
+        
+        // Make HTTP call to your kube-auth-proxy
+        match self.dispatch_http_call(
+            "kube-auth-proxy",  // Cluster name
+            vec![
+                (":method", "GET"),
+                (":path", "/auth/verify"),
+                (":authority", "kube-auth-proxy.auth-system.svc.cluster.local"),
+            ],
+            None,  // No body
+            vec![],  // Headers from original request
+            Duration::from_secs(5),
+        ) {
+            Ok(_) => Action::Pause,  // Wait for response
+            Err(_) => {
+                // Fallback: deny on service error
+                self.send_http_response(503, vec![], Some("Auth service unavailable"));
+                Action::Pause
+            }
+        }
+    }
+    
+    fn on_http_call_response(&mut self, _token_id: u32, _num_headers: usize, _body_size: usize, _num_trailers: usize) {
+        // Handle response from kube-auth-proxy
+        if let Some(status) = self.get_http_call_response_header(":status") {
+            match status.as_str() {
+                "200" => {
+                    // Auth success - continue to upstream
+                    // Extract any user info headers from auth response
+                    if let Some(user) = self.get_http_call_response_header("x-auth-user") {
+                        self.set_header("x-forwarded-user", &user);
+                    }
+                    self.resume_http_request();
+                }
+                "302" => {
+                    // Auth redirect - return to client
+                    if let Some(location) = self.get_http_call_response_header("location") {
+                        self.send_http_response(
+                            302, 
+                            vec![("location", &location)], 
+                            Some("Redirecting to auth")
+                        );
+                    } else {
+                        self.send_http_response(302, vec![], Some("Redirect required"));
+                    }
+                }
+                _ => {
+                    // Any other response = deny
+                    self.send_http_response(403, vec![], Some("Access denied"));
+                }
+            }
+        }
+    }
+}
+```
+
+**Build and Deploy**:
+```bash
+# Build WASM
+cargo build --target wasm32-unknown-unknown --release
+
+# Package as OCI image
+docker build . -t my-registry/kube-auth-wasm:v1.0.0
+docker push my-registry/kube-auth-wasm:v1.0.0
+```
+
+#### Approach 2: Using Existing HTTP-Capable WASM Plugin
+
+**If there's an existing WASM plugin that can make HTTP calls** (like a generic HTTP auth plugin), configure it for your service:
+
+```yaml
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: kube-auth-integration
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: gateway
+  phase: AUTHN
+  priority: 1000
+  # Use existing HTTP auth WASM plugin
+  url: oci://ghcr.io/http-auth-wasm/plugin:v1.0.0
+  
+  pluginConfig:
+    # Configure for your kube-auth-proxy
+    auth_service:
+      url: "http://kube-auth-proxy.auth-system.svc.cluster.local:8080/auth/verify"
+      method: "GET"
+      timeout: "5s"
+      
+    # Forward original headers to auth service
+    forward_headers:
+      - "authorization"
+      - "cookie" 
+      - "x-forwarded-user"
+      - "x-forwarded-for"
+      
+    # Handle different response codes
+    response_handling:
+      "200":
+        action: "allow"
+        extract_headers:
+          - "x-auth-user"    # Extract user info from auth response
+          - "x-auth-groups"  # Extract group info
+      "302": 
+        action: "redirect"
+        forward_headers:
+          - "location"       # Forward redirect location
+      "default":
+        action: "deny"
+        status_code: 403
+```
+
+### Complete Gateway API Integration
+
+**Full setup with Gateway API resources**:
+
+```yaml
+# 1. Your existing kube-auth-proxy service
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-auth-proxy
+  namespace: auth-system
+spec:
+  selector:
+    app: kube-auth-proxy
+  ports:
+  - port: 8080
+    targetPort: 8080
+
+---
+# 2. Gateway API resources
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: secure-gateway
+  namespace: gateway-system
+spec:
+  gatewayClassName: istio
+  listeners:
+  - name: https
+    port: 443
+    protocol: HTTPS
+    hostname: "*.mycompany.com"
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: tls-cert
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: protected-apps
+  namespace: gateway-system
+spec:
+  parentRefs:
+  - name: secure-gateway
+  
+  hostnames:
+  - "app.mycompany.com"
+  
+  rules:
+  # Public endpoints (no auth)
+  - matches:
+    - path:
+        type: PathPrefix
+        value: "/public/"
+    backendRefs:
+    - name: public-service
+      port: 8080
+      
+  # Protected endpoints (require auth)
+  - matches:
+    - path:
+        type: PathPrefix
+        value: "/app/"
+    backendRefs:
+    - name: protected-app
+      port: 8080
+
+---
+# 3. WASM Plugin (calls your kube-auth-proxy)
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: kube-auth-integration
+  namespace: istio-system
+spec:
+  # Apply to Istio gateways
+  selector:
+    matchLabels:
+      istio: ingressgateway
+      
+  phase: AUTHN
+  priority: 1000
+  url: oci://my-registry/kube-auth-wasm:v1.0.0
+  
+  pluginConfig:
+    # Your kube-auth-proxy configuration
+    auth_service:
+      cluster_name: "outbound|8080||kube-auth-proxy.auth-system.svc.cluster.local"
+      endpoint: "http://kube-auth-proxy.auth-system.svc.cluster.local:8080"
+      verify_path: "/auth/verify"
+      timeout: 5000  # 5 seconds
+      
+    # Route-specific rules
+    routes:
+      # Skip auth for public paths
+      - path_prefix: "/public/"
+        auth_required: false
+        
+      # Require auth for app paths  
+      - path_prefix: "/app/"
+        auth_required: true
+        
+      # Admin paths need special handling
+      - path_prefix: "/admin/"
+        auth_required: true
+        required_headers:
+          - "x-admin-token"
+          
+    # OpenShift OAuth / OIDC specific settings
+    oauth_config:
+      # Pass through OAuth headers
+      forward_oauth_headers: true
+      oauth_header_prefix: "x-forwarded-"
+      
+      # Handle OAuth redirects
+      oauth_redirect_base: "https://oauth-openshift.apps.cluster.local"
+      
+      # OIDC settings
+      oidc_issuer: "https://keycloak.mycompany.com/auth/realms/myrealm"
+      
+    # Error responses
+    error_responses:
+      auth_service_error:
+        status: 503
+        body: '{"error": "authentication_service_unavailable"}'
+      access_denied:
+        status: 403  
+        body: '{"error": "access_denied"}'
+
+---
+# 4. Service entry for auth service (if needed)
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: kube-auth-proxy
+  namespace: istio-system
+spec:
+  hosts:
+  - kube-auth-proxy.auth-system.svc.cluster.local
+  ports:
+  - number: 8080
+    name: http
+    protocol: HTTP
+  resolution: DNS
+  location: MESH_INTERNAL
+```
+
+### Request Flow Example
+
+**Successful Authentication**:
+```
+1. Request: GET https://app.mycompany.com/app/dashboard
+   Headers: Cookie: session=abc123
+
+2. Istio Gateway → WASM Plugin
+   Plugin checks: path "/app/" requires auth
+
+3. WASM Plugin → HTTP call to kube-auth-proxy:
+   GET http://kube-auth-proxy.auth-system.svc.cluster.local:8080/auth/verify
+   Headers: Cookie: session=abc123
+
+4. kube-auth-proxy → Response: 200 OK
+   Headers: x-auth-user: alice, x-auth-groups: admin,dev
+
+5. WASM Plugin → Adds headers to request:
+   x-forwarded-user: alice
+   x-forwarded-groups: admin,dev
+
+6. Request continues to protected-app service
+```
+
+**Authentication Required (Redirect)**:
+```
+1. Request: GET https://app.mycompany.com/app/dashboard
+   Headers: (no auth headers)
+
+2. WASM Plugin → HTTP call to kube-auth-proxy:
+   GET http://kube-auth-proxy.auth-system.svc.cluster.local:8080/auth/verify
+   (no auth headers)
+
+3. kube-auth-proxy → Response: 302 Found  
+   Headers: Location: https://oauth-openshift.apps.cluster.local/oauth/authorize?...
+
+4. WASM Plugin → Returns to client:
+   302 Found
+   Location: https://oauth-openshift.apps.cluster.local/oauth/authorize?...
+
+5. Client follows redirect to OAuth provider
+```
+
+### Key Benefits of This Approach
+
+✅ **Reuse Existing Service**: No need to rewrite your kube-auth-proxy  
+✅ **Gateway API Compatible**: Works with standard Gateway/HTTPRoute resources  
+✅ **Istio Native**: Uses WasmPlugin CRD (no EnvoyFilter needed)  
+✅ **Flexible**: Handle both 302 redirects and 200 OK responses  
+✅ **OpenShift Integration**: Preserves OAuth and OIDC flows  
+✅ **Header Forwarding**: Pass through user/group information  
+
+### Development Tips
+
+1. **Test with curl first**:
+   ```bash
+   # Test your kube-auth-proxy directly
+   curl -v -H "Cookie: session=abc123" \
+        http://kube-auth-proxy.auth-system.svc.cluster.local:8080/auth/verify
+   ```
+
+2. **Use WASM development tools**:
+   ```bash
+   # Build with debug logging
+   cargo build --target wasm32-unknown-unknown --features=debug
+   ```
+
+3. **Monitor with Istio telemetry**:
+   ```bash
+   # Check WASM plugin logs
+   kubectl logs -n istio-system deployment/istiod
+   
+   # Check gateway logs  
+   kubectl logs -n istio-system deployment/istio-ingressgateway
+   ```
+
+This approach gives you the flexibility of WASM plugins while leveraging your existing, proven authentication service.
+
+---
+
 *Last Updated*: January 2025  
 *Status*: ✅ **Complete Implementation Guide**  
 *Next Steps*: Implementation-specific customization based on your chosen Gateway API provider
