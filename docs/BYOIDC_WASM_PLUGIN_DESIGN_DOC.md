@@ -76,12 +76,14 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 - **Type**: FIPS-compliant authentication proxy for ODH/RHOAI environments
 - **Providers**: OIDC and OpenShift OAuth support
 - **Interface**: Compatible with Envoy ext_authz framework
+- **Auth Endpoint**: `/auth` (auth-only endpoint for external authorization)
 - **Security**: **TLS-encrypted communication required** (HTTPS only)
 - **Certificate Handling**: Support for self-signed certificates (common in Kubernetes environments)
 - **Response Patterns**: 
-  - `200 OK` with user headers → Allow request
-  - `302 Found` with Location header → Redirect to auth
-  - `4xx/5xx` → Deny access
+  - `202 Accepted` with user headers → Allow request (not 200 OK)
+  - `401 Unauthorized` → Authentication required
+  - `403 Forbidden` → Access denied (authorization failed)
+  - `302 Found` with Location header → Redirect to auth (for regular proxy requests)
 
 #### 3. Gateway API Resources
 - **Gateway**: Entry point with TLS termination
@@ -108,7 +110,7 @@ impl HttpContext for AuthProxy {
             "kube-auth-proxy",  // Cluster name
             vec![
                 (":method", "GET"),
-                (":path", "/oauth/verify"),  // kube-auth-proxy standard endpoint
+                (":path", "/auth"),  // kube-auth-proxy auth-only endpoint
                 (":authority", "kube-auth-proxy.auth-system.svc.cluster.local:4180"),
             ],
             None,  // No body
@@ -125,29 +127,37 @@ impl HttpContext for AuthProxy {
     }
     
     fn on_http_call_response(&mut self, _token_id: u32, _num_headers: usize, _body_size: usize, _num_trailers: usize) {
-        // Handle response from auth service
+        // Handle response from kube-auth-proxy
         if let Some(status) = self.get_http_call_response_header(":status") {
             match status.as_str() {
-                "200" => {
-                    // Auth success - continue to upstream
-                    if let Some(user) = self.get_http_call_response_header("x-auth-user") {
+                "202" => {
+                    // Auth success (kube-auth-proxy returns 202 Accepted)
+                    // Extract forwarded headers from kube-auth-proxy response
+                    if let Some(user) = self.get_http_call_response_header("x-forwarded-user") {
                         self.set_header("x-forwarded-user", &user);
+                    }
+                    if let Some(email) = self.get_http_call_response_header("x-forwarded-email") {
+                        self.set_header("x-forwarded-email", &email);
+                    }
+                    if let Some(token) = self.get_http_call_response_header("x-forwarded-access-token") {
+                        self.set_header("x-forwarded-access-token", &token);
+                    }
+                    if let Some(gap_auth) = self.get_http_call_response_header("gap-auth") {
+                        self.set_header("gap-auth", &gap_auth);
                     }
                     self.resume_http_request();
                 }
-                "302" => {
-                    // Auth redirect - return to client
-                    if let Some(location) = self.get_http_call_response_header("location") {
-                        self.send_http_response(
-                            302, 
-                            vec![("location", &location)], 
-                            Some("Redirecting to auth")
-                        );
-                    }
+                "401" => {
+                    // Authentication required
+                    self.send_http_response(401, vec![], Some("Authentication required"));
+                }
+                "403" => {
+                    // Access denied (authorization failed)
+                    self.send_http_response(403, vec![], Some("Access denied"));
                 }
                 _ => {
-                    // Any other response = deny
-                    self.send_http_response(403, vec![], Some("Access denied"));
+                    // Any other response = service error
+                    self.send_http_response(503, vec![], Some("Auth service error"));
                 }
             }
         }
@@ -169,7 +179,7 @@ struct PluginConfig {
 #[derive(Deserialize)]
 struct AuthServiceConfig {
     endpoint: String,           // "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"
-    verify_path: String,        // "/oauth/verify"  
+    verify_path: String,        // "/auth" (auth-only endpoint)
     timeout: u64,               // 5000 (milliseconds)
     tls: TlsConfig,             // TLS configuration for secure communication
 }
@@ -226,7 +236,7 @@ spec:
     auth_service:
       cluster_name: "outbound|4180||kube-auth-proxy.auth-system.svc.cluster.local"
       endpoint: "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"
-      verify_path: "/oauth/verify"  # kube-auth-proxy standard endpoint
+      verify_path: "/auth"  # kube-auth-proxy auth-only endpoint
       timeout: 5000
       tls:
         verify_cert: false  # Allow self-signed certificates
@@ -369,14 +379,16 @@ spec:
    - Extracts Cookie header
 
 3. WASM Plugin → kube-auth-proxy:
-   GET https://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
+   GET https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
    Cookie: session=abc123
    (TLS connection with self-signed certificate acceptance)
 
-4. Auth Service Response:
-   200 OK
-   x-auth-user: alice
-   x-auth-groups: admin,developers
+4. kube-auth-proxy Response:
+   202 Accepted
+   X-Forwarded-User: alice
+   X-Forwarded-Email: alice@company.com
+   X-Forwarded-Access-Token: eyJ0eXAiOiJKV1Q...
+   Gap-Auth: alice@company.com
 
 5. WASM Plugin Processing:
    - Adds headers: x-forwarded-user: alice, x-forwarded-groups: admin,developers
@@ -394,12 +406,12 @@ spec:
    (no auth headers)
 
 2. WASM Plugin → kube-auth-proxy:
-   GET https://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
+   GET https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
    (no auth headers, TLS connection established)
 
-3. Auth Service Response:
-   302 Found
-   Location: https://oauth-openshift.apps.cluster.local/oauth/authorize?client_id=...&redirect_uri=...
+3. kube-auth-proxy Response:
+   401 Unauthorized
+   (Auth endpoint returns 401 for unauthenticated requests)
 
 4. WASM Plugin Response:
    302 Found  
@@ -468,16 +480,16 @@ cargo test --features test
 
 # Test kube-auth-proxy directly (with TLS)
 curl -v -k -H "Cookie: session=abc123" \
-     https://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
+     https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
 
 # Test with custom CA certificate
 curl -v --cacert /etc/ssl/certs/kube-auth-proxy-ca.crt \
      -H "Cookie: session=abc123" \
-     https://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
+     https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
 
 # Verify different response codes via Gateway
-curl -v -H "Cookie: invalid" https://app.company.com/app/dashboard  # Expect 302
-curl -v -H "Cookie: valid_session" https://app.company.com/app/dashboard  # Expect 200
+curl -v -H "Cookie: invalid" https://app.company.com/app/dashboard  # Expect 302 (WASM plugin redirects based on 401 from auth)
+curl -v -H "Cookie: valid_session" https://app.company.com/app/dashboard  # Expect 200 (successful request)
 ```
 
 ### Performance Tests
@@ -557,7 +569,7 @@ spec:
 
 ### Functional Requirements
 
-✅ **Auth Integration**: Successfully call existing auth service and handle 200/302 responses  
+✅ **Auth Integration**: Successfully call kube-auth-proxy and handle 202/401/403 responses  
 ✅ **Header Forwarding**: Pass through user/group information from auth service  
 ✅ **Route-based Auth**: Support path-based authentication requirements  
 ✅ **Error Handling**: Graceful fallback when auth service is unavailable  
