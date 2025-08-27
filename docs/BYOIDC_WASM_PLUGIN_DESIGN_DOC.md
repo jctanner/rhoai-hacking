@@ -45,7 +45,7 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 
 **Business Requirements**:
 - 🎯 **Reuse existing auth service** - avoid rewriting working authentication logic
-- 🎯 **Maintain auth flows** - preserve OAuth/OIDC redirect patterns  
+- 🎯 **Transparent passthrough** - WASM plugin acts as simple HTTP client, auth service handles all OAuth/OIDC flows
 - 🎯 **Gateway API compatibility** - work with standard Gateway/HTTPRoute resources
 - 🎯 **Production readiness** - handle error cases, timeouts, monitoring
 
@@ -215,7 +215,6 @@ impl HttpContext for AuthProxy {
 struct PluginConfig {
     auth_service: AuthServiceConfig,     // Configuration for kube-auth-proxy connection
     global_auth: GlobalAuthConfig,       // Path-agnostic global authentication settings
-    oauth_config: Option<OAuthConfig>,   // OAuth/OIDC forwarding settings  
     error_responses: Option<ErrorResponses>, // Custom error responses
 }
 
@@ -247,13 +246,8 @@ struct GlobalAuthConfig {
     // Dynamic HTTPRoute CRs handle routing, WASM handles universal auth
 }
 
-#[derive(Deserialize)] 
-struct OAuthConfig {
-    forward_oauth_headers: bool,      // true
-    oauth_header_prefix: String,      // "x-forwarded-"
-    oauth_redirect_base: String,      // "https://oauth-openshift.apps.cluster.local"
-    oidc_issuer: Option<String>,      // "https://keycloak.company.com/realm"
-}
+// Note: No OAuth/OIDC-specific configuration needed
+// The WASM plugin is just an HTTP client - kube-auth-proxy handles all OAuth/OIDC logic
 ```
 
 ### Deployment Configuration
@@ -293,15 +287,7 @@ spec:
     # Note: No hardcoded paths since services dynamically create HTTPRoute CRs
     global_auth:
       enabled: true  # Apply authentication to all requests passing through gateway
-      # Optional: Special header requirements for admin functions could be handled
-      # via separate HTTPRoute filters or service-level validation
-        
-    # OAuth/OIDC integration
-    oauth_config:
-      forward_oauth_headers: true
-      oauth_header_prefix: "x-forwarded-"
-      oauth_redirect_base: "https://oauth-openshift.apps.cluster.local"
-      oidc_issuer: "https://keycloak.company.com/auth/realms/production"
+      # Note: No OAuth/OIDC config needed - WASM plugin just forwards headers from kube-auth-proxy
       
     # Error handling
     error_responses:
@@ -852,9 +838,9 @@ pluginConfig:
 
 ✅ **Auth Integration**: Successfully call kube-auth-proxy and handle 202/401/403 responses  
 ✅ **Header Forwarding**: Pass through user/group information from auth service  
-✅ **Route-based Auth**: Support path-based authentication requirements  
+✅ **Universal Authentication**: Apply authentication to all requests (path-agnostic)  
 ✅ **Error Handling**: Graceful fallback when auth service is unavailable  
-✅ **OAuth Flow Preservation**: Maintain existing OAuth/OIDC redirect behavior  
+✅ **Response Transparency**: Forward auth service responses (redirects, errors, headers) unchanged  
 
 ### Non-Functional Requirements
 
