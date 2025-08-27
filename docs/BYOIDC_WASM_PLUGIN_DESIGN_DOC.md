@@ -111,6 +111,36 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 ### WASM Plugin Core Logic
 
 ```rust
+// WASM Plugin struct with configuration
+struct AuthProxy {
+    config: PluginConfig,
+}
+
+impl AuthProxy {
+    // Helper to extract cluster name from endpoint URL
+    fn extract_cluster_name(&self, endpoint: &str) -> String {
+        if let Some(start) = endpoint.find("://") {
+            let without_scheme = &endpoint[start + 3..];
+            if let Some(end) = without_scheme.find(':') {
+                without_scheme[..end].to_string()
+            } else {
+                without_scheme.to_string()
+            }
+        } else {
+            endpoint.to_string()
+        }
+    }
+    
+    // Helper to extract authority (host:port) from endpoint URL
+    fn extract_authority(&self, endpoint: &str) -> String {
+        if let Some(start) = endpoint.find("://") {
+            endpoint[start + 3..].to_string()
+        } else {
+            endpoint.to_string()
+        }
+    }
+}
+
 // Core HTTP interception and auth decision flow
 impl HttpContext for AuthProxy {
     fn on_http_request_headers(&mut self) -> Action {
@@ -124,18 +154,27 @@ impl HttpContext for AuthProxy {
             ("x-forwarded-user", self.get_header("x-forwarded-user")),
         ];
         
+        // Get auth service config from plugin configuration
+        let auth_config = &self.config.auth_service;
+        
+        // Parse endpoint URL to extract cluster name and authority
+        let endpoint_url = &auth_config.endpoint;
+        let cluster_name = self.extract_cluster_name(endpoint_url);
+        let authority = self.extract_authority(endpoint_url);
+        let scheme = if endpoint_url.starts_with("https") { "https" } else { "http" };
+        
         // Make HTTP call to kube-auth-proxy service (NO service mesh - direct DNS)
         match self.dispatch_http_call(
-            "kube-auth-proxy.auth-system.svc.cluster.local",  // Direct cluster DNS name
+            &cluster_name,  // From config: "kube-auth-proxy.auth-system.svc.cluster.local"
             vec![
                 (":method", "GET"),
-                (":path", "/auth"),  // kube-auth-proxy auth-only endpoint  
-                (":authority", "kube-auth-proxy.auth-system.svc.cluster.local:4180"),
-                (":scheme", "https"),  // HTTPS connection with serving certificates
+                (":path", &auth_config.verify_path),  // From config: "/auth"
+                (":authority", &authority),  // From config: "kube-auth-proxy.auth-system.svc.cluster.local:4180"
+                (":scheme", scheme),  // From config endpoint URL scheme
             ],
             None,  // No body
             vec![],  // Headers from original request
-            Duration::from_secs(5),
+            Duration::from_millis(auth_config.timeout),  // From config: 5000ms
         ) {
             Ok(_) => Action::Pause,  // Wait for response
             Err(_) => {
@@ -190,19 +229,24 @@ impl HttpContext for AuthProxy {
 ```rust
 #[derive(Deserialize)]
 struct PluginConfig {
-    auth_service: AuthServiceConfig,
-    routes: Vec<RouteConfig>,
-    oauth_config: Option<OAuthConfig>,
-    error_responses: Option<ErrorResponses>,
+    auth_service: AuthServiceConfig,     // Configuration for kube-auth-proxy connection
+    global_auth: GlobalAuthConfig,       // Path-agnostic global authentication settings
+    oauth_config: Option<OAuthConfig>,   // OAuth/OIDC forwarding settings  
+    error_responses: Option<ErrorResponses>, // Custom error responses
 }
 
 #[derive(Deserialize)]
 struct AuthServiceConfig {
     endpoint: String,           // "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"
     verify_path: String,        // "/auth" (auth-only endpoint)
-    timeout: u64,               // 5000 (milliseconds)
+    timeout: u64,               // 5000 (milliseconds)  
     tls: TlsConfig,             // TLS configuration (verify_cert: false for serving certs)
 }
+
+// Example configurations for different environments:
+// Production:   endpoint: "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"
+// Development:  endpoint: "http://kube-auth-proxy.auth-system.svc.cluster.local:4180"
+// External:     endpoint: "https://auth.company.com:443"
 
 #[derive(Deserialize)]
 struct TlsConfig {
@@ -252,13 +296,12 @@ spec:
   url: oci://my-registry/byoidc-wasm-plugin:v1.0.0
   
   pluginConfig:
-    # Auth service configuration (using OpenShift serving certificates)
+    # Auth service configuration (using OpenShift serving certificates)  
     # Note: NO service mesh - direct HTTPS communication with cluster DNS resolution
     auth_service:
-      cluster_name: "kube-auth-proxy.auth-system.svc.cluster.local"
       endpoint: "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"  # HTTPS with serving certs
-      verify_path: "/auth"  # kube-auth-proxy auth-only endpoint
-      timeout: 5000
+      verify_path: "/auth"  # kube-auth-proxy auth-only endpoint  
+      timeout: 5000  # milliseconds
       tls:
         verify_cert: false  # Accept OpenShift serving certificates (self-signed by service-ca)
       
