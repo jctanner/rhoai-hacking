@@ -1,71 +1,157 @@
-# Gateway API and WASM Extensions Research
+# Gateway API and WASM Extensions: Complete Implementation Guide
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Definitions and Terminology](#definitions-and-terminology)
+3. [Key Technologies](#key-technologies)  
+4. [Gateway API Implementation Landscape](#gateway-api-implementation-landscape)
+5. [Critical Security Considerations](#critical-security-considerations)
+6. [Building WASM Extensions](#building-wasm-extensions)
+7. [Deployment Methods](#deployment-methods)
+8. [Practical Implementation Examples](#practical-implementation-examples)
+9. [Advanced Topics: Kuadrant Architecture Deep Dive](#advanced-topics-kuadrant-architecture-deep-dive)
+10. [Research Sources & Standardization Status](#research-sources--standardization-status)
+
+---
 
 ## Overview
 
-This document captures research on the intersection of Gateway API and WebAssembly (WASM) based extensions, particularly focusing on:
+This document provides a comprehensive guide to implementing **WebAssembly (WASM) extensions** with **Gateway API**, covering everything from basic concepts to production deployment patterns.
 
+**Focus Areas**:
 - **WASM Plugins**: WebAssembly-based extensibility for gateways
-- **EnvoyFilter**: Envoy-specific filter configuration 
-- **ext_authz**: External authorization mechanisms
+- **Gateway API Integration**: How WASM fits into the Gateway API ecosystem
+- **Security Patterns**: Critical security considerations and best practices
+- **Production Deployment**: Real-world implementation strategies
 
-## Research Sources Analyzed
+**Key Insight**: WASM extensions provide the **missing link** between Gateway API's high-level policies and low-level proxy extensibility, enabling **portable**, **secure**, and **performant** API gateway solutions.
 
-### Gateway API 101 with Linkerd
-**Source**: [Gateway API 101 with Linkerd](https://www.youtube.com/watch?v=SxE9Jl2bB28) - Service Mesh Academy  
-**Finding**: ❌ No discussion of WASM plugins, EnvoyFilter, or ext_authz
+**Document Flow**:
+1. **Understand** the technologies and current landscape
+2. **Security-first** approach with critical considerations upfront  
+3. **Build & Deploy** with practical, hands-on examples
+4. **Advanced patterns** with real-world architecture deep-dives
+5. **Research context** and standardization status
 
-**Topics Covered**:
-- Gateway API fundamentals and role-oriented design
-- Core resources (Gateway, GatewayClass, HTTPRoute, gRPCRoute)
-- Service mesh integration patterns
-- Policy attachment (with complexity warnings)
-- General extension mechanisms
+---
 
-**Extension Discussion**:
-- Policy attachment mentioned as standardized extension mechanism
-- Implementation-specific extensions noted as available
-- Strong emphasis on avoiding "annotation hell" through standardized APIs
-- No mention of Envoy-specific or WASM-based extensibility
+## Definitions and Terminology
 
-### Kuadrant Documentation Analysis  
-**Source**: Local documentation (`docs/KUADRANT.md`, `docs/GATEWAY.md`)  
-**Finding**: ✅ **Significant WASM and ext_authz information found**
+The WASM + Gateway API ecosystem has overlapping terminology that can be confusing. Here are clear definitions organized for easy reference:
 
-**Key Findings**:
-- **WASM Shim**: Kuadrant uses WASM extension as bridge between Gateway API and services
-- **Policy Attachment**: Uses Gateway API policy attachment pattern for security
-- **EnvoyFilter Availability**: Even in Gateway-only mode (no service mesh), EnvoyFilter resources work
-- **Full Envoy Capabilities**: Gateway deployments use complete Envoy proxies with all filter support
-- **ext_authz Integration**: External authorization fully supported via standard Envoy filters
+### Core WASM Concepts
 
-### Kuadrant WASM Shim Source Code Analysis
-**Source**: [Kuadrant/wasm-shim repository](https://github.com/Kuadrant/wasm-shim) - Cloned to `docs/src/wasm-shim/`  
-**Finding**: ✅ **Complete implementation details revealed**
+| Term | What It Is | Example | Think Of It As |
+|------|------------|---------|----------------|
+| **WASM (WebAssembly)** | Bytecode format for sandboxed, portable code execution | A `.wasm` file compiled from Rust, C++, Go, etc. | Like a safe, cross-platform executable |
+| **WASM Plugin** | A WASM binary that extends proxy functionality | `auth-plugin.wasm` - handles JWT validation | Like a browser extension, but for proxies |
+| **WASM Extension** | Same as WASM Plugin (vendor naming difference) | Envoy Gateway calls them "extensions", Istio calls them "plugins" | Synonyms - same concept |
+| **WASM Filter** | A WASM plugin integrated into Envoy's filter chain | `auth-plugin.wasm` becomes `envoy.filters.http.wasm` filter | Plugin (the code) becomes Filter (when running) |
+| **WASM Shim** | Specific WASM plugin that acts as bridge/adapter | [Kuadrant's wasm-shim](https://github.com/Kuadrant/wasm-shim) | Universal translator between policies & services |
 
-**Architecture Insights**:
-- **Language**: Rust-based Proxy-Wasm module (598 lines core implementation)
-- **Dependencies**: Uses `cel-interpreter` for CEL expression evaluation, `radix_trie` for hostname matching
-- **Envoy Integration**: Implements `HttpContext` and `RootContext` traits from proxy-wasm SDK
+### Policy vs Filter Hierarchy (Low to High Level)
 
-**CEL Expression System**:
+| Term | Level | What It Does | Configuration | Example |
+|------|-------|--------------|---------------|---------|
+| **Filter** | Envoy | Low-level proxy component processing requests | Raw Envoy YAML | `envoy.filters.http.jwt_authn` |
+| **EnvoyFilter** | Istio | Modifies Envoy's filter chain (low-level) | Kubernetes YAML (complex) | Inject custom WASM filter |
+| **WasmPlugin** | Istio | High-level way to add WASM plugins | Kubernetes YAML (simpler) | Add JWT validation to gateways |
+| **EnvoyExtensionPolicy** | Envoy Gateway | Envoy Gateway's WASM extension method | Kubernetes YAML | Add rate limiting to HTTPRoutes |
+| **AuthPolicy** | Kuadrant | Implementation-specific policy | Kubernetes YAML (translated) | JWT + external auth service calls |
+| **Gateway API Policy** | Standard | High-level, portable across implementations | Standard Kubernetes YAML | `BackendTLSPolicy`, `SecurityPolicy` |
+
+### Authorization Terminology
+
+| Term | What It Is | Example | Analogy |
+|------|------------|---------|---------|
+| **ext_authz** | Built-in Envoy filter for external authorization | `envoy.filters.http.ext_authz` calls gRPC/HTTP service | "Phone a friend" for auth decisions |
+| **External Authorization** | Pattern of delegating auth to external service | Envoy asks Authorino: "Can user access `/admin`?" | Centralized auth service for multiple proxies |
+| **Authorization Service** | The service that makes auth decisions | Authorino, OPA, custom auth microservice | The "friend" that ext_authz "phones" |
+
+### Kuadrant-Specific Terms
+
+| Term | What It Is | Example | Think Of It As |
+|------|------------|---------|----------------|
+| **Action Sets** | Internal structure grouping related actions | "api-auth" set: JWT validation + rate limiting | Like a recipe - sequence of steps |
+| **Predicates** | Conditions determining when actions run | `request.url_path.startsWith("/api/")` | if/when conditions in programming |
+| **CEL Expressions** | Google's Common Expression Language | `auth.identity.role == "admin"` | Like Excel formulas for requests |
+
+### Configuration Resources
+
+| Resource | System | Purpose | Example |
+|----------|--------|---------|---------|
+| **Gateway** | Gateway API | Network entry point with listeners | HTTPS listener on port 443 for `*.example.com` |
+| **HTTPRoute** | Gateway API | Routing rules from Gateway to backends | `/api/*` routes to `api-service:8080` |
+| **WasmPlugin** | Istio | Configure WASM plugin for workloads | Add rate limiting to ingress gateways |
+| **EnvoyExtensionPolicy** | Envoy Gateway | Attach WASM extensions to routes | Add auth WASM to `/private/*` paths |
+
+### Processing Concepts
+
+| Term | System | What It Is | Example |
+|------|--------|------------|---------|
+| **Filter Chain** | Envoy | Ordered sequence of filters processing requests | `jwt_authn → rbac → wasm → router` |
+| **Phases** | Istio | Logical groupings of filter chain positions | `AUTHN → AUTHZ → STATS → UNSPECIFIED` |
+| **Priority** | Istio | Ordering within a phase | Priority 1000 runs before 500 in same phase |
+
+## Terminology in Context: Complete Example
+
+Here's how all these terms work together:
+
 ```yaml
-# Custom CEL functions for request/response body parsing
-predicates:
-- requestBodyJSON('/my/value') == 'expected'
-- responseBodyJSON('/status/code') == 200
-- request.url_path.startsWith("/api/")
-- auth.identity.user_id != ""
+# 1. Gateway API Policy (high-level, portable)
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy          # ← Kuadrant Policy
+metadata:
+  name: api-auth
+spec:
+  targetRef:
+    kind: HTTPRoute       # ← Gateway API Resource
+    name: api-routes      # ← Routes this applies to
+  
+# 2. Operator Translation (behind the scenes)
+# AuthPolicy → Action Sets → CEL Predicates → WASM Configuration
+
+# 3. WASM Plugin Deployment (what actually runs)
+apiVersion: extensions.istio.io/v1alpha1  
+kind: WasmPlugin          # ← Istio Configuration Resource
+metadata:
+  name: kuadrant-wasm
+spec:
+  phase: AUTHN            # ← Istio Phase
+  priority: 1000          # ← Istio Priority
+  url: oci://registry.com/kuadrant-wasm-shim:v1.0.0  # ← WASM Plugin
+  pluginConfig:           # ← Gets translated to WASM Filter configuration
+    actionSets:           # ← Kuadrant Action Sets
+    - name: api-auth-actions
+      predicates:         # ← CEL Expressions
+      - "request.url_path.startsWith('/api/')"
+      actions:
+      - service: authorino # ← External Authorization Service
+        
+# 4. Runtime Execution (what happens to requests)
+# Request → Envoy → Filter Chain → WASM Filter → ext_authz → Authorization Service
 ```
 
-**Well-Known Attributes**:
-- **Envoy Attributes**: All standard Envoy request/response attributes
-- **`source.remote_address`**: Trusted client IP (without port)  
-- **`auth.*`**: Authentication service response data
-- **Custom Functions**: `requestBodyJSON()`, `responseBodyJSON()` with JSON Pointer syntax
+### Abstraction Levels: Portability vs Power Trade-off
 
-### Web Research - Current WASM/Gateway API State
-**Sources**: Envoy Gateway docs, Istio docs, Gateway API community discussions  
-**Finding**: ✅ **Active development and standardization in progress**
+**Key Insight**: Higher abstraction = more portable but less powerful. Lower level = more powerful but less portable.
+
+| Level | Abstraction | Portability | Power | When to Use |
+|-------|-------------|-------------|-------|-------------|
+| 🔝 **Gateway API Policy** | Highest | ✅ Works across all implementations | ⭐ Basic functionality | Standard use cases, maximum portability |
+| ⬆️ **Implementation Policy** | High | ✅ Works within implementation | ⭐⭐ Implementation features | AuthPolicy, RateLimitPolicy |
+| ➡️ **Implementation CRD** | Medium | ⚠️ Implementation-specific | ⭐⭐⭐ Full WASM features | WasmPlugin, EnvoyExtensionPolicy |
+| ⬇️ **WASM Configuration** | Low | ❌ Envoy-specific | ⭐⭐⭐⭐ Custom logic | Direct WASM filter config |
+| 🔻 **Envoy Filter Chain** | Lowest | ❌ Envoy-specific | ⭐⭐⭐⭐⭐ Complete control | EnvoyFilter, direct Envoy config |
+
+**Decision Framework**:
+- **Need portability?** → Start with Gateway API policies
+- **Need custom logic?** → Use WASM plugins  
+- **Need fine control?** → Go to lower levels
+- **Best practice**: Use highest level that meets your needs
+
+---
 
 ## Key Technologies
 
@@ -73,1814 +159,287 @@ predicates:
 WebAssembly plugins provide a sandboxed, portable way to extend gateway functionality without modifying core code.
 
 **Benefits**:
-- Language agnostic (compile to WASM bytecode)
-- Sandboxed execution
-- Runtime loading/unloading
-- Performance isolation
-
-### EnvoyFilter
-Envoy Proxy's native configuration mechanism for inserting custom filters into the filter chain.
-
-**Characteristics**:
-- Envoy-specific configuration
-- Direct filter chain manipulation
-- Powerful but complex
-- Requires deep Envoy knowledge
-
-### ext_authz
-External authorization filter that delegates authorization decisions to an external service.
+- **Language agnostic**: Compile from C++, Rust, AssemblyScript, TinyGo
+- **Sandboxed execution**: Isolated from host system
+- **Runtime loading/unloading**: Hot deployment capabilities  
+- **Performance isolation**: Resource limits and monitoring
 
 **Use Cases**:
-- Integration with external authorization systems
 - Custom authentication/authorization logic
+- Request/response transformation
+- Rate limiting and traffic shaping
+- Observability and analytics
 - Policy evaluation engines
 
-## Gateway API Implementation Analysis
+### Gateway API Integration Patterns
+
+**Three Primary Approaches**:
+
+1. **Direct WASM Configuration**: Implementation-specific CRDs
+   - **Envoy Gateway**: `EnvoyExtensionPolicy` 
+   - **Istio**: `WasmPlugin` API
+   - **Pros**: Full control, all WASM features available
+   - **Cons**: Implementation-specific, not portable
+
+2. **Policy Attachment**: Gateway API standard mechanism
+   - **High-level policies** → **Controller translation** → **WASM configuration**
+   - **Pros**: Portable, standardized, GitOps-friendly
+   - **Cons**: Limited to policy capabilities
+
+3. **Hybrid Approach**: Policy attachment with WASM implementation
+   - **Example**: Kuadrant uses WASM shim to implement Gateway API policies
+   - **Best of both worlds**: Standardization + flexibility
+
+### ext_authz Integration
+External authorization filter that delegates auth decisions to external services via **gRPC** or **HTTP**.
+
+**Key Characteristics**:
+- **Protocol Support**: gRPC (preferred) and HTTP REST
+- **Request Context**: Full access to headers, body, metadata
+- **Response Handling**: Allow/deny decisions + header injection
+- **Performance**: Async processing with configurable timeouts
+- **Failure Modes**: Configurable allow/deny on service failures
+
+---
+
+## Gateway API Implementation Landscape
 
 ### Envoy Gateway
-- **Status**: ✅ **FULLY RESEARCHED** (with official documentation analysis)
-- **WASM Support**: ✅ **EnvoyExtensionPolicy CRD** - Two extension types supported
-  - **HTTP Wasm Extensions**: Fetch from remote HTTP URLs with SHA256 validation
-  - **Image Wasm Extensions**: Package as OCI images for better versioning/distribution
-- **Extension Mechanism**: Link WASM modules to Gateway/HTTPRoute resources via `targetRefs`
-- **Dynamic Loading**: ✅ Supports HTTP URLs, OCI images (`oci://`), local files
-- **Build Toolchain**: ✅ **Docker and buildah support** for creating WASM OCI images
-- **ext_authz Support**: ✅ Standard Envoy ext_authz filter available
+- **Status**: ✅ **Production Ready** 
+- **WASM Support**: `EnvoyExtensionPolicy` CRD with two extension types:
+  - **HTTP Extensions**: Fetch from remote URLs with SHA256 validation
+  - **Image Extensions**: Package as OCI images for versioning/distribution
+- **Gateway Integration**: Attach to Gateway or HTTPRoute via `targetRefs`
+- **Build Toolchain**: Docker and buildah support for OCI images
+- **Loading Methods**: HTTP URLs, OCI images (`oci://`), local files
 
-### Istio Gateway API
-- **Status**: ✅ **FULLY RESEARCHED** (with official documentation analysis)
-- **WASM Support**: ✅ **WasmPlugin API** - Higher-level abstraction replacing EnvoyFilter
-- **Extension Mechanism**: WasmPlugin CRD with Proxy-Wasm specification
-- **Dynamic Loading**: ✅ `file://`, `oci://`, `https://` URLs supported
-- **Filter Chain Integration**: ✅ **4 plugin phases** (AUTHN, AUTHZ, STATS, UNSPECIFIED) + priority system
-- **Complex Orchestration**: ✅ **Multi-plugin coordination** with Istio's internal filters
-- **EnvoyFilter Support**: ✅ Still available but **WasmPlugin strongly preferred**
-- **ext_authz Support**: ✅ Standard Envoy ext_authz filter available
-
-### Kong Gateway API
-- **Status**: 🔍 TO RESEARCH
-- **WASM Support**: TBD
-- **Plugin System**: TBD
-
-### Linkerd Gateway API
-- **Status**: ✅ ANALYZED (limited)
-- **WASM Support**: Not mentioned in transcript
-- **Extension Mechanism**: Policy attachment focus
-- **Note**: Linkerd uses different proxy (linkerd2-proxy, not Envoy)
-
-## Current WASM + Gateway API Landscape
-
-### Envoy Gateway Implementation
-**EnvoyExtensionPolicy CRD Pattern**:
+**Quick Example**:
 ```yaml
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyExtensionPolicy
 metadata:
-  name: wasm-example
-spec:
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: HTTPRoute
-    name: my-route
-  wasm:
-    - name: custom-filter
-      rootID: custom_root
-      code:
-        type: Image
-        image:
-          url: oci://registry.example.com/wasm:v1.0
-```
-
-### Istio WasmPlugin API Pattern
-**Official Istio Documentation Analysis** - Replacement for EnvoyFilter:
-
-**Key Features from [Istio WasmPlugin Documentation](https://istio.io/latest/docs/reference/config/proxy_extensions/wasm-plugin/)**:
-- **Plugin Phases**: `AUTHN`, `AUTHZ`, `STATS`, `UNSPECIFIED` for precise filter chain ordering
-- **Priority System**: Numerical values for fine-grained plugin sequencing 
-- **Multiple Loading Methods**: `file://`, `oci://`, `https://` support
-- **Complex Integration**: Works alongside Istio's internal filters
-
-**Basic Example**:
-```yaml
-apiVersion: extensions.istio.io/v1alpha1
-kind: WasmPlugin
-metadata:
-  name: openid-connect
-  namespace: istio-ingress
-spec:
-  selector:
-    matchLabels:
-      istio: ingressgateway
-  url: oci://private-registry:5000/openid-connect/openid:latest
-  imagePullPolicy: IfNotPresent
-  imagePullSecret: private-registry-pull-secret
-  phase: AUTHN  # Orders before/after Istio internal filters
-  pluginConfig:
-    openid_server: authn
-    openid_realm: ingress
-```
-
-**Complex Multi-Plugin Example**:
-```yaml
-# Filter chain: openid-connect -> istio.authn -> acl-check -> check-header -> router
----
-apiVersion: extensions.istio.io/v1alpha1  
-kind: WasmPlugin
-metadata:
-  name: openid-connect
-spec:
-  phase: AUTHN  # Runs before Istio's built-in auth
-  # ... config ...
----
-apiVersion: extensions.istio.io/v1alpha1
-kind: WasmPlugin  
-metadata:
-  name: acl-check
-spec:
-  phase: AUTHZ     # Runs after Istio's built-in auth
-  priority: 1000   # Higher priority = runs first in AUTHZ phase
-  # ... config ...
----
-apiVersion: extensions.istio.io/v1alpha1
-kind: WasmPlugin
-metadata:
-  name: check-header  
-spec:
-  phase: AUTHZ
-  priority: 10     # Lower priority = runs after acl-check
-  # ... config ...
-```
-
-### Kuadrant WASM Shim Architecture
-**Implementation Details from [Source Code Analysis](https://github.com/Kuadrant/wasm-shim)**:
-
-**Built as Proxy-Wasm Module**:
-```rust
-// Rust-based WASM module using proxy-wasm-rust-sdk
-extern "C" fn start() {
-    proxy_wasm::set_root_context(|context_id| -> Box<dyn RootContext> {
-        Box::new(FilterRoot {
-            context_id,
-            action_set_index: Default::default(),
-        })
-    });
-}
-```
-
-**Configuration Structure**:
-```yaml
-# Embedded in Envoy WASM filter configuration
-services:
-  auth-service:
-    type: auth
-    endpoint: auth-cluster
-    failureMode: deny
-  ratelimit-service:
-    type: ratelimit 
-    endpoint: ratelimit-cluster
-    failureMode: allow
-actionSets:
-  - name: rlp-ns-A/rlp-name-A
-    routeRuleConditions:
-      hostnames: [ "*.toystore.com" ]
-      predicates:
-      - request.url_path.startsWith("/get")
-      - request.host == "test.toystore.com"
-    actions:
-    - service: ratelimit-service
-      scope: ratelimit-scope-a
-      conditionalData:
-      - predicates:
-        - auth.identity.anonymous == true
-        data:
-        - expression:
-            key: user_id
-            value: auth.identity.user_id
-```
-
-**Request Processing Architecture**:
-1. **Hostname Matching**: Uses radix trie for efficient subdomain pattern matching
-2. **CEL Evaluation**: Evaluates Common Expression Language predicates for route conditions
-3. **Action Execution**: Makes gRPC calls to external services (Authorino/Limitador)
-4. **Phase Management**: Handles request/response headers and body phases separately
-5. **Failure Handling**: Configurable failure modes (allow/deny) per service
-
-## Related Documentation Found
-
-From the `docs/src/` directory, we have several relevant PDFs:
-- `Build a Wasm image _ Envoy Gateway.pdf` - ✅ Covers Envoy Gateway WASM workflows
-- `External Authorization — envoy 1.36.0-dev-2eebe6 documentation.pdf` - ✅ Envoy ext_authz details
-- `Wasm Extensions _ Envoy Gateway.pdf` - ✅ Envoy Gateway extension mechanisms
-- `Istio _ External Authorization.pdf` - ✅ Istio external auth patterns
-- `Gateway API Plugins · kubernetes-sigs_gateway-api · Discussion #2275.pdf` - ✅ Community plugin discussions
-
-## Research Todo
-
-### High Priority
-- [x] Analyze existing documentation for WASM patterns  
-- [x] Research Envoy Gateway WASM support (EnvoyExtensionPolicy)
-- [x] Research Istio Gateway API + WASM integration (WasmPlugin API)
-- [ ] Investigate Kong Gateway API plugin system
-- [ ] Document Kuadrant WASM Shim implementation details
-- [ ] Compare policy attachment vs direct WASM configuration patterns
-
-### Medium Priority  
-- [ ] Compare extension patterns across implementations
-- [ ] Document performance implications of WASM vs native extensions
-- [ ] Research security considerations for WASM plugins
-- [ ] Analyze migration patterns from EnvoyFilter to Gateway API
-
-### Low Priority
-- [ ] Survey community adoption of WASM + Gateway API
-- [ ] Document tooling and development workflows
-- [ ] Research debugging and observability approaches
-
-## Key Findings Summary
-
-### 🎯 **WASM + Gateway API Integration Patterns**
-
-**1. Implementation-Specific CRDs**
-- **Envoy Gateway**: `EnvoyExtensionPolicy` CRD for WASM modules
-- **Istio**: `WasmPlugin` API (replaces EnvoyFilter)
-- **Kuadrant**: WASM Shim for policy-driven extensions
-
-**2. Policy Attachment vs Direct WASM Configuration**
-- **Gateway API Policy Attachment**: High-level, portable across implementations
-- **Direct WASM Configuration**: Implementation-specific but more powerful
-- **Hybrid Approach**: Kuadrant uses WASM to implement Gateway API policies
-
-**3. Concrete Implementation Patterns**
-- **Policy Translation**: Gateway API policies → Action Sets → CEL expressions → WASM execution
-- **Service Coordination**: Single WASM module coordinates multiple external services
-- **Failure Mode Handling**: Per-service failure configuration (allow/deny)
-- **Phase-based Processing**: Different logic for headers vs body processing
-
-**4. Migration Patterns**
-- **EnvoyFilter → WasmPlugin**: Istio's preferred migration path
-- **Annotations → Policy Attachment**: Gateway API's standardization goal  
-- **Custom Filters → WASM Extensions**: Portability and sandboxing benefits
-- **Monolithic Auth → Microservice Pattern**: WASM shim + external services (Authorino/Limitador)
-
-## Key Questions - Research Status
-
-1. **Standardization**: ✅ **Active standardization efforts** in Gateway API community:
-   - **Current State**: [Gateway API Discussion #2275](https://github.com/kubernetes-sigs/gateway-api/discussions/2275) - official plugin standardization discussion
-   - **Key Debate**: "Plugins" (user-provided code) vs "Custom Filters" using `ExtensionRef` in HTTPRoute
-   - **Three Plugin Categories** identified: In-dataplane functions, RPC sidecar services, loaded scripts/binaries  
-   - **Implementation Reality**: Each has own CRDs (WasmPlugin, EnvoyExtensionPolicy, etc.) 
-   - **Emerging Consensus**: Policy attachment is preferred standardized mechanism
-   - **Challenge**: Balancing portability with implementation-specific capabilities
-
-2. **Implementation Variance**: ✅ **Significant variance** but clear patterns:
-   - **Envoy Gateway**: EnvoyExtensionPolicy CRD  
-   - **Istio**: WasmPlugin API with sophisticated **phase/priority system** (AUTHN→AUTHZ→STATS)
-   - **Kuadrant**: WASM Shim bridging policies to filters via CEL expressions
-
-3. **Policy vs Plugins**: ✅ **Complementary approaches**:
-   - **Policy Attachment**: Gateway API standard, high-level, portable
-   - **WASM Plugins**: Implementation-specific, low-level, powerful  
-   - **Kuadrant Pattern**: WASM implements Gateway API policies (best of both worlds)
-   - **Best Practice**: Use policies where possible, WASM for custom logic
-
-4. **Migration Path**: ✅ **Clear patterns emerging**:
-   - **EnvoyFilter → WasmPlugin** (Istio recommendation)
-   - **Direct Envoy config → Gateway API policies** (preferred)
-   - **Custom code → WASM extensions** (for portability)
-
-5. **Performance**: ✅ **Real-world data from Kuadrant**:
-   - WASM adds sandboxing overhead but provides isolation
-   - Native filters faster but less portable  
-   - **Kuadrant Pattern**: WASM for orchestration, native gRPC for heavy lifting
-   - **Production Ready**: Used in Red Hat Service Mesh and OpenShift Service Mesh
-   - **Optimization**: CEL evaluation cached, radix trie for O(log n) hostname matching
-
-## Notes
-
-- Gateway API emphasizes standardization and portability
-- WASM provides implementation-agnostic extensibility
-- EnvoyFilter is Envoy-specific and may not align with Gateway API portability goals
-- Policy attachment appears to be Gateway API's preferred extension mechanism
-- Need to understand how/if WASM fits into Gateway API's extension model
-
-## Summary: WASM + Gateway API Production Reality
-
-### 🎯 **Key Breakthrough: Kuadrant WASM Shim Analysis**
-
-The [Kuadrant WASM shim source code](https://github.com/Kuadrant/wasm-shim) provides the **missing link** between Gateway API policies and WASM implementation:
-
-**Architecture Pattern**:
-```
-Gateway API Policy → Kuadrant Operator → Action Sets → WASM Module → External Services
-     ↓                    ↓                ↓            ↓              ↓
-AuthPolicy         Policy Translation    CEL Rules    gRPC Calls    Authorino
-RateLimitPolicy         ↓                    ↓            ↓              ↓
-                   Action Sets          WASM Filter    Response       Limitador
-```
-
-**Production Deployment Pattern**:
-1. **Envoy Gateway/Istio** provides Gateway API implementation
-2. **Kuadrant Operator** translates Gateway API policies to WASM configuration  
-3. **WASM Shim** (598 lines of Rust) executes policies via CEL expressions
-4. **External Services** (Authorino/Limitador) handle heavy computational work
-5. **Response Processing** injects headers and handles failure modes
-
-### 🏗️ **Recommended Architecture for WASM + Gateway API**
-
-**Best Practice Pattern** (learned from Kuadrant):
-- **High-Level**: Use Gateway API policy attachment for standard use cases
-- **Mid-Level**: Use WASM for policy orchestration and routing logic  
-- **Low-Level**: Use external gRPC services for heavy computation
-- **Fallback**: Keep EnvoyFilter available for edge cases
-
-This pattern provides:
-- ✅ **Portability**: Gateway API policies work across implementations
-- ✅ **Performance**: WASM overhead minimized, heavy lifting in native services
-- ✅ **Flexibility**: CEL expressions allow complex conditional logic
-- ✅ **Production Ready**: Battle-tested in Red Hat/OpenShift Service Mesh
-
----
-
-*Last Updated*: January 2025  
-*Status*: ✅ **Complete analysis with source code insights**  
-*Next Steps*: Implementation-specific deep dives (Kong, Contour, etc.)
-
----
-
-# 🔧 **WASM Shim Build, Deployment, and Integration Guide**
-
-## Building the Kuadrant WASM Shim
-
-### Prerequisites and Build Process
-```bash
-# Install Rust WASM target
-rustup target add wasm32-unknown-unknown
-
-# Build the WASM module (from source code analysis)
-make build                    # Debug build
-make build BUILD=release      # Release build  
-make build FEATURES=debug-host-behaviour  # With debug features
-```
-
-**Build Output**: `target/wasm32-unknown-unknown/release/wasm_shim.wasm` (598 lines of compiled Rust)
-
-### Docker Build Pattern
-```dockerfile
-# Multi-stage build from Dockerfile
-FROM mirror.gcr.io/library/alpine:3.16 as wasm-shim-build
-# ... Rust toolchain installation ...
-WORKDIR /usr/src/wasm-shim
-COPY ./Cargo.lock ./Cargo.toml ./
-RUN cargo build --target=wasm32-unknown-unknown --release
-
-FROM scratch
-COPY --from=wasm-shim-build /usr/src/wasm-shim/target/wasm32-unknown-unknown/release/wasm_shim.wasm /plugin.wasm
-```
-
-## Deployment Patterns
-
-### Pattern 1: Direct Envoy Integration (Manual)
-```yaml
-# Envoy HTTP Filter Configuration
-http_filters:
-- name: envoy.filters.http.wasm
-  typed_config:
-    "@type": type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
-    config:
-      name: kuadrant_wasm
-      root_id: kuadrant_wasm
-      vm_config:
-        vm_id: vm.sentinel.kuadrant_wasm
-        runtime: envoy.wasm.runtime.v8
-        code:
-          local:
-            filename: /opt/kuadrant/wasm/wasm_shim.wasm
-        allow_precompiled: true
-      configuration:
-        "@type": "type.googleapis.com/google.protobuf.StringValue"
-        value: |
-          {
-            "services": {
-              "auth-service": {
-                "type": "auth",
-                "endpoint": "auth-cluster",
-                "failureMode": "deny",
-                "timeout": "10ms"
-              },
-              "ratelimit-service": {
-                "type": "ratelimit", 
-                "endpoint": "ratelimit-cluster",
-                "failureMode": "allow"
-              }
-            },
-            "actionSets": [
-              {
-                "name": "my-auth-policy",
-                "routeRuleConditions": {
-                  "hostnames": ["*.example.com"],
-                  "predicates": [
-                    "request.url_path.startsWith('/api/')",
-                    "request.method == 'POST'"
-                  ]
-                },
-                "actions": [
-                  {
-                    "service": "auth-service",
-                    "scope": "my-scope",
-                    "predicates": ["request.headers['authorization'] != ''"]
-                  }
-                ]
-              }
-            ]
-          }
-```
-
-### Pattern 2: Gateway API + Kuadrant Operator (Production)
-```yaml
-# Step 1: Gateway API Resources
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: my-gateway
-spec:
-  gatewayClassName: istio  # or envoy-gateway
-  listeners:
-  - name: http
-    port: 80
-    protocol: HTTP
-    hostname: "*.example.com"
-
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute  
-metadata:
-  name: api-route
-spec:
-  parentRefs:
-  - name: my-gateway
-  hostnames:
-  - "api.example.com"
-  rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: "/api/"
-    backendRefs:
-    - name: my-api-service
-      port: 8080
-
----
-# Step 2: Kuadrant Policies (Operator translates these)
-apiVersion: kuadrant.io/v1
-kind: AuthPolicy
-metadata:
-  name: api-auth
-spec:
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: HTTPRoute
-    name: api-route
-  rules:
-    authentication:
-      "jwt-auth":
-        jwt:
-          issuerUrl: "https://auth.example.com"
-          audiences: ["my-api"]
-    authorization:
-      "admin-only":
-        when:
-        - predicate: auth.identity.role == "admin"
-
----
-apiVersion: kuadrant.io/v1  
-kind: RateLimitPolicy
-metadata:
-  name: api-limits
-spec:
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: HTTPRoute
-    name: api-route
-  limits:
-    "per-user":
-      when:
-      - predicate: auth.identity.username != ""
-      counters:
-      - expression: auth.identity.username
-      rates:
-      - limit: 100
-        window: 60s
-```
-
-## Policy Translation Process (Kuadrant Operator)
-
-### Translation Flow
-```
-Gateway API Resources + Kuadrant Policies
-            ↓
-    Kuadrant Operator Processing
-            ↓
-    Policy Attachment Resolution
-            ↓
-    Component-Specific Translation
-            ↓
-┌─────────────────┬─────────────────┬──────────────────┐
-│   AuthConfig    │  Rate Limit     │  WASM Action     │
-│  (Authorino)    │  Rules          │  Sets Config     │
-└─────────────────┴─────────────────┴──────────────────┘
-            ↓
-    Envoy Filter Updates
-            ↓
-    WASM Shim Runtime Execution
-```
-
-### Generated WASM Configuration
-```json
-{
-  "services": {
-    "authorino": {
-      "type": "auth", 
-      "endpoint": "authorino-cluster",
-      "failureMode": "deny"
-    },
-    "limitador": {
-      "type": "ratelimit",
-      "endpoint": "limitador-cluster", 
-      "failureMode": "deny"
-    }
-  },
-  "actionSets": [
-    {
-      "name": "kuadrant-system/api-auth",
-      "routeRuleConditions": {
-        "hostnames": ["api.example.com"],
-        "predicates": [
-          "request.url_path.startsWith('/api/')"
-        ]
-      },
-      "actions": [
-        {
-          "service": "authorino",
-          "scope": "kuadrant-system/api-auth",
-          "predicates": []
-        },
-        {
-          "service": "limitador",
-          "scope": "kuadrant-system/api-limits", 
-          "conditionalData": [
-            {
-              "predicates": [
-                "auth.identity.username != ''"
-              ],
-              "data": [
-                {
-                  "expression": {
-                    "key": "user_id",
-                    "value": "auth.identity.username"
-                  }
-                }
-              ]
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-```
-
-## Runtime Request Processing
-
-### Request Flow Through WASM Shim
-```
-1. Request Arrives at Envoy
-   ↓
-2. WASM Filter Activated
-   │
-   ├── Hostname Matching (radix trie lookup)
-   │   └── "api.example.com" → matches actionSet
-   │
-   ├── Predicate Evaluation (CEL engine)
-   │   └── request.url_path.startsWith('/api/') → true
-   │
-   └── Action Execution
-       │
-       ├── Auth Action
-       │   ├── gRPC call to Authorino (port 50051)
-       │   ├── JWT validation & claims extraction
-       │   └── auth.identity.* populated
-       │
-       └── Rate Limit Action
-           ├── CEL evaluation: auth.identity.username != ""
-           ├── Data extraction: user_id = "alice"
-           ├── gRPC call to Limitador (port 8081)  
-           └── Rate limit check for user "alice"
-3. Request continues to upstream (if allowed)
-```
-
-### CEL Expression Examples
-```yaml
-# Available in WASM shim CEL context
-predicates:
-- request.url_path.startsWith("/api/")
-- request.method == "POST"
-- request.headers["x-api-key"] != ""
-- source.remote_address == "10.0.0.1"
-- auth.identity.username == "admin"
-- auth.identity.role == "admin"
-
-# Custom functions for body parsing
-- requestBodyJSON('/user/id') == "12345"
-- responseBodyJSON('/status/code') == 200
-
-# Metadata access
-- string(getHostProperty(['metadata', 'filter_metadata', 'envoy.filters.http.header_to_metadata', 'user_id']))
-```
-
-## Deployment Architectures
-
-### Option A: Standalone WASM (Development/Testing)
-```
-┌─────────────────────────────────────────────────┐
-│                   Envoy                         │
-│  ┌─────────────────────────────────────────┐    │
-│  │           HTTP Filter Chain             │    │ 
-│  │                                         │    │
-│  │  ┌─────────────────────────────────┐    │    │
-│  │  │        WASM Filter              │    │    │
-│  │  │    (wasm_shim.wasm)             │    │    │
-│  │  │                                 │    │    │
-│  │  │  - CEL evaluation               │    │    │
-│  │  │  - gRPC calls to services       │    │    │
-│  │  │  - Response processing          │    │    │
-│  │  └─────────────────────────────────┘    │    │
-│  └─────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────┘
-            │                    │
-         gRPC calls         gRPC calls  
-            │                    │
-   ┌────────▼──────┐    ┌────────▼────────┐
-   │   Authorino   │    │   Limitador     │
-   │   (port 50051)│    │   (port 8081)   │
-   └───────────────┘    └─────────────────┘
-```
-
-### Option B: Gateway API + Kuadrant (Production)
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Kubernetes Cluster                        │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │              Gateway API Resources                       │    │
-│  │                                                          │    │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │    │
-│  │  │   Gateway   │  │  HTTPRoute  │  │ Kuadrant    │      │    │
-│  │  │             │  │             │  │ Policies    │      │    │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘      │    │
-│  └──────────────────────────────────────────────────────────┘    │
-│                              │                                   │
-│                              ▼                                   │  
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │              Kuadrant Operator                           │    │
-│  │                                                          │    │
-│  │  • Watches Gateway API resources                        │    │
-│  │  • Translates policies → component configs              │    │
-│  │  • Generates WASM action sets                           │    │
-│  │  • Updates Envoy filter configurations                  │    │
-│  └──────────────────────────────────────────────────────────┘    │
-│                              │                                   │
-│                              ▼                                   │
-│  ┌──────────────────────────────────────────────────────────┐    │
-│  │           Envoy Gateway / Istio Gateway                  │    │
-│  │                                                          │    │
-│  │         ┌──────────────────────────────┐                 │    │
-│  │         │        WASM Filter           │                 │    │
-│  │         │     (Auto-configured)        │                 │    │
-│  │         └──────────────────────────────┘                 │    │
-│  └──────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-## Key Integration Benefits
-
-### 1. **Developer Experience**
-- ✅ Standard Gateway API resources (portable)
-- ✅ Declarative policy attachment  
-- ✅ No manual WASM configuration required
-
-### 2. **Operational Benefits**
-- ✅ GitOps-friendly policy management
-- ✅ Policy validation and conflict detection
-- ✅ Automatic WASM configuration updates
-- ✅ Multi-tenant policy isolation
-
-### 3. **Performance Characteristics**
-- ✅ **Lightweight WASM**: 598 lines, minimal memory footprint
-- ✅ **Efficient Matching**: O(log n) hostname lookup via radix trie  
-- ✅ **Cached Evaluation**: CEL expressions cached for performance
-- ✅ **Async gRPC**: Non-blocking calls to external services
-
-This architecture provides the best of both worlds: **Gateway API standardization** with **WASM flexibility**, making it production-ready while maintaining portability across different Gateway implementations.
-
----
-
-# 🔓 **Using WASM Shim WITHOUT Kuadrant Operator**
-
-## Yes, Absolutely! Standalone Usage is Fully Supported
-
-The **Kuadrant WASM shim is completely independent** of the Kuadrant operator and can be used as a standalone Envoy WASM filter. The operator is just a convenience layer that translates Gateway API policies into WASM configuration.
-
-## Standalone Configuration Architecture
-
-### What You Need vs What You Don't Need
-
-**✅ Required Components**:
-- **WASM Shim Binary** (`wasm_shim.wasm`) 
-- **Envoy Proxy** (any version with WASM support)
-- **External Services** (any gRPC services implementing the expected protocols)
-
-**❌ NOT Required**:
-- Kuadrant Operator
-- Kuadrant CRDs (`AuthPolicy`, `RateLimitPolicy`)
-- Kubernetes cluster
-- Gateway API resources
-
-## Standalone Configuration Format
-
-### Direct Envoy WASM Filter Configuration
-```yaml
-# Pure Envoy configuration - no Kubernetes required
-http_filters:
-- name: envoy.filters.http.wasm
-  typed_config:
-    "@type": type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
-    config:
-      name: kuadrant_wasm
-      root_id: kuadrant_wasm
-      vm_config:
-        vm_id: vm.sentinel.kuadrant_wasm
-        runtime: envoy.wasm.runtime.v8
-        code:
-          local:
-            filename: /opt/kuadrant/wasm/wasm_shim.wasm
-        allow_precompiled: true
-      configuration:
-        "@type": "type.googleapis.com/google.protobuf.StringValue"
-        value: |
-          {
-            "services": {
-              "my-auth-service": {
-                "type": "auth",
-                "endpoint": "auth-cluster",
-                "failureMode": "deny",
-                "timeout": "5s"
-              },
-              "my-rate-limiter": {
-                "type": "ratelimit",
-                "endpoint": "ratelimit-cluster", 
-                "failureMode": "allow"
-              }
-            },
-            "actionSets": [
-              {
-                "name": "api-protection",
-                "routeRuleConditions": {
-                  "hostnames": ["api.mycompany.com"],
-                  "predicates": [
-                    "request.url_path.startsWith('/v1/')",
-                    "request.method in ['POST', 'PUT', 'DELETE']"
-                  ]
-                },
-                "actions": [
-                  {
-                    "service": "my-auth-service",
-                    "scope": "api-v1",
-                    "predicates": ["request.headers['authorization'] != ''"]
-                  },
-                  {
-                    "service": "my-rate-limiter", 
-                    "scope": "api-limits",
-                    "conditionalData": [
-                      {
-                        "predicates": ["auth.identity.user_id != ''"],
-                        "data": [
-                          {
-                            "expression": {
-                              "key": "user_id",
-                              "value": "auth.identity.user_id"
-                            }
-                          },
-                          {
-                            "expression": {
-                              "key": "api_version", 
-                              "value": "'v1'"
-                            }
-                          }
-                        ]
-                      }
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
-```
-
-## Real-World Standalone Examples
-
-### Example 1: Request Body Processing
-*From the source code examples:*
-
-```yaml
-# Works with any rate limiting service that speaks the gRPC protocol
-"services": {
-  "rlsbin": {
-    "type": "ratelimit",
-    "endpoint": "rlsbin",  # Any compatible gRPC service
-    "failureMode": "deny"
-  }
-},
-"actionSets": [{
-  "name": "body-based-limiting",
-  "routeRuleConditions": {
-    "hostnames": ["*.example.com"]
-  },
-  "actions": [{
-    "service": "rlsbin",
-    "scope": "llm-requests",
-    "conditionalData": [{
-      "data": [{
-        "expression": {
-          "key": "model",
-          "value": "requestBodyJSON('/model')"  # Extract from JSON body
-        }
-      }]
-    }]
-  }]
-}]
-```
-
-### Example 2: Custom Auth Service Integration
-```yaml
-"services": {
-  "custom-auth": {
-    "type": "auth",
-    "endpoint": "my-custom-auth-service",
-    "failureMode": "deny",
-    "timeout": "2s"
-  }
-},
-"actionSets": [{
-  "name": "custom-authentication", 
-  "routeRuleConditions": {
-    "hostnames": ["secure.example.com"],
-    "predicates": ["request.url_path.startsWith('/admin/')"]
-  },
-  "actions": [{
-    "service": "custom-auth",
-    "scope": "admin-access",
-    "predicates": [
-      "request.headers['x-api-key'] != ''",
-      "request.headers['x-user-role'] == 'admin'"
-    ]
-  }]
-}]
-```
-
-## Compatible External Services
-
-### You Can Use ANY gRPC Service That Implements:
-
-**For Authentication (`type: "auth"`):**
-- ✅ **Authorino** (Kuadrant's auth service)
-- ✅ **Custom Envoy ext_authz services**
-- ✅ **Open Policy Agent (OPA)** with gRPC server
-- ✅ **Your own authentication microservice**
-
-**For Rate Limiting (`type: "ratelimit"`):**
-- ✅ **Limitador** (Kuadrant's rate limiter) 
-- ✅ **Envoy Rate Limit Service (RLS)**
-- ✅ **Custom rate limiting services**
-- ✅ **Redis-based rate limiters with gRPC interface**
-
-## Benefits of Standalone Usage
-
-### ✅ **Advantages**
-- **No Kubernetes Required**: Works with plain Envoy deployment
-- **No Operator Complexity**: Direct control over configuration
-- **Service Flexibility**: Use any compatible gRPC services
-- **Simpler Debugging**: Single configuration file to manage
-- **Custom CEL Logic**: Full access to all WASM shim features
-
-### ❌ **Trade-offs** 
-- **Manual Configuration**: No automatic policy translation
-- **No Gateway API Integration**: Must manage Envoy config directly
-- **No Policy Validation**: No built-in conflict detection
-- **More Complex Updates**: Changes require Envoy configuration updates
-
-## When to Use Standalone vs Kuadrant Operator
-
-### **Use Standalone When:**
-- Building custom API gateway solutions
-- Working outside Kubernetes environments
-- Need direct control over Envoy configuration  
-- Integrating with existing authentication/rate limiting systems
-- Prototyping or testing WASM shim features
-
-### **Use Kuadrant Operator When:**
-- Want Gateway API standardization
-- Need GitOps-friendly policy management
-- Working in Kubernetes with multiple teams
-- Want automatic configuration management
-- Need policy hierarchy and conflict resolution
-
-## Docker Compose Standalone Example
-
-```yaml
-# Complete standalone setup with docker-compose
-version: '3.8'
-services:
-  envoy:
-    image: envoyproxy/envoy:v1.31-latest
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./envoy.yaml:/etc/envoy/envoy.yaml
-      - ./wasm_shim.wasm:/opt/kuadrant/wasm/wasm_shim.wasm
-    command: ["envoy", "-c", "/etc/envoy/envoy.yaml"]
-  
-  my-rate-limiter:
-    image: envoyproxy/ratelimit:latest
-    ports:
-      - "8081:8081" 
-    # Your custom rate limiting service
-
-  my-auth-service:
-    build: ./auth-service
-    ports:
-      - "50051:50051"
-    # Your custom auth service
-```
-
-## Summary: Maximum Flexibility
-
-The **Kuadrant WASM shim is architecturally designed** to work as a standalone component:
-
-- 🎯 **Core Function**: Lightweight request orchestration with CEL expressions
-- 🔌 **Service Agnostic**: Works with any compatible gRPC services  
-- 🚀 **Zero Dependencies**: Only needs Envoy + WASM binary + your services
-- 🛠️ **Full Feature Access**: All CEL functions, predicates, and processing phases
-
-This makes it an excellent **building block for custom API gateway solutions**, whether you're using the full Kuadrant stack or building something entirely custom.
-
----
-
-# 🚀 **How to Actually Deploy the WASM Configuration**
-
-## The Configuration Deployment Problem
-
-You're absolutely right! The WASM filter configuration I showed is **raw Envoy configuration** - it's not a Kubernetes Custom Resource you can `kubectl apply`. 
-
-**⚠️ KEY INSIGHT**: This raw configuration format can **only be used directly** when you control the Envoy process yourself. If you're using **any controller** (Istio, Envoy Gateway, Kong, etc.), you cannot directly edit Envoy's config file - the controller manages that for you.
-
-Here are the **different ways to actually deploy it** depending on your setup:
-
-## Deployment Method 1: Direct Envoy Static Configuration
-
-**For standalone Envoy (non-Kubernetes):**
-
-**⚠️ IMPORTANT**: This method **only works when YOU control the Envoy process directly**. If you have a controller (like Istio, Envoy Gateway, Kong, etc.) spawning Envoy for you, you **cannot** use this method - the controller manages the Envoy configuration, not you.
-
-**Use this method when:**
-- Running Envoy directly via `envoy -c config.yaml`
-- Deploying raw Envoy in Docker/containers where you control the entrypoint
-- VM deployments where you manage the Envoy process yourself
-
-You embed the WASM filter configuration (shown earlier) directly in your `envoy.yaml` file:
-
-```yaml
-# envoy.yaml - Standard Envoy configuration file
-static_resources:
-  listeners:
-  - name: main
-    # ... listener configuration ...
-    filter_chains:
-    - filters:
-      - name: envoy.filters.network.http_connection_manager
-        typed_config:
-          # ... http connection manager config ...
-          http_filters:
-          # INSERT THE WASM FILTER HERE (from earlier examples)
-          - name: envoy.filters.http.wasm
-            typed_config:
-              # Use the exact WASM configuration from the standalone examples above
-          - name: envoy.filters.http.router
-  clusters:
-  - name: upstream
-    # ... your application clusters ...
-  - name: auth-cluster  
-    # ... your auth service clusters ...
-
-# Deploy with: envoy -c envoy.yaml
-```
-
-## Deployment Method 2: Kubernetes ConfigMap + Deployment
-
-**For Kubernetes (manual Envoy deployment):**
-
-```yaml
-# STEP 1: Create ConfigMap with Envoy configuration
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: envoy-wasm-config
-data:
-  envoy.yaml: |
-    # Same Envoy config as above, but in ConfigMap
-    static_resources:
-      listeners:
-      - name: main
-        # ... full Envoy config with WASM filter
----
-# STEP 2: Deploy Envoy with WASM binary and config
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: envoy-wasm
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: envoy-wasm
-  template:
-    metadata:
-      labels:
-        app: envoy-wasm
-    spec:
-      containers:
-      - name: envoy
-        image: envoyproxy/envoy:v1.31-latest
-        command: ["envoy", "-c", "/etc/envoy/envoy.yaml"]
-        ports:
-        - containerPort: 8080
-        volumeMounts:
-        - name: envoy-config
-          mountPath: /etc/envoy
-        - name: wasm-binary
-          mountPath: /opt/kuadrant/wasm
-      volumes:
-      - name: envoy-config
-        configMap:
-          name: envoy-wasm-config
-      - name: wasm-binary
-        # Options for getting WASM binary:
-        # 1. hostPath (development)
-        hostPath:
-          path: /path/to/wasm_shim.wasm
-        # 2. initContainer (production)  
-        # 3. OCI image with binary
-```
-
-**Deploy with:**
-```bash
-kubectl apply -f envoy-wasm-deployment.yaml
-```
-
-## Deployment Method 3: Istio EnvoyFilter (Low-level)
-
-**For Istio service mesh:**
-
-```yaml
-# CAN be kubectl applied - this IS a Kubernetes Custom Resource
-apiVersion: networking.istio.io/v1alpha3
-kind: EnvoyFilter
-metadata:
-  name: kuadrant-wasm-filter
-  namespace: istio-system  # Affects all workloads
-spec:
-  configPatches:
-  - applyTo: HTTP_FILTER
-    match:
-      context: SIDECAR_INBOUND  # or GATEWAY for ingress gateways
-      listener:
-        filterChain:
-          filter:
-            name: envoy.filters.network.http_connection_manager
-    patch:
-      operation: INSERT_BEFORE
-      filterClass: AUTHZ  # Insert before authorization filters
-      value:
-        name: envoy.filters.http.wasm
-        typed_config:
-          "@type": type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
-          config:
-            name: kuadrant_wasm
-            root_id: kuadrant_wasm
-            vm_config:
-              vm_id: vm.sentinel.kuadrant_wasm
-              runtime: envoy.wasm.runtime.v8
-              code:
-                local:
-                  inline_string: |
-                    # Base64 encoded WASM binary here
-                    # Or use remote fetch:
-                remote:
-                  http_uri:
-                    uri: https://github.com/Kuadrant/wasm-shim/releases/download/v0.9.0/wasm_shim.wasm
-                    timeout: 10s
-              allow_precompiled: true
-            configuration:
-              "@type": "type.googleapis.com/google.protobuf.StringValue"
-              value: |
-                {
-                  "services": {
-                    "authorino": {
-                      "type": "auth",
-                      "endpoint": "authorino.authorino-operator.svc.cluster.local",
-                      "failureMode": "deny"
-                    }
-                  },
-                  "actionSets": [
-                    {
-                      "name": "my-policy",
-                      "routeRuleConditions": {
-                        "hostnames": ["*.example.com"]
-                      },
-                      "actions": [
-                        {
-                          "service": "authorino",
-                          "scope": "my-scope"
-                        }
-                      ]
-                    }
-                  ]
-                }
-```
-
-**Deploy with:**
-```bash
-kubectl apply -f envoy-filter-wasm.yaml
-```
-
-## Deployment Method 4: Istio WasmPlugin (High-level)
-
-**For Istio (preferred modern approach):**
-
-```yaml
-# CAN be kubectl applied - Istio's higher-level WASM API
-apiVersion: extensions.istio.io/v1alpha1
-kind: WasmPlugin
-metadata:
-  name: kuadrant-wasm
-  namespace: istio-system
-spec:
-  # Target specific workloads
-  selector:
-    matchLabels:
-      app: istio-proxy
-  url: oci://ghcr.io/kuadrant/wasm-shim:v0.9.0  # OCI image
-  # Or local file:
-  # url: file:///opt/kuadrant/wasm/wasm_shim.wasm
-  pluginConfig:
-    services:
-      authorino:
-        type: auth
-        endpoint: authorino.authorino-operator.svc.cluster.local:50051
-        failureMode: deny
-    actionSets:
-    - name: my-policy
-      routeRuleConditions:
-        hostnames: ["*.example.com"]
-      actions:
-      - service: authorino
-        scope: my-scope
-```
-
-**Deploy with:**
-```bash
-kubectl apply -f wasm-plugin.yaml
-```
-
-## Deployment Method 5: Envoy Gateway EnvoyExtensionPolicy
-
-**For Envoy Gateway:**
-
-```yaml
-# CAN be kubectl applied - Envoy Gateway's WASM CRD
-apiVersion: gateway.envoyproxy.io/v1alpha1
-kind: EnvoyExtensionPolicy
-metadata:
-  name: kuadrant-wasm-extension
-spec:
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: Gateway
-    name: my-gateway
-  wasm:
-  - name: kuadrant-filter
-    rootID: kuadrant_wasm
-    code:
-      type: Image
-      image:
-        url: oci://ghcr.io/kuadrant/wasm-shim:v0.9.0
-    config:
-      services:
-        auth-service:
-          type: auth
-          endpoint: auth-service.default.svc.cluster.local:50051
-          failureMode: deny
-      actionSets:
-      - name: api-protection
-        routeRuleConditions:
-          hostnames: ["api.example.com"]
-        actions:
-        - service: auth-service
-          scope: api-auth
-```
-
-**Deploy with:**
-```bash
-kubectl apply -f envoy-extension-policy.yaml
-```
-
-## Deployment Method 6: Gateway API + Kuadrant (Fully Automated)
-
-**For Kuadrant (what we showed earlier):**
-
-```yaml
-# These ARE kubectl-appliable Kubernetes resources
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: my-gateway
-spec:
-  gatewayClassName: istio
-  listeners:
-  - name: http
-    port: 80
-    protocol: HTTP
-
----
-apiVersion: kuadrant.io/v1
-kind: AuthPolicy  
-metadata:
-  name: api-auth
-spec:
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: Gateway
-    name: my-gateway
-  # High-level policy configuration
-```
-
-**Deploy with:**
-```bash
-kubectl apply -f gateway-api-resources.yaml
-# Kuadrant operator automatically translates to WASM configuration
-```
-
-## Summary: Configuration Deployment Methods
-
-| **Method** | **kubectl apply?** | **Environment** | **Complexity** | **Use Case** |
-|------------|-------------------|-----------------|----------------|--------------|
-| **Direct Envoy** | ❌ | Standalone | Low | Development/Testing |
-| **ConfigMap + Deployment** | ✅ | Kubernetes | Medium | Manual K8s deployment |
-| **EnvoyFilter** | ✅ | Istio | High | Low-level control |
-| **WasmPlugin** | ✅ | Istio | Medium | Modern Istio |
-| **EnvoyExtensionPolicy** | ✅ | Envoy Gateway | Medium | Envoy Gateway |
-| **Kuadrant Operator** | ✅ | Gateway API | Low | Production automation |
-
-**Key Insight**: The raw WASM filter configuration is **Envoy's native format**. The various Kubernetes resources (EnvoyFilter, WasmPlugin, etc.) are **wrappers** that inject this configuration into Envoy at runtime.
-
----
-
-# 🔐 **Practical Implementation: Auth Proxy with WasmPlugin CRD**
-
-## Using WasmPlugin for Authentication Proxy
-
-Based on our research, here are **3 practical approaches** for implementing an auth proxy using Istio's WasmPlugin CRD:
-
-### Approach 1: Custom WASM Auth Module
-
-**Build your own WASM module** (similar to Kuadrant's approach):
-
-```yaml
-apiVersion: extensions.istio.io/v1alpha1
-kind: WasmPlugin
-metadata:
-  name: custom-auth-proxy
-  namespace: istio-system
-spec:
-  # Apply to all gateways
-  selector:
-    matchLabels:
-      istio: gateway
-  
-  # Plugin execution phase
-  phase: AUTHN  # Run during authentication phase
-  priority: 1000  # High priority = early execution
-  
-  # Load your custom WASM module
-  url: oci://your-registry.com/auth-proxy-wasm:v1.0.0
-  
-  # Auth proxy configuration
-  pluginConfig:
-    # Your auth endpoints
-    authServices:
-      oidc:
-        endpoint: "https://keycloak.example.com/auth/realms/myrealm"
-        clientId: "gateway-client"
-        clientSecret: "secret"
-      
-      internal:
-        endpoint: "http://internal-authz.auth-system.svc.cluster.local:8080/verify"
-        timeout: "5s"
-        
-    # Request routing rules  
-    rules:
-      - path: "/api/public/*"
-        action: "allow"
-      - path: "/api/private/*"
-        authRequired: true
-        authService: "oidc"
-      - path: "/admin/*"
-        authRequired: true
-        authService: "internal"
-        requiredRoles: ["admin"]
-        
-    # Response handling
-    responses:
-      unauthorized:
-        statusCode: 401
-        headers:
-          "WWW-Authenticate": "Bearer realm=\"API\""
-        body: '{"error": "authentication_required"}'
-      forbidden:
-        statusCode: 403
-        body: '{"error": "insufficient_permissions"}'
-```
-
-### Approach 2: Leverage Existing WASM Auth Solutions
-
-**Use proven WASM auth modules**:
-
-```yaml
-apiVersion: extensions.istio.io/v1alpha1
-kind: WasmPlugin
-metadata:
-  name: envoy-oidc-auth
-  namespace: istio-system
-spec:
-  selector:
-    matchLabels:
-      istio: gateway
-  
-  phase: AUTHN
-  priority: 1000
-  
-  # Use existing OIDC WASM plugin
-  url: oci://ghcr.io/envoyproxy/envoy-openid-connect-filter:v1.0.0
-  
-  pluginConfig:
-    # Standard OIDC configuration
-    provider: 
-      issuer: "https://auth.example.com"
-      authorization_endpoint: "https://auth.example.com/auth"
-      token_endpoint: "https://auth.example.com/token"
-      jwks_uri: "https://auth.example.com/certs"
-    
-    client:
-      client_id: "gateway-client"
-      client_secret: "gateway-secret"
-      redirect_uri: "https://api.example.com/callback"
-      
-    # Filter configuration  
-    forward_bearer_token: true
-    signout_path: "/logout"
-    
-    # Cookie settings
-    cookie:
-      name: "session"
-      path: "/"
-      domain: ".example.com"
-      secure: true
-      httponly: true
-```
-
-### Approach 3: Multi-Service Auth Coordination (Kuadrant-style)
-
-**Coordinate between multiple auth services** using WASM orchestration:
-
-```yaml
-apiVersion: extensions.istio.io/v1alpha1
-kind: WasmPlugin
-metadata:
-  name: multi-auth-coordinator
-  namespace: istio-system
-spec:
-  selector:
-    matchLabels:
-      istio: gateway
-      
-  phase: AUTHN
-  priority: 1000
-  
-  # Your orchestration WASM module
-  url: oci://your-registry.com/auth-coordinator:v1.0.0
-  
-  pluginConfig:
-    # External auth services
-    services:
-      oidc_provider:
-        type: "oidc"
-        endpoint: "https://keycloak.example.com"
-        grpc_service: "envoy.service.auth.v3.Authorization"
-        
-      policy_engine:
-        type: "authz"  
-        endpoint: "http://authorino.auth-system.svc.cluster.local:50051"
-        grpc_service: "envoy.service.auth.v3.Authorization"
-        
-      rate_limiter:
-        type: "ratelimit"
-        endpoint: "http://limitador.limitador-system.svc.cluster.local:8081" 
-        grpc_service: "ratelimit.RateLimitService"
-        
-    # Decision flow
-    workflow:
-      - step: "authentication" 
-        service: "oidc_provider"
-        required: true
-        on_failure: "deny_401"
-        
-      - step: "authorization"
-        service: "policy_engine" 
-        required: true
-        on_failure: "deny_403"
-        
-      - step: "rate_limiting"
-        service: "rate_limiter"
-        required: false
-        on_failure: "deny_429"
-        
-    # CEL expressions for dynamic routing
-    rules:
-      - condition: 'request.url_path.startsWith("/public")'
-        skip_auth: true
-        
-      - condition: 'request.headers["user-type"] == "premium"'
-        rate_limit_override:
-          requests_per_minute: 1000
-          
-      - condition: 'has(request.headers.authorization)'
-        auth_mode: "bearer_token"
-      - condition: 'has(request.headers.cookie)'  
-        auth_mode: "session_cookie"
-```
-
-## Integration with Your Gateway API Setup
-
-**Connect the WasmPlugin to your Gateway**:
-
-```yaml
-# Your existing Gateway
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: api-gateway
-  namespace: gateway-system
-spec:
-  gatewayClassName: istio
-  listeners:
-  - name: https
-    port: 443
-    protocol: HTTPS
-    hostname: api.example.com
-    tls:
-      mode: Terminate
-      certificateRefs:
-      - name: api-tls-cert
-        
----
-# HTTPRoute with auth requirements
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute  
-metadata:
-  name: api-routes
-  namespace: gateway-system
-spec:
-  parentRefs:
-  - name: api-gateway
-    
-  hostnames:
-  - api.example.com
-  
-  rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: "/api/"
-    backendRefs:
-    - name: api-backend
-      port: 8080
-      
-  # The WasmPlugin automatically applies because of label selectors
-```
-
-## Key Integration Points
-
-**1. Label Selection Strategy**:
-```yaml
-# Option A: Apply to specific gateways
-selector:
-  matchLabels:
-    gateway: "api-gateway"
-    
-# Option B: Apply to all Istio gateways  
-selector:
-  matchLabels:
-    istio: gateway
-    
-# Option C: Apply to specific workloads
-selector:
-  matchLabels:
-    app: backend-service
-```
-
-**2. Phase and Priority Coordination**:
-```yaml
-# Multiple auth plugins working together
-phase: AUTHN
-priority: 1000  # JWT validation (first)
-
-phase: AUTHN  
-priority: 900   # OIDC flow (second)
-
-phase: AUTHZ
-priority: 800   # Policy evaluation (third)
-```
-
-**3. Configuration Injection**:
-```yaml
-# External config via ConfigMap
-pluginConfig: 
-  config_source: 
-    inline_string: |
-      include "/etc/auth-config/auth-rules.yaml"
-      
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: auth-config
-data:
-  auth-rules.yaml: |
-    rules:
-      - path: /api/v1/*
-        auth: required
-        scopes: [read, write]
-```
-
-## Deployment Strategy
-
-**Complete deployment flow**:
-
-```bash
-# 1. Deploy your Gateway API resources
-kubectl apply -f gateway.yaml
-kubectl apply -f httproute.yaml
-
-# 2. Deploy the WasmPlugin (auth proxy)
-kubectl apply -f auth-wasmplugin.yaml
-
-# 3. Verify integration
-kubectl get wasmplugin -A
-kubectl logs -n istio-system deployment/istio-proxy
-```
-
-**Key Benefits of this approach**:
-
-- ✅ **Kubernetes-native**: Standard `kubectl apply` workflow
-- ✅ **Gateway API compatible**: Works with any Istio Gateway
-- ✅ **Sophisticated filtering**: AUTHN/AUTHZ phases + priority system
-- ✅ **External service integration**: gRPC calls to auth providers
-- ✅ **Production ready**: Used in Istio production deployments
-
-This gives you **enterprise-grade auth proxy capabilities** while leveraging **Gateway API standardization** and **Istio's production-ready WASM infrastructure**.
-
----
-
-# 🔒 **Critical Security Considerations: ext_authz Implementation**
-
-## ⚠️ **Route Cache Clearing Vulnerability**
-
-**From Official Envoy Documentation**: When using per-route `ExtAuthZ` configuration, there's a **critical security risk** where subsequent filters may clear the route cache, potentially leading to **privilege escalation vulnerabilities**.
-
-### **The Attack Vector**
-```yaml
-# VULNERABLE CONFIGURATION EXAMPLE
-http_filters:
-- name: envoy.filters.http.ext_authz
-  typed_config:
-    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
-    # ... ext_authz config runs first ...
-    
-- name: envoy.filters.http.lua  # DANGEROUS: Runs after ext_authz
-  typed_config:
-    "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
-    inline_code: |
-      function envoy_on_request(request_handle)
-        -- This clears route cache AFTER ext_authz has run
-        request_handle:clearRouteCache()
-        -- Request may now match a different route with different auth requirements
-      end
-```
-
-**What Happens**:
-1. **Request arrives** → matches Route A (requires auth)
-2. **ext_authz runs** → authenticates user for Route A
-3. **Lua filter runs** → clears route cache 
-4. **Route re-evaluation** → matches Route B (different auth policy)
-5. **Authorization bypassed** → request processed with wrong auth context
-
-### **Mitigation Strategies**
-
-**1. Filter Chain Ordering**:
-```yaml
-# SAFE: Put route-modifying filters BEFORE ext_authz
-http_filters:
-- name: envoy.filters.http.lua        # Route modifications first
-- name: envoy.filters.http.ext_authz  # Auth decisions last
-- name: envoy.filters.http.router    # Terminal filter
-```
-
-**2. WASM Plugin Approach** (inherently safer):
-```yaml
-# Using WasmPlugin instead of raw EnvoyFilter
-apiVersion: extensions.istio.io/v1alpha1
-kind: WasmPlugin
-metadata:
-  name: integrated-auth
-spec:
-  phase: AUTHN  # Istio manages filter ordering
-  priority: 1000
-  # WASM module handles both routing logic AND auth in single filter
-  url: oci://your-registry.com/auth-wasm:v1.0.0
-```
-
-**3. Gateway API Policy Attachment** (recommended):
-```yaml
-# Use Gateway API policies instead of low-level filters
-apiVersion: kuadrant.io/v1
-kind: AuthPolicy
-metadata:
-  name: api-auth
-spec:
-  targetRef:
-    group: gateway.networking.k8s.io
-    kind: HTTPRoute
-    name: protected-api
-  # Policy attachment is route-aware by design
-```
-
-## 🎯 **Why This Matters for WASM Auth Proxies**
-
-**Traditional ext_authz Risk**:
-- Multiple separate filters can interfere with each other
-- Route cache clearing happens between filters
-- Security decisions made in wrong context
-
-**WASM Auth Proxy Advantage**:
-- **Single filter execution**: All auth logic in one WASM module
-- **No intermediate cache clearing**: Route context preserved throughout
-- **Atomic decisions**: Authentication and routing handled together
-
-**Best Practice for Auth Proxy Implementation**:
-```rust
-// Inside WASM auth proxy
-impl Context for AuthProxy {
-    fn on_http_request_headers(&mut self) -> Action {
-        // 1. Extract route information ONCE
-        let route_info = self.get_route_context();
-        
-        // 2. Make auth decision based on route
-        let auth_result = self.authenticate_for_route(route_info);
-        
-        // 3. No opportunity for cache clearing between steps
-        match auth_result {
-            AuthResult::Allow => Action::Continue,
-            AuthResult::Deny => Action::Pause, // Return 401/403
-        }
-    }
-}
-```
-
-This vulnerability analysis emphasizes why **WASM-based auth proxies** and **Gateway API policy attachment** are **more secure** than traditional multi-filter approaches.
-
----
-
-# 📦 **WASM Image Building and Distribution**
-
-## Building WASM OCI Images for Gateway API
-
-**From Official Envoy Gateway Documentation**: There are **two supported image formats** for packaging WASM extensions - both work with any OCI registry.
-
-### Method 1: Docker Format
-
-**Simple Dockerfile approach**:
-```dockerfile
-# Dockerfile
-FROM scratch
-COPY plugin.wasm ./
-```
-
-**Build and push**:
-```bash
-# Build the WASM binary first (language-specific)
-cargo build --target wasm32-unknown-unknown --release  # Rust example
-cp target/wasm32-unknown-unknown/release/plugin.wasm .
-
-# Build Docker image
-docker build . -t my-registry/auth-proxy-wasm:v1.0.0
-docker push my-registry/auth-proxy-wasm:v1.0.0
-```
-
-### Method 2: OCI Spec Compliant Format (buildah)
-
-**Using buildah for pure OCI images**:
-```bash
-# Create working container from scratch
-buildah --name auth-wasm from scratch
-
-# Copy WASM binary to create layer
-buildah copy auth-wasm plugin.wasm ./
-
-# Commit and push to registry
-buildah commit auth-wasm docker://my-registry/auth-proxy-wasm:v1.0.0
-```
-
-## Using WASM Images in Gateway API
-
-### Envoy Gateway EnvoyExtensionPolicy
-
-```yaml
-apiVersion: gateway.envoyproxy.io/v1alpha1
-kind: EnvoyExtensionPolicy
-metadata:
-  name: auth-proxy-wasm
+  name: auth-extension
 spec:
   targetRefs:
   - group: gateway.networking.k8s.io
     kind: HTTPRoute
     name: protected-api
-    
   wasm:
   - name: auth-filter
     rootID: auth_proxy_root
     code:
-      type: Image  # Use OCI image
+      type: Image
       image:
-        url: my-registry/auth-proxy-wasm:v1.0.0
-        # Optional: specify pull policy, secrets, etc.
+        url: my-registry/auth-wasm:v1.0.0
     config:
-      auth_endpoints:
-        - url: "https://auth.example.com"
-          type: "oidc"
+      auth_endpoint: "https://auth.example.com"
 ```
 
-**Alternative: HTTP URL approach**:
+### Istio Gateway API
+- **Status**: ✅ **Production Ready**
+- **WASM Support**: `WasmPlugin` API (replaces `EnvoyFilter`)
+- **Sophisticated Orchestration**:
+  - **4 Plugin Phases**: `AUTHN` → `AUTHZ` → `STATS` → `UNSPECIFIED`
+  - **Priority System**: Fine-grained ordering within phases
+  - **Multi-Plugin Coordination**: Works with Istio's internal filters
+- **Loading Methods**: `file://`, `oci://`, `https://` URLs
+- **Target Flexibility**: Gateway, workload, or namespace scoping
+
+**Quick Example**:
 ```yaml
-wasm:
-- name: auth-filter
-  rootID: auth_proxy_root
-  code:
-    type: HTTP  # Direct HTTP URL
-    http:
-      url: "https://github.com/user/repo/releases/download/v1.0.0/auth-proxy.wasm"
-      sha256: "79c9f85128bb0177b6511afa85d587224efded376ac0ef76df56595f1e6315c0"
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: auth-plugin
+spec:
+  selector:
+    matchLabels:
+      istio: gateway
+  phase: AUTHN    # Run during authentication phase
+  priority: 1000  # High priority = early execution
+  url: oci://registry.com/auth-wasm:v1.0.0
+  pluginConfig:
+    auth_endpoint: "https://auth.example.com"
 ```
 
-## Distribution Strategies
+### Kuadrant (Policy-Driven WASM)
+- **Status**: ✅ **Production Ready** (Red Hat Service Mesh)
+- **Architecture**: Gateway API policies → Operator translation → WASM execution
+- **WASM Shim**: 598-line Rust module implementing policy orchestration
+- **External Services**: Coordinates with Authorino (auth) and Limitador (rate limiting)
+- **CEL Integration**: Common Expression Language for dynamic policy evaluation
 
-### **Strategy 1: Public Registry (Development)**
-```bash
-# Use public registries for open-source plugins
-docker push ghcr.io/yourorg/auth-proxy-wasm:v1.0.0
-```
+**Key Innovation**: Uses WASM as **policy implementation layer**, bridging high-level Gateway API policies with low-level Envoy filters.
 
-### **Strategy 2: Private Registry (Production)**
-```bash
-# Enterprise registries with RBAC
-docker push registry.company.com/security/auth-proxy-wasm:v1.0.0
-```
+---
 
-### **Strategy 3: CI/CD Integration**
+## Critical Security Considerations
+
+### ⚠️ Route Cache Clearing Vulnerability (ext_authz)
+
+**From Official Envoy Documentation**: A critical security flaw exists when using per-route `ExtAuthZ` configuration where subsequent filters may clear the route cache, leading to **privilege escalation vulnerabilities**.
+
+**The Attack Vector**:
 ```yaml
-# GitHub Actions example
+# VULNERABLE CONFIGURATION
+http_filters:
+- name: envoy.filters.http.ext_authz
+  # ... auth decision made for Route A ...
+  
+- name: envoy.filters.http.lua  # DANGEROUS: Runs after auth
+  typed_config:
+    inline_code: |
+      function envoy_on_request(request_handle)
+        -- This clears route cache AFTER auth decision
+        request_handle:clearRouteCache()
+        -- Request may now match Route B with different auth policy
+      end
+```
+
+**Attack Flow**:
+1. Request arrives → matches Route A (requires auth)
+2. ext_authz runs → authenticates user for Route A  
+3. Lua filter clears route cache
+4. Route re-evaluation → matches Route B (different policy)
+5. **Authorization bypassed** → wrong auth context
+
+### Mitigation Strategies
+
+**1. Filter Chain Ordering** (Traditional):
+```yaml
+# SAFE: Route modifications before auth decisions
+http_filters:
+- name: envoy.filters.http.lua        # Route changes first
+- name: envoy.filters.http.ext_authz  # Auth decisions last
+- name: envoy.filters.http.router    # Terminal filter
+```
+
+**2. WASM Plugin Approach** (Recommended):
+```yaml
+# SECURE: Single filter handles both routing and auth
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: integrated-auth
+spec:
+  phase: AUTHN
+  url: oci://registry.com/secure-auth-wasm:v1.0.0
+  # WASM module atomically handles route context + auth decision
+```
+
+**3. Gateway API Policy Attachment** (Best Practice):
+```yaml
+# SAFEST: Policy attachment is route-aware by design
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: api-auth
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: protected-api
+  # Operator ensures proper route/auth coordination
+```
+
+### Why WASM Auth Proxies Are More Secure
+
+**Traditional Multi-Filter Risk**:
+- Multiple filters can interfere with each other
+- Route cache clearing between auth and routing decisions
+- Security decisions made in wrong context
+
+**WASM Auth Proxy Advantage**:
+- **Atomic execution**: All logic in single filter
+- **Route context preservation**: No intermediate cache clearing
+- **Integrated decisions**: Authentication and routing handled together
+
+**Secure WASM Implementation Pattern**:
+```rust
+impl Context for SecureAuthProxy {
+    fn on_http_request_headers(&mut self) -> Action {
+        // 1. Capture route context atomically
+        let route_info = self.get_route_context();
+        
+        // 2. Make auth decision for THIS route
+        let auth_result = self.authenticate_for_route(route_info);
+        
+        // 3. No opportunity for context corruption
+        match auth_result {
+            AuthResult::Allow => Action::Continue,
+            AuthResult::Deny => Action::Pause,
+        }
+    }
+}
+```
+
+---
+
+## Building WASM Extensions
+
+### WASM Binary Creation
+
+#### Language Options for WASM Plugins
+
+**WASM plugins can be written in multiple languages**:
+
+| Language | Maturity | Pros | Cons | Build Command |
+|----------|----------|------|------|---------------|
+| **Rust** | ✅ Mature | Best proxy-wasm support, memory safe, fast | Learning curve | `cargo build --target wasm32-unknown-unknown --release` |
+| **Go (TinyGo)** | ⚠️ Growing | Familiar language, good tooling | Larger binary size, GC overhead | `tinygo build -o plugin.wasm -target=wasi main.go` |
+| **C++** | ✅ Mature | Full Envoy integration, maximum performance | Memory management, complexity | `emcc -O3 -s WASM=1 plugin.cpp -o plugin.wasm` |
+| **AssemblyScript** | ⚠️ Experimental | TypeScript-like syntax | Less mature ecosystem | `asc plugin.ts --target wasm --optimize` |
+
+**Recommendation**: 
+- **Start with Rust** if you want the most mature proxy-wasm ecosystem
+- **Use Go** if your team is more comfortable with Go syntax
+- **Use C++** only if you need maximum performance
+
+#### Example Rust Build Process
+```bash
+# Install WASM target
+rustup target add wasm32-unknown-unknown
+
+# Build WASM binary
+cargo build --target wasm32-unknown-unknown --release
+
+# Output: target/wasm32-unknown-unknown/release/plugin.wasm
+```
+
+### OCI Image Packaging
+
+**Two Supported Formats** (both work with any OCI registry):
+
+**Method 1: Docker Format**
+```dockerfile
+# Simple Dockerfile
+FROM scratch
+COPY plugin.wasm ./
+```
+
+```bash
+# Build and push
+docker build . -t my-registry/auth-proxy-wasm:v1.0.0
+docker push my-registry/auth-proxy-wasm:v1.0.0
+```
+
+**Method 2: OCI Spec Compliant (buildah)**
+```bash
+# Pure OCI image creation
+buildah --name auth-wasm from scratch
+buildah copy auth-wasm plugin.wasm ./
+buildah commit auth-wasm docker://my-registry/auth-proxy-wasm:v1.0.0
+```
+
+### CI/CD Integration
+
+**GitHub Actions Example**:
+```yaml
 name: Build and Push WASM
 on:
   push:
     tags: ['v*']
-    
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -1903,13 +462,1210 @@ jobs:
         docker push ghcr.io/${{ github.repository }}/auth-proxy:${{ github.ref_name }}
 ```
 
-## Key Benefits of OCI Image Distribution
+**Key Benefits of OCI Distribution**:
+- ✅ **Versioning**: Semantic versioning with image tags
+- ✅ **Security**: Image signing and vulnerability scanning  
+- ✅ **Caching**: Registry layer caching for faster pulls
+- ✅ **Toolchain**: Existing container infrastructure
+- ✅ **RBAC**: Registry access controls
 
-✅ **Versioning**: Semantic versioning with image tags  
-✅ **Security**: Image signing and vulnerability scanning  
-✅ **Caching**: Registry layer caching for faster pulls  
-✅ **Toolchain**: Existing container tooling works  
-✅ **RBAC**: Registry access controls  
-✅ **Multi-arch**: Platform-specific builds if needed  
+---
 
-This approach makes **WASM plugin distribution** as mature as **container image distribution**, leveraging the entire OCI ecosystem for Gateway API extensibility.
+## Deployment Methods
+
+### Understanding the Configuration Problem
+
+**Critical Distinction**: Raw WASM filter configuration is **Envoy's native format** and can only be used when you **control the Envoy process directly**. If you're using **any controller** (Istio, Envoy Gateway, Kong, etc.), you need controller-specific deployment methods.
+
+### Method 1: Direct Envoy Configuration
+
+**⚠️ IMPORTANT**: Only works when YOU control Envoy directly.
+
+**Use Cases**:
+- Running `envoy -c config.yaml` directly
+- Docker deployments where you control the entrypoint  
+- VM deployments with manual Envoy management
+
+**Configuration Pattern**:
+```yaml
+# envoy.yaml - Complete Envoy configuration
+static_resources:
+  listeners:
+  - name: main
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          http_filters:
+          - name: envoy.filters.http.wasm
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.wasm.v3.Wasm
+              config:
+                name: auth_filter
+                vm_config:
+                  runtime: envoy.wasm.runtime.v8
+                  code:
+                    local:
+                      filename: /opt/wasm/plugin.wasm
+                configuration: |
+                  {"auth_endpoint": "https://auth.example.com"}
+          - name: envoy.filters.http.router
+
+# Deploy: envoy -c envoy.yaml
+```
+
+### Method 2: Kubernetes ConfigMap + Deployment
+
+**For manual Kubernetes Envoy deployment**:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-wasm-config
+data:
+  envoy.yaml: |
+    # Full Envoy config with WASM filter
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy-wasm
+spec:
+  template:
+    spec:
+      containers:
+      - name: envoy
+        image: envoyproxy/envoy:v1.31-latest
+        command: ["envoy", "-c", "/etc/envoy/envoy.yaml"]
+        volumeMounts:
+        - name: envoy-config
+          mountPath: /etc/envoy
+        - name: wasm-binary
+          mountPath: /opt/wasm
+      volumes:
+      - name: envoy-config
+        configMap:
+          name: envoy-wasm-config
+      - name: wasm-binary
+        hostPath:  # or initContainer, or OCI image
+          path: /path/to/plugin.wasm
+```
+
+### Method 3: Istio WasmPlugin (Recommended)
+
+**Modern Istio approach**:
+
+```yaml
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: auth-plugin
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: gateway
+  phase: AUTHN
+  priority: 1000
+  url: oci://ghcr.io/myorg/auth-wasm:v1.0.0
+  pluginConfig:
+    auth_endpoint: "https://auth.example.com"
+    failure_mode: "deny"
+```
+
+### Method 4: Envoy Gateway EnvoyExtensionPolicy
+
+**For Envoy Gateway users**:
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyExtensionPolicy
+metadata:
+  name: auth-extension
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: protected-api
+  wasm:
+  - name: auth-filter
+    rootID: auth_root
+    code:
+      type: Image
+      image:
+        url: my-registry/auth-wasm:v1.0.0
+    config:
+      auth_endpoint: "https://auth.example.com"
+```
+
+### Method 5: Gateway API + Policy Attachment
+
+**Using Kuadrant or similar policy operators**:
+
+```yaml
+# Standard Gateway API resources
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: api-gateway
+spec:
+  gatewayClassName: istio
+  listeners:
+  - name: https
+    port: 443
+    protocol: HTTPS
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: protected-api
+spec:
+  parentRefs:
+  - name: api-gateway
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: "/api/"
+    backendRefs:
+    - name: backend-service
+      port: 8080
+
+---
+# Policy attachment (operator translates to WASM)
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: api-auth
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: protected-api
+  rules:
+    authentication:
+      "jwt-auth":
+        jwt:
+          issuerUrl: "https://auth.example.com"
+```
+
+### Deployment Method Comparison
+
+| Method | kubectl apply? | Environment | Complexity | Best For |
+|--------|----------------|-------------|------------|----------|
+| **Direct Envoy** | ❌ | Standalone | Low | Development/Testing |
+| **ConfigMap + Deployment** | ✅ | Kubernetes | Medium | Manual K8s |
+| **EnvoyFilter** | ✅ | Istio | High | Advanced control |
+| **WasmPlugin** | ✅ | Istio | Medium | Modern Istio |
+| **EnvoyExtensionPolicy** | ✅ | Envoy Gateway | Medium | Envoy Gateway |
+| **Policy Attachment** | ✅ | Gateway API | Low | Production |
+
+---
+
+## Practical Implementation Examples
+
+### Example 1: JWT Authentication with WasmPlugin
+
+**Custom WASM Auth Module**:
+
+```yaml
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: jwt-auth
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: gateway
+  phase: AUTHN
+  priority: 1000
+  url: oci://my-registry/jwt-auth-wasm:v1.0.0
+  
+  pluginConfig:
+    # JWT validation settings
+    jwt:
+      issuer: "https://auth.example.com"
+      jwks_uri: "https://auth.example.com/.well-known/jwks.json"
+      audiences: ["my-api", "my-app"]
+      
+    # Route-specific rules
+    rules:
+      - paths: ["/api/public/*"]
+        auth_required: false
+      - paths: ["/api/private/*"] 
+        auth_required: true
+        required_claims:
+          scope: ["read", "write"]
+      - paths: ["/admin/*"]
+        auth_required: true
+        required_claims:
+          role: ["admin"]
+          
+    # Error responses
+    responses:
+      unauthorized:
+        status: 401
+        headers:
+          "WWW-Authenticate": "Bearer realm=\"API\""
+        body: '{"error": "authentication_required"}'
+      forbidden:
+        status: 403
+        body: '{"error": "insufficient_permissions"}'
+```
+
+### Example 2: Multi-Service Auth Coordination
+
+**Kuadrant-style orchestration**:
+
+```yaml
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: multi-auth-coordinator
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: gateway
+  phase: AUTHN
+  priority: 1000
+  url: oci://my-registry/auth-coordinator:v1.0.0
+  
+  pluginConfig:
+    # External services
+    services:
+      oidc_provider:
+        type: "oidc"
+        endpoint: "https://keycloak.example.com"
+        grpc_service: "envoy.service.auth.v3.Authorization"
+        timeout: "5s"
+        
+      policy_engine:
+        type: "authz"
+        endpoint: "http://authorino.auth-system.svc.cluster.local:50051"
+        grpc_service: "envoy.service.auth.v3.Authorization"
+        timeout: "2s"
+        
+      rate_limiter:
+        type: "ratelimit"  
+        endpoint: "http://limitador.limitador-system.svc.cluster.local:8081"
+        grpc_service: "ratelimit.RateLimitService"
+        timeout: "1s"
+        
+    # Decision workflow
+    workflow:
+      - step: "authentication"
+        service: "oidc_provider"
+        required: true
+        on_failure: "deny_401"
+        
+      - step: "authorization"
+        service: "policy_engine" 
+        required: true
+        on_failure: "deny_403"
+        
+      - step: "rate_limiting"
+        service: "rate_limiter"
+        required: false  # Optional step
+        on_failure: "deny_429"
+        
+    # CEL expressions for dynamic behavior
+    rules:
+      - condition: 'request.url_path.startsWith("/public")'
+        skip_auth: true
+        
+      - condition: 'request.headers["user-type"] == "premium"'
+        rate_limit_override:
+          requests_per_minute: 1000
+          
+      - condition: 'has(request.headers.authorization)'
+        auth_mode: "bearer_token"
+      - condition: 'has(request.headers.cookie)'
+        auth_mode: "session_cookie"
+```
+
+### Example 3: Complete Gateway API Integration
+
+**Full stack with Gateway API + WASM**:
+
+```yaml
+# 1. Gateway API Infrastructure
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: secure-api-gateway
+spec:
+  gatewayClassName: istio
+  listeners:
+  - name: https
+    port: 443
+    protocol: HTTPS
+    hostname: "*.example.com"
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: api-tls-cert
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-routes
+spec:
+  parentRefs:
+  - name: secure-api-gateway
+  
+  hostnames:
+  - "api.example.com"
+  
+  rules:
+  # Public endpoints (no auth required)
+  - matches:
+    - path:
+        type: PathPrefix
+        value: "/public/"
+    backendRefs:
+    - name: public-api-service
+      port: 8080
+      
+  # Protected API endpoints
+  - matches:
+    - path:
+        type: PathPrefix  
+        value: "/api/v1/"
+    backendRefs:
+    - name: private-api-service
+      port: 8080
+      
+  # Admin endpoints (special handling)
+  - matches:
+    - path:
+        type: PathPrefix
+        value: "/admin/"
+    backendRefs:
+    - name: admin-api-service
+      port: 8080
+
+---
+# 2. WASM Plugin (applies to Gateway via label selector)
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: api-gateway-auth
+  namespace: istio-system
+spec:
+  # Target the Istio gateway workload
+  selector:
+    matchLabels:
+      istio: ingressgateway  # Matches Istio ingress gateway
+      
+  phase: AUTHN
+  priority: 1000
+  url: oci://my-registry/gateway-auth-wasm:v1.0.0
+  
+  pluginConfig:
+    # Route-aware authentication rules
+    routes:
+      "/public/*":
+        auth_required: false
+        
+      "/api/v1/*":
+        auth_required: true
+        auth_methods: ["jwt", "api_key"]
+        required_scopes: ["api:read", "api:write"]
+        
+      "/admin/*":
+        auth_required: true  
+        auth_methods: ["jwt"]
+        required_roles: ["admin"]
+        additional_validation: true
+        
+    # JWT configuration
+    jwt:
+      issuer: "https://auth.example.com"
+      jwks_uri: "https://auth.example.com/.well-known/jwks.json"
+      audiences: ["api-gateway"]
+      
+    # API key validation
+    api_key:
+      header_name: "X-API-Key"
+      validation_endpoint: "https://keys.example.com/validate"
+      
+    # Error handling
+    error_responses:
+      401: '{"error": "authentication_required", "auth_methods": ["jwt", "api_key"]}'
+      403: '{"error": "access_denied", "required_permissions": "admin"}'
+```
+
+**Key Integration Benefits**:
+- ✅ **Gateway API Compatibility**: Works with any Gateway API implementation
+- ✅ **Route-Aware Security**: Authentication rules tied to specific routes  
+- ✅ **Kubernetes-Native**: Standard `kubectl apply` workflow
+- ✅ **Production Ready**: Used in real-world deployments
+
+---
+
+## Advanced Topics: Kuadrant Architecture Deep Dive
+
+### The Kuadrant Pattern: Policy-Driven WASM
+
+**From [Source Code Analysis](https://github.com/Kuadrant/wasm-shim)**: The Kuadrant WASM shim represents the **most sophisticated** implementation of policy-driven WASM extensions available today.
+
+**Architecture Components**:
+- **598 Lines of Rust**: Lean, efficient implementation using `proxy-wasm-rust-sdk`
+- **CEL Expression Engine**: Dynamic policy evaluation with custom functions
+- **Radix Trie Matching**: O(log n) hostname lookup performance
+- **gRPC Service Coordination**: Async calls to external services
+- **Phase-Based Processing**: Separate logic for headers vs body handling
+
+### How Kuadrant Bridges Gateway API → WASM
+
+**Translation Flow**:
+```
+Gateway API Policies → Kuadrant Operator → Action Sets → WASM Configuration → External Services
+
+AuthPolicy              Policy Analysis        CEL Rules       gRPC Calls        Authorino
+RateLimitPolicy    →    Conflict Detection  →  WASM Filter  →  Async Responses → Limitador
+TargetRef Resolution    Configuration Gen      Runtime Exec    Failure Handling  Custom Services
+```
+
+**Generated WASM Configuration Example**:
+```json
+{
+  "services": {
+    "authorino": {
+      "type": "auth",
+      "endpoint": "authorino.authorino-operator.svc.cluster.local:50051",
+      "failureMode": "deny",
+      "timeout": "5s"
+    },
+    "limitador": {
+      "type": "ratelimit", 
+      "endpoint": "limitador.limitador-system.svc.cluster.local:8081",
+      "failureMode": "deny",
+      "timeout": "2s"
+    }
+  },
+  "actionSets": [
+    {
+      "name": "kuadrant-system/api-auth",
+      "routeRuleConditions": {
+        "hostnames": ["api.example.com"],
+        "predicates": [
+          "request.url_path.startsWith('/api/')",
+          "request.method in ['POST', 'PUT', 'DELETE']"
+        ]
+      },
+      "actions": [
+        {
+          "service": "authorino",
+          "scope": "kuadrant-system/api-auth"
+        },
+        {
+          "service": "limitador", 
+          "scope": "kuadrant-system/api-limits",
+          "conditionalData": [
+            {
+              "predicates": ["auth.identity.username != ''"],
+              "data": [
+                {"expression": {"key": "user_id", "value": "auth.identity.username"}},
+                {"expression": {"key": "api_version", "value": "'v1'"}}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Runtime Request Processing Flow
+
+**Detailed Execution Path**:
+```
+1. HTTP Request → Envoy Gateway/Istio Gateway
+   ↓
+2. WASM Filter Activation (kuadrant_wasm root_id)
+   │
+   ├── Hostname Matching
+   │   └── Radix trie lookup: "api.example.com" → actionSet found
+   │
+   ├── Predicate Evaluation (CEL engine)  
+   │   ├── request.url_path.startsWith('/api/') → true
+   │   └── request.method in ['POST', 'PUT', 'DELETE'] → true
+   │
+   └── Action Execution (sequential processing)
+       │
+       ├── Auth Action (Step 1)
+       │   ├── gRPC call → Authorino (port 50051) 
+       │   ├── JWT validation & claims extraction
+       │   ├── Policy evaluation (OPA/CEL)
+       │   └── Response: auth.identity.* populated
+       │
+       └── Rate Limit Action (Step 2)
+           ├── CEL evaluation: auth.identity.username != "" → true
+           ├── Data extraction: user_id = "alice", api_version = "v1"
+           ├── gRPC call → Limitador (port 8081)
+           ├── Rate limit check for user "alice" on API "v1"
+           └── Response: allow/deny decision
+
+3. Final Decision → Continue to upstream OR return error response
+```
+
+### CEL Expression System
+
+**Available Context Variables**:
+```yaml
+# Standard Envoy attributes  
+request.url_path          # "/api/v1/users"
+request.method           # "POST" 
+request.headers          # {"authorization": "Bearer xxx"}
+source.remote_address    # "10.0.0.1" (trusted IP, no port)
+
+# Authentication service responses
+auth.identity.username   # "alice"
+auth.identity.role      # "admin"  
+auth.identity.user_id   # "12345"
+auth.*                  # All auth service response data
+
+# Custom WASM functions
+requestBodyJSON('/user/id')     # Extract from JSON body
+responseBodyJSON('/status')     # Extract from response JSON
+```
+
+**Advanced CEL Examples**:
+```yaml  
+predicates:
+  # Complex path matching
+  - "request.url_path.matches('^/api/v[0-9]+/users/[0-9]+$')"
+  
+  # User tier-based routing
+  - "auth.identity.tier in ['premium', 'enterprise']"
+  
+  # Time-based policies  
+  - "timestamp(request.time).getHours() >= 9 && timestamp(request.time).getHours() <= 17"
+  
+  # JSON body content validation
+  - "has(requestBodyJSON('/metadata')) && requestBodyJSON('/metadata/version') == '2.0'"
+  
+  # IP range checks
+  - "source.remote_address.startsWith('10.0.') || source.remote_address.startsWith('192.168.')"
+```
+
+### Production Performance Characteristics
+
+**From Real-World Deployments** (Red Hat Service Mesh):
+
+- ✅ **Lightweight Footprint**: 598 lines → ~2MB WASM binary
+- ✅ **Efficient Matching**: O(log n) hostname lookup via radix trie
+- ✅ **CEL Optimization**: Expression results cached per request
+- ✅ **Async gRPC**: Non-blocking external service calls  
+- ✅ **Resource Isolation**: WASM sandboxing prevents proxy crashes
+- ✅ **Failure Handling**: Per-service failure modes (allow/deny)
+
+**Key Architectural Benefits**:
+1. **Single Control Plane**: Gateway API policies manage everything
+2. **Multi-Service Coordination**: One WASM module orchestrates multiple services
+3. **Failure Isolation**: Service failures don't bring down the gateway
+4. **Policy Portability**: Works across Istio, Envoy Gateway, etc.
+
+---
+
+## Research Sources & Standardization Status
+
+### Research Sources Analyzed
+
+**1. Gateway API 101 with Linkerd**  
+**Source**: [YouTube - Service Mesh Academy](https://www.youtube.com/watch?v=SxE9Jl2bB28)  
+**Finding**: ❌ No discussion of WASM plugins, EnvoyFilter, or ext_authz  
+**Focus**: Gateway API fundamentals, policy attachment, avoiding "annotation hell"
+
+**2. Official Istio WasmPlugin Documentation**  
+**Source**: [Istio Documentation](https://istio.io/latest/docs/reference/config/proxy_extensions/wasm-plugin/)  
+**Finding**: ✅ Complete phase/priority system documentation  
+**Key Insights**: AUTHN→AUTHZ→STATS phases, multi-plugin orchestration
+
+**3. Envoy Gateway WASM Extensions**  
+**Source**: [Envoy Gateway Documentation](https://gateway.envoyproxy.io/docs/tasks/extensibility/wasm/)  
+**Finding**: ✅ HTTP and Image extension types, OCI build toolchain  
+**Key Insights**: SHA256 validation, buildah support, targetRefs integration
+
+**4. Envoy ext_authz Documentation**  
+**Source**: [Envoy Proxy Documentation](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/ext_authz_filter)  
+**Finding**: ✅ Route cache clearing vulnerability details  
+**Critical Security**: Privilege escalation risks in multi-filter chains
+
+**5. Gateway API Plugins Standardization Discussion**  
+**Source**: [GitHub Discussion #2275](https://github.com/kubernetes-sigs/gateway-api/discussions/2275)  
+**Finding**: ✅ Active standardization debate  
+**Key Points**: "Plugins" vs "Custom Filters", three plugin categories identified
+
+**6. Kuadrant WASM Shim Source Code**  
+**Source**: [GitHub - Kuadrant/wasm-shim](https://github.com/Kuadrant/wasm-shim)  
+**Finding**: ✅ Complete implementation details  
+**Architecture**: 598 lines Rust, CEL integration, radix trie, gRPC coordination
+
+### Current Standardization Status
+
+**Gateway API Plugin Standardization** (as of 2025):
+
+**Status**: ✅ **Active Development** - No single standard yet, but clear patterns emerging
+
+**Key Debates**:
+1. **"Plugins" vs "Custom Filters"**: Should user-provided code be called "plugins" or use existing `ExtensionRef` mechanisms in HTTPRoute?
+
+2. **Three Plugin Categories** Identified:
+   - **In-dataplane functions**: Built into proxy (like Envoy C++ plugins)
+   - **RPC sidecar services**: External processes called via gRPC/HTTP  
+   - **Loaded scripts/binaries**: Runtime-loaded code (WASM, Lua, etc.)
+
+3. **Standardization Challenges**:
+   - **Portability vs Capability**: Balancing cross-implementation compatibility with advanced features
+   - **Security Models**: Different sandboxing and isolation approaches
+   - **Distribution Mechanisms**: OCI images vs other artifact types
+
+**Current Implementation Reality**:
+- **Each implementation has its own CRDs**: `WasmPlugin`, `EnvoyExtensionPolicy`, etc.
+- **Policy attachment is preferred**: Gateway API emphasizes high-level policies over low-level plugins  
+- **OCI images are emerging standard**: For WASM distribution across implementations
+- **Hybrid approaches work best**: Policy attachment with WASM implementation (like Kuadrant)
+
+### Key Research Questions: Final Status
+
+**1. Standardization**: ✅ **Active standardization efforts** in Gateway API community
+- Current State: Official discussion ongoing, patterns emerging
+- Challenge: Balancing portability with implementation-specific capabilities
+
+**2. Implementation Variance**: ✅ **Significant but manageable variance**
+- Envoy Gateway: `EnvoyExtensionPolicy` CRD  
+- Istio: `WasmPlugin` API with phase/priority system
+- Kuadrant: Policy-driven WASM shim approach
+
+**3. Policy vs Plugins**: ✅ **Complementary, not competing approaches**
+- Policy Attachment: Gateway API standard, high-level, portable
+- WASM Plugins: Implementation-specific, low-level, powerful
+- Best Practice: Use policies where possible, WASM for custom logic
+
+**4. Migration Patterns**: ✅ **Clear paths established**
+- EnvoyFilter → WasmPlugin (Istio's recommendation)
+- Direct Envoy config → Gateway API policies (preferred)
+- Custom code → WASM extensions (for portability and security)
+
+**5. Performance**: ✅ **Production-proven**
+- WASM adds sandboxing overhead but provides isolation
+- Real-world deployments show acceptable performance (Kuadrant/Red Hat)
+- Optimization techniques: CEL caching, efficient data structures, async gRPC
+
+### Summary: The Current State
+
+**WASM + Gateway API is ready for production use** with these patterns:
+
+**🎯 Recommended Approach**:
+1. **Start with Gateway API policies** where available (portable, standardized)
+2. **Use WASM plugins for custom logic** that policies can't express
+3. **Leverage OCI images** for WASM distribution and versioning
+4. **Follow security best practices** to avoid route cache clearing vulnerabilities
+5. **Consider hybrid approaches** like Kuadrant's policy-driven WASM pattern
+
+**🚀 Production-Ready Implementations**:
+- **Envoy Gateway**: `EnvoyExtensionPolicy` with HTTP/Image WASM extensions
+- **Istio**: `WasmPlugin` API with sophisticated phase/priority orchestration
+- **Kuadrant**: Complete policy-to-WASM translation with external service coordination
+
+The ecosystem has matured from experimental to **enterprise-ready**, with clear patterns, security considerations, and production deployments across major service mesh and gateway implementations.
+
+---
+
+## Appendix: Integrating Existing Auth Proxy with Istio WASM Plugins
+
+### Problem Statement
+
+**Scenario**: You have an existing `kube-auth-proxy` that:
+- Handles OpenShift OAuth and OIDC authentication
+- Returns `302` (redirect) or `200 OK` based on header inspection
+- Is a working HTTP service you want to integrate
+- **Constraints**: Can't use EnvoyFilters or ext_authz, must use WASM plugins
+- **Requirement**: Work with Istio's capabilities and Gateway API
+
+### Solution Architecture
+
+Since you can't use ext_authz (the standard way to integrate HTTP auth services), you need a **WASM plugin that acts as an HTTP client** to call your kube-auth-proxy.
+
+**Architecture Flow**:
+```
+Gateway API Request → Istio Gateway → WASM Plugin → HTTP call to kube-auth-proxy
+                                          ↓
+                    Client ← 302/200 ← WASM Plugin ← 302/200 response
+```
+
+### Implementation Approaches
+
+#### Approach 1: Custom WASM Plugin (Recommended)
+
+**Build a simple WASM plugin that calls your existing service**.
+
+**✅ Note**: This approach works perfectly with the complete integration example below - you just need to make sure your custom WASM plugin can parse the `pluginConfig` format shown in the integration example.
+
+### Custom WASM Plugin Example (Rust)
+
+```rust
+// Custom WASM plugin (Rust example)
+use proxy_wasm::traits::*;
+use proxy_wasm::types::*;
+
+impl HttpContext for AuthProxy {
+    fn on_http_request_headers(&mut self) -> Action {
+        // Extract headers needed for auth decision
+        let auth_headers = vec![
+            ("authorization", self.get_header("authorization")),
+            ("cookie", self.get_header("cookie")),
+            ("x-forwarded-user", self.get_header("x-forwarded-user")),
+        ];
+        
+        // Make HTTP call to your kube-auth-proxy
+        match self.dispatch_http_call(
+            "kube-auth-proxy",  // Cluster name
+            vec![
+                (":method", "GET"),
+                (":path", "/auth/verify"),
+                (":authority", "kube-auth-proxy.auth-system.svc.cluster.local"),
+            ],
+            None,  // No body
+            vec![],  // Headers from original request
+            Duration::from_secs(5),
+        ) {
+            Ok(_) => Action::Pause,  // Wait for response
+            Err(_) => {
+                // Fallback: deny on service error
+                self.send_http_response(503, vec![], Some("Auth service unavailable"));
+                Action::Pause
+            }
+        }
+    }
+    
+    fn on_http_call_response(&mut self, _token_id: u32, _num_headers: usize, _body_size: usize, _num_trailers: usize) {
+        // Handle response from kube-auth-proxy
+        if let Some(status) = self.get_http_call_response_header(":status") {
+            match status.as_str() {
+                "200" => {
+                    // Auth success - continue to upstream
+                    // Extract any user info headers from auth response
+                    if let Some(user) = self.get_http_call_response_header("x-auth-user") {
+                        self.set_header("x-forwarded-user", &user);
+                    }
+                    self.resume_http_request();
+                }
+                "302" => {
+                    // Auth redirect - return to client
+                    if let Some(location) = self.get_http_call_response_header("location") {
+                        self.send_http_response(
+                            302, 
+                            vec![("location", &location)], 
+                            Some("Redirecting to auth")
+                        );
+                    } else {
+                        self.send_http_response(302, vec![], Some("Redirect required"));
+                    }
+                }
+                _ => {
+                    // Any other response = deny
+                    self.send_http_response(403, vec![], Some("Access denied"));
+                }
+            }
+        }
+    }
+}
+```
+
+**Configuration Parsing** (to work with the complete integration example):
+
+```rust
+// Add configuration parsing to your WASM plugin
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize)]
+struct PluginConfig {
+    auth_service: AuthServiceConfig,
+    routes: Vec<RouteConfig>,
+    oauth_config: Option<OauthConfig>,
+    error_responses: Option<ErrorResponses>,
+}
+
+#[derive(Deserialize)]
+struct AuthServiceConfig {
+    endpoint: String,
+    verify_path: String,
+    timeout: u64,
+}
+
+#[derive(Deserialize)]
+struct RouteConfig {
+    path_prefix: String,
+    auth_required: bool,
+    required_headers: Option<Vec<String>>,
+}
+
+impl RootContext for AuthProxyRoot {
+    fn on_configure(&mut self, _plugin_configuration_size: usize) -> bool {
+        // Parse the pluginConfig from the WasmPlugin resource
+        if let Some(config_bytes) = self.get_plugin_configuration() {
+            match serde_json::from_slice::<PluginConfig>(&config_bytes) {
+                Ok(config) => {
+                    self.config = Some(config);
+                    true
+                }
+                Err(e) => {
+                    log::warn!("Failed to parse plugin configuration: {}", e);
+                    false
+                }
+            }
+        } else {
+            log::warn!("No plugin configuration provided");
+            false
+        }
+    }
+}
+
+impl HttpContext for AuthProxy {
+    fn on_http_request_headers(&mut self) -> Action {
+        // Get the configuration passed from the WasmPlugin
+        let config = self.get_root_context().config.as_ref().unwrap();
+        
+        // Check if auth is required for this path
+        let path = self.get_header(":path").unwrap_or_default();
+        let auth_required = config.routes.iter()
+            .find(|route| path.starts_with(&route.path_prefix))
+            .map(|route| route.auth_required)
+            .unwrap_or(true); // Default to requiring auth
+            
+        if !auth_required {
+            return Action::Continue; // Skip auth for public paths
+        }
+        
+        // Make HTTP call using configured endpoint
+        let auth_url = format!("{}{}", 
+            config.auth_service.endpoint,
+            config.auth_service.verify_path
+        );
+        
+        // Extract headers and make the call (same as before)...
+        // Rest of the implementation stays the same
+    }
+}
+```
+
+**Build and Deploy**:
+```bash
+# Build WASM
+cargo build --target wasm32-unknown-unknown --release
+
+# Package as OCI image
+docker build . -t my-registry/kube-auth-wasm:v1.0.0
+docker push my-registry/kube-auth-wasm:v1.0.0
+```
+
+**The key point**: Your custom WASM plugin (Approach 1) reads the exact same `pluginConfig` that's shown in the complete integration example. This means:
+
+✅ **Same WasmPlugin YAML** - no changes needed  
+✅ **Same Gateway API resources** - no changes needed  
+✅ **Custom logic** - but driven by the standard configuration format  
+✅ **Full control** - you can add any custom behavior while still using the standard config
+
+**Build and Deploy**:
+```bash
+# Build WASM
+cargo build --target wasm32-unknown-unknown --release
+
+# Package as OCI image
+docker build . -t my-registry/kube-auth-wasm:v1.0.0
+docker push my-registry/kube-auth-wasm:v1.0.0
+```
+
+**Note**: This example uses Rust, but you can use any language that compiles to WASM (see [Building WASM Extensions](#building-wasm-extensions) for language options and build commands).
+
+#### Approach 2: Using Existing HTTP-Capable WASM Plugin
+
+**If there's an existing WASM plugin that can make HTTP calls** (like a generic HTTP auth plugin), configure it for your service:
+
+```yaml
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: kube-auth-integration
+  namespace: istio-system
+spec:
+  selector:
+    matchLabels:
+      istio: gateway
+  phase: AUTHN
+  priority: 1000
+  # Use existing HTTP auth WASM plugin
+  url: oci://ghcr.io/http-auth-wasm/plugin:v1.0.0
+  
+  pluginConfig:
+    # Configure for your kube-auth-proxy
+    auth_service:
+      url: "http://kube-auth-proxy.auth-system.svc.cluster.local:8080/auth/verify"
+      method: "GET"
+      timeout: "5s"
+      
+    # Forward original headers to auth service
+    forward_headers:
+      - "authorization"
+      - "cookie" 
+      - "x-forwarded-user"
+      - "x-forwarded-for"
+      
+    # Handle different response codes
+    response_handling:
+      "200":
+        action: "allow"
+        extract_headers:
+          - "x-auth-user"    # Extract user info from auth response
+          - "x-auth-groups"  # Extract group info
+      "302": 
+        action: "redirect"
+        forward_headers:
+          - "location"       # Forward redirect location
+      "default":
+        action: "deny"
+        status_code: 403
+```
+
+### Complete Gateway API Integration
+
+**Full setup with Gateway API resources**:
+
+```yaml
+# 1. Your existing kube-auth-proxy service
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-auth-proxy
+  namespace: auth-system
+spec:
+  selector:
+    app: kube-auth-proxy
+  ports:
+  - port: 8080
+    targetPort: 8080
+
+---
+# 2. Gateway API resources
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: secure-gateway
+  namespace: gateway-system
+spec:
+  gatewayClassName: istio
+  listeners:
+  - name: https
+    port: 443
+    protocol: HTTPS
+    hostname: "*.mycompany.com"
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: tls-cert
+
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: protected-apps
+  namespace: gateway-system
+spec:
+  parentRefs:
+  - name: secure-gateway
+  
+  hostnames:
+  - "app.mycompany.com"
+  
+  rules:
+  # Public endpoints (no auth)
+  - matches:
+    - path:
+        type: PathPrefix
+        value: "/public/"
+    backendRefs:
+    - name: public-service
+      port: 8080
+      
+  # Protected endpoints (require auth)
+  - matches:
+    - path:
+        type: PathPrefix
+        value: "/app/"
+    backendRefs:
+    - name: protected-app
+      port: 8080
+
+---
+# 3. WASM Plugin (calls your kube-auth-proxy)
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: kube-auth-integration
+  namespace: istio-system
+spec:
+  # Apply to Istio gateways
+  selector:
+    matchLabels:
+      istio: ingressgateway
+      
+  phase: AUTHN
+  priority: 1000
+  url: oci://my-registry/kube-auth-wasm:v1.0.0
+  
+  pluginConfig:
+    # Your kube-auth-proxy configuration
+    auth_service:
+      cluster_name: "outbound|8080||kube-auth-proxy.auth-system.svc.cluster.local"
+      endpoint: "http://kube-auth-proxy.auth-system.svc.cluster.local:8080"
+      verify_path: "/auth/verify"
+      timeout: 5000  # 5 seconds
+      
+    # Route-specific rules
+    routes:
+      # Skip auth for public paths
+      - path_prefix: "/public/"
+        auth_required: false
+        
+      # Require auth for app paths  
+      - path_prefix: "/app/"
+        auth_required: true
+        
+      # Admin paths need special handling
+      - path_prefix: "/admin/"
+        auth_required: true
+        required_headers:
+          - "x-admin-token"
+          
+    # OpenShift OAuth / OIDC specific settings
+    oauth_config:
+      # Pass through OAuth headers
+      forward_oauth_headers: true
+      oauth_header_prefix: "x-forwarded-"
+      
+      # Handle OAuth redirects
+      oauth_redirect_base: "https://oauth-openshift.apps.cluster.local"
+      
+      # OIDC settings
+      oidc_issuer: "https://keycloak.mycompany.com/auth/realms/myrealm"
+      
+    # Error responses
+    error_responses:
+      auth_service_error:
+        status: 503
+        body: '{"error": "authentication_service_unavailable"}'
+      access_denied:
+        status: 403  
+        body: '{"error": "access_denied"}'
+
+---
+# 4. Service entry for auth service (if needed)
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: kube-auth-proxy
+  namespace: istio-system
+spec:
+  hosts:
+  - kube-auth-proxy.auth-system.svc.cluster.local
+  ports:
+  - number: 8080
+    name: http
+    protocol: HTTP
+  resolution: DNS
+  location: MESH_INTERNAL
+```
+
+### Request Flow Example
+
+**Successful Authentication**:
+```
+1. Request: GET https://app.mycompany.com/app/dashboard
+   Headers: Cookie: session=abc123
+
+2. Istio Gateway → WASM Plugin
+   Plugin checks: path "/app/" requires auth
+
+3. WASM Plugin → HTTP call to kube-auth-proxy:
+   GET http://kube-auth-proxy.auth-system.svc.cluster.local:8080/auth/verify
+   Headers: Cookie: session=abc123
+
+4. kube-auth-proxy → Response: 200 OK
+   Headers: x-auth-user: alice, x-auth-groups: admin,dev
+
+5. WASM Plugin → Adds headers to request:
+   x-forwarded-user: alice
+   x-forwarded-groups: admin,dev
+
+6. Request continues to protected-app service
+```
+
+**Authentication Required (Redirect)**:
+```
+1. Request: GET https://app.mycompany.com/app/dashboard
+   Headers: (no auth headers)
+
+2. WASM Plugin → HTTP call to kube-auth-proxy:
+   GET http://kube-auth-proxy.auth-system.svc.cluster.local:8080/auth/verify
+   (no auth headers)
+
+3. kube-auth-proxy → Response: 302 Found  
+   Headers: Location: https://oauth-openshift.apps.cluster.local/oauth/authorize?...
+
+4. WASM Plugin → Returns to client:
+   302 Found
+   Location: https://oauth-openshift.apps.cluster.local/oauth/authorize?...
+
+5. Client follows redirect to OAuth provider
+```
+
+### Key Benefits of This Approach
+
+✅ **Reuse Existing Service**: No need to rewrite your kube-auth-proxy  
+✅ **Gateway API Compatible**: Works with standard Gateway/HTTPRoute resources  
+✅ **Istio Native**: Uses WasmPlugin CRD (no EnvoyFilter needed)  
+✅ **Flexible**: Handle both 302 redirects and 200 OK responses  
+✅ **OpenShift Integration**: Preserves OAuth and OIDC flows  
+✅ **Header Forwarding**: Pass through user/group information  
+
+### Development Tips
+
+1. **Test with curl first**:
+   ```bash
+   # Test your kube-auth-proxy directly
+   curl -v -H "Cookie: session=abc123" \
+        http://kube-auth-proxy.auth-system.svc.cluster.local:8080/auth/verify
+   ```
+
+2. **Use WASM development tools**:
+   ```bash
+   # Build with debug logging
+   cargo build --target wasm32-unknown-unknown --features=debug
+   ```
+
+3. **Monitor with Istio telemetry**:
+   ```bash
+   # Check WASM plugin logs
+   kubectl logs -n istio-system deployment/istiod
+   
+   # Check gateway logs  
+   kubectl logs -n istio-system deployment/istio-ingressgateway
+   ```
+
+This approach gives you the flexibility of WASM plugins while leveraging your existing, proven authentication service.
+
+---
+
+*Last Updated*: January 2025  
+*Status*: ✅ **Complete Implementation Guide**  
+*Next Steps*: Implementation-specific customization based on your chosen Gateway API provider
