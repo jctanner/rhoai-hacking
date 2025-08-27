@@ -76,6 +76,8 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 - **Type**: FIPS-compliant authentication proxy for ODH/RHOAI environments
 - **Providers**: OIDC and OpenShift OAuth support
 - **Interface**: Compatible with Envoy ext_authz framework
+- **Security**: **TLS-encrypted communication required** (HTTPS only)
+- **Certificate Handling**: Support for self-signed certificates (common in Kubernetes environments)
 - **Response Patterns**: 
   - `200 OK` with user headers → Allow request
   - `302 Found` with Location header → Redirect to auth
@@ -166,9 +168,18 @@ struct PluginConfig {
 
 #[derive(Deserialize)]
 struct AuthServiceConfig {
-    endpoint: String,           // "http://kube-auth-proxy.auth-system.svc.cluster.local:8080"
-    verify_path: String,        // "/auth/verify"  
+    endpoint: String,           // "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"
+    verify_path: String,        // "/oauth/verify"  
     timeout: u64,               // 5000 (milliseconds)
+    tls: TlsConfig,             // TLS configuration for secure communication
+}
+
+#[derive(Deserialize)]
+struct TlsConfig {
+    verify_cert: bool,          // false for self-signed certificates
+    ca_cert_path: Option<String>, // "/etc/ssl/certs/ca-bundle.crt"
+    client_cert_path: Option<String>, // Optional mutual TLS
+    client_key_path: Option<String>,  // Optional mutual TLS
 }
 
 #[derive(Deserialize)]
@@ -211,12 +222,17 @@ spec:
   url: oci://my-registry/byoidc-wasm-plugin:v1.0.0
   
   pluginConfig:
-    # Auth service configuration (kube-auth-proxy)
+    # Auth service configuration (kube-auth-proxy with TLS)
     auth_service:
       cluster_name: "outbound|4180||kube-auth-proxy.auth-system.svc.cluster.local"
-      endpoint: "http://kube-auth-proxy.auth-system.svc.cluster.local:4180"
+      endpoint: "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"
       verify_path: "/oauth/verify"  # kube-auth-proxy standard endpoint
       timeout: 5000
+      tls:
+        verify_cert: false  # Allow self-signed certificates
+        ca_cert_path: "/etc/ssl/certs/kube-auth-proxy-ca.crt"  # Optional: custom CA
+        # client_cert_path: "/etc/ssl/certs/client.crt"  # Optional: mutual TLS
+        # client_key_path: "/etc/ssl/private/client.key"
       
     # Route-based auth rules
     routes:
@@ -264,7 +280,8 @@ spec:
   ports:
   - port: 4180
     targetPort: 4180
-    name: http
+    name: https
+    protocol: TCP
 
 ---
 # 2. Gateway API Entry Point
@@ -332,8 +349,8 @@ spec:
   - kube-auth-proxy.auth-system.svc.cluster.local
   ports:
   - number: 4180
-    name: http
-    protocol: HTTP
+    name: https
+    protocol: HTTPS
   resolution: DNS
   location: MESH_INTERNAL
 ```
@@ -352,8 +369,9 @@ spec:
    - Extracts Cookie header
 
 3. WASM Plugin → kube-auth-proxy:
-   GET http://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
+   GET https://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
    Cookie: session=abc123
+   (TLS connection with self-signed certificate acceptance)
 
 4. Auth Service Response:
    200 OK
@@ -376,8 +394,8 @@ spec:
    (no auth headers)
 
 2. WASM Plugin → kube-auth-proxy:
-   GET http://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
-   (no auth headers)
+   GET https://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
+   (no auth headers, TLS connection established)
 
 3. Auth Service Response:
    302 Found
@@ -448,9 +466,14 @@ cargo test --features test
 # Test against real kube-auth-proxy service
 ./examples/test-requests.sh
 
-# Test kube-auth-proxy directly
-curl -v -H "Cookie: session=abc123" \
-     http://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
+# Test kube-auth-proxy directly (with TLS)
+curl -v -k -H "Cookie: session=abc123" \
+     https://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
+
+# Test with custom CA certificate
+curl -v --cacert /etc/ssl/certs/kube-auth-proxy-ca.crt \
+     -H "Cookie: session=abc123" \
+     https://kube-auth-proxy.auth-system.svc.cluster.local:4180/oauth/verify
 
 # Verify different response codes via Gateway
 curl -v -H "Cookie: invalid" https://app.company.com/app/dashboard  # Expect 302
@@ -463,6 +486,72 @@ curl -v -H "Cookie: valid_session" https://app.company.com/app/dashboard  # Expe
 - **Throughput**: Requests per second with auth enabled
 - **Memory Usage**: WASM plugin memory consumption
 - **Error Handling**: Behavior under auth service outages
+
+## Security and TLS Requirements
+
+### TLS Communication (Critical)
+
+**All communication between WASM plugin and kube-auth-proxy MUST be encrypted:**
+
+✅ **HTTPS Only**: No unencrypted HTTP traffic allowed  
+✅ **Self-Signed Certificate Support**: Handle common Kubernetes self-signed certificates  
+✅ **Custom CA Support**: Allow custom Certificate Authority configuration  
+✅ **Mutual TLS Option**: Support client certificate authentication when required  
+✅ **FIPS Compliance**: Maintain FIPS-compliant TLS cipher suites and protocols  
+
+### Certificate Management Strategies
+
+#### 1. Self-Signed Certificate Acceptance (Common)
+```rust
+// WASM plugin TLS configuration for self-signed certificates
+TlsConfig {
+    verify_cert: false,  // Accept self-signed certificates
+    ca_cert_path: None,  // No custom CA needed
+    client_cert_path: None,
+    client_key_path: None,
+}
+```
+
+#### 2. Custom CA Certificate (Recommended)
+```yaml
+# Mount custom CA certificate into WASM plugin container
+volumes:
+- name: kube-auth-ca
+  configMap:
+    name: kube-auth-proxy-ca-cert
+volumeMounts:
+- name: kube-auth-ca
+  mountPath: /etc/ssl/certs/kube-auth-proxy-ca.crt
+  subPath: ca.crt
+  readOnly: true
+```
+
+#### 3. Service Mesh mTLS (Advanced)
+```yaml
+# Istio ServiceEntry with TLS settings
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: kube-auth-proxy-entry
+spec:
+  hosts:
+  - kube-auth-proxy.auth-system.svc.cluster.local
+  ports:
+  - number: 4180
+    name: https
+    protocol: HTTPS
+  resolution: DNS
+  location: MESH_INTERNAL
+```
+
+### Security Validation Checklist
+
+- [ ] **TLS Version**: Minimum TLS 1.2, prefer TLS 1.3
+- [ ] **Cipher Suites**: FIPS-approved cipher suites only
+- [ ] **Certificate Validation**: Proper hostname verification
+- [ ] **Credential Protection**: No credentials in logs or error messages
+- [ ] **Timeout Protection**: Reasonable timeouts to prevent hanging connections
+- [ ] **Error Handling**: Secure error responses without information leakage
 
 ## Success Criteria
 
@@ -496,9 +585,11 @@ curl -v -H "Cookie: valid_session" https://app.company.com/app/dashboard  # Expe
 
 - **Rust Best Practices**: Follow Rust API guidelines
 - **Error Handling**: Use Result<> types, no unwrap() in production code
-- **Logging**: Structured logging with appropriate levels
+- **Logging**: Structured logging with appropriate levels (no credential leakage)
 - **Configuration Validation**: Fail fast on invalid config
 - **Testing**: Unit tests for all core functions
+- **TLS Security**: All HTTP client code must use HTTPS with proper certificate handling
+- **FIPS Compliance**: Use only FIPS-approved cryptographic libraries
 
 ### Monitoring and Observability
 
