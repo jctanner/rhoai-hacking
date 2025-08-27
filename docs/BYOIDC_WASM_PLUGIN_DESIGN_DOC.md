@@ -584,18 +584,123 @@ kubectl apply -f wasmplugin.yaml
 
 ```
 byoidc-wasm-plugin/
-├── Cargo.toml                 # Rust dependencies
-├── src/
-│   ├── lib.rs                # Main plugin entry point
-│   ├── config.rs             # Configuration parsing
-│   ├── auth.rs               # Authentication logic  
-│   └── http_client.rs        # dispatch_http_call wrapper
-├── Dockerfile                # OCI image build
-├── wasmplugin.yaml          # Kubernetes deployment
-├── examples/
-│   ├── complete-stack.yaml   # Full Gateway API example
-│   └── test-requests.sh      # Testing scripts
-└── README.md                # Getting started guide
+├── Cargo.toml                     # Rust dependencies and metadata
+├── Cargo.lock                     # Dependency lockfile (committed)
+├── Makefile                       # Build automation and common tasks
+├── Dockerfile                     # Multi-stage OCI image build
+├── .dockerignore                  # Docker build context exclusions  
+├── .gitignore                     # Git exclusions
+├── LICENSE                        # Project license (Apache 2.0)
+├── README.md                      # Getting started and usage guide
+├── CHANGELOG.md                   # Version history and release notes
+├── SECURITY.md                    # Security policy and reporting
+│
+├── src/                           # Rust source code
+│   ├── lib.rs                     # WASM plugin entry point and exports
+│   ├── config.rs                  # WasmPlugin configuration parsing
+│   ├── http_client.rs             # dispatch_http_call wrapper utilities
+│   ├── headers.rs                 # Header processing and forwarding
+│   ├── responses.rs               # Response handling and error mapping
+│   └── metrics.rs                 # Observability and performance metrics
+│
+├── deploy/                        # Kubernetes deployment manifests
+│   ├── wasmplugin.yaml           # Istio WasmPlugin CRD
+│   ├── gateway.yaml              # Gateway API Gateway resource
+│   ├── httproute.yaml            # Example HTTPRoute for testing
+│   ├── rbac.yaml                 # ServiceAccount and RBAC (if needed)
+│   └── kustomization.yaml        # Kustomize overlay configuration
+│
+├── examples/                      # Complete deployment examples
+│   ├── production/
+│   │   ├── complete-stack.yaml   # Full production example
+│   │   ├── kube-auth-proxy.yaml  # Auth service deployment
+│   │   └── certificates.yaml     # TLS certificate configuration
+│   ├── development/
+│   │   ├── dev-stack.yaml        # Development environment example
+│   │   └── local-testing.yaml    # Local testing configuration
+│   └── README.md                 # Example usage instructions
+│
+├── scripts/                       # Build and development automation
+│   ├── build.sh                  # Build WASM binary and OCI image
+│   ├── test.sh                   # Run all tests and validation
+│   ├── deploy.sh                 # Deploy to Kubernetes cluster
+│   ├── benchmark.sh              # Performance testing
+│   └── release.sh                # Release automation
+│
+├── tests/                         # Integration and end-to-end tests
+│   ├── integration/
+│   │   ├── test-auth-flow.sh     # Auth flow integration test
+│   │   └── test-error-cases.sh   # Error handling integration test
+│   ├── e2e/
+│   │   ├── kind-cluster.yaml     # Kind cluster for E2E testing
+│   │   └── test-complete-flow.sh # Full end-to-end test
+│   └── fixtures/
+│       ├── test-requests.yaml    # HTTP test request definitions
+│       └── expected-responses.yaml # Expected response patterns
+│
+├── docs/                          # Project documentation
+│   ├── ARCHITECTURE.md           # Architecture overview
+│   ├── CONFIGURATION.md          # Configuration reference
+│   ├── DEPLOYMENT.md             # Deployment guide
+│   ├── TROUBLESHOOTING.md        # Common issues and solutions
+│   └── DEVELOPMENT.md            # Development and contribution guide
+│
+├── .github/                       # GitHub Actions and templates
+│   ├── workflows/
+│   │   ├── ci.yml                # Continuous integration
+│   │   ├── release.yml           # Release automation
+│   │   └── security-scan.yml     # Security vulnerability scanning
+│   ├── ISSUE_TEMPLATE/           # Issue templates
+│   └── PULL_REQUEST_TEMPLATE.md  # PR template
+│
+└── hack/                          # Development utilities
+    ├── verify-build.sh           # Verify clean build
+    ├── update-deps.sh            # Update Rust dependencies  
+    ├── lint.sh                   # Code linting and formatting
+    └── local-registry.sh        # Local OCI registry for testing
+```
+
+### Key Components Explained
+
+#### Core Source Files
+- **`lib.rs`**: WASM plugin entry point with `_start()` function and proxy-wasm trait implementations
+- **`config.rs`**: Deserializes WasmPlugin `pluginConfig` YAML into Rust structs  
+- **`http_client.rs`**: Wraps `dispatch_http_call()` with error handling and retry logic
+- **`headers.rs`**: Header forwarding utilities and response header processing
+- **`responses.rs`**: Maps kube-auth-proxy responses (202/401/403) to appropriate actions
+
+#### Build and Deployment
+- **`Makefile`**: Automates `cargo build --target wasm32-unknown-unknown`, OCI image builds
+- **`Dockerfile`**: Multi-stage build (Rust compilation → distroless final image)
+- **`scripts/build.sh`**: Cross-platform build script with WASM optimization
+- **`deploy/`**: Production-ready Kubernetes manifests with proper resource limits
+
+#### Testing Infrastructure  
+- **`tests/integration/`**: Test auth flows with real kube-auth-proxy instances
+- **`tests/e2e/`**: Full Gateway API + WASM plugin + auth service testing
+- **`scripts/benchmark.sh`**: Performance testing to ensure < 10ms latency overhead
+
+#### Documentation Strategy
+- **`docs/CONFIGURATION.md`**: Complete WasmPlugin configuration reference
+- **`docs/TROUBLESHOOTING.md`**: Common auth failures, TLS issues, debugging guides
+- **`examples/production/`**: Real-world deployment examples with security best practices
+
+#### Development Workflow
+```bash
+# 1. Build and test locally
+make build test
+
+# 2. Run integration tests
+./scripts/test.sh
+
+# 3. Deploy to development cluster  
+./scripts/deploy.sh development
+
+# 4. Run end-to-end tests
+./tests/e2e/test-complete-flow.sh
+
+# 5. Build and push release image
+make release VERSION=v1.0.0
 ```
 
 ## Testing Strategy
