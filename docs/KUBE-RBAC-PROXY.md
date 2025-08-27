@@ -303,6 +303,10 @@ kube-rbac-proxy --config-file=rbac-config.json ...
 
 With this configuration, `kube-rbac-proxy` will now perform the *exact same RBAC check* as `oauth-proxy` did, but it will do so for **every single request**, providing continuous, real-time authorization.
 
+> **Note on a Potential `kube-rbac-proxy` Enhancement**
+>
+> The requirement to use a configuration file is a key difference from `oauth-proxy`. For a detailed analysis of the feasibility and implications of adding a new `--resource-attributes-json` flag to `kube-rbac-proxy` that would directly accept a JSON string, please see the appendix: [The Case for a --resource-attributes-json Flag](#appendix-the-case-for-a---resource-attributes-json-flag).
+
 ## Appendix: RBAC Configuration Comparison
 
 While both proxies can interact with the Kubernetes RBAC system, they are configured in fundamentally different ways, reflecting their core design philosophies.
@@ -455,3 +459,36 @@ For `oauth-proxy`, RBAC is an optional, secondary feature performed *after* auth
 -validate-url string            Access token validation endpoint
 -version                        print version string
 ```
+
+## Appendix: The Case for a `--resource-attributes-json` Flag
+
+A notable difference in the operational experience between `oauth-proxy` and `kube-rbac-proxy` is how RBAC rules are provided. `oauth-proxy` allows for a self-contained deployment by defining the `SubjectAccessReview` check directly in a command-line argument (`--openshift-sar`). In contrast, `kube-rbac-proxy`'s reliance on `--config-file` pushes users to create and manage a separate ConfigMap for this configuration.
+
+This raises a natural question: how feasible would it be to add an `--openshift-sar`-style flag to `kube-rbac-proxy`?
+
+**Conclusion:** It is highly realistic and technically straightforward. The effort required would be low for a developer familiar with the codebase.
+
+### Proposed Implementation
+
+A patch to add this functionality would involve three small changes:
+
+1.  **Add a New Flag:** In `cmd/kube-rbac-proxy/app/options/options.go`, a new `--resource-attributes-json` flag would be added to accept a raw JSON string.
+2.  **Add Validation:** Logic would be added to ensure that `--config-file` and the new `--resource-attributes-json` flag are mutually exclusive to prevent ambiguity.
+3.  **Process the Flag:** In `cmd/kube-rbac-proxy/app/kube-rbac-proxy.go`, the application's startup logic would be modified to parse the JSON string from this new flag if it is provided, populating the same internal configuration struct that is currently populated by parsing the config file.
+
+No other changes to the core authentication or authorization logic would be needed.
+
+### Pros and Cons of This Approach
+
+#### Pros
+
+-   **Convenience:** For simple use cases, it would eliminate the need to create, manage, and mount a separate ConfigMap, reducing deployment complexity.
+-   **Easier Migration:** It would make the migration path from `oauth-proxy` even more direct, allowing users to reuse the value of `--openshift-sar` with minimal changes.
+-   **Improved Ad-Hoc Usage:** It would make it much easier to run `kube-rbac-proxy` for local testing or debugging without needing to create a config file.
+
+#### Cons
+
+-   **Command-Line Complexity:** Embedding JSON strings into shell commands or Deployment manifests can be cumbersome and error-prone due to the need for careful quoting and escaping.
+-   **Readability:** A reference to a well-named ConfigMap is often much cleaner and more readable in a Kubernetes manifest than a long, embedded JSON string.
+-   **GitOps Alignment:** A file-based approach aligns better with GitOps principles, where all configuration is declarative and version-controlled. Inline command-line flags are less transparent from this perspective.
+-   **Extensibility:** The file-based approach is more extensible. The configuration schema can evolve over time to include new options without bloating the number of command-line flags.
