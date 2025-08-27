@@ -1197,7 +1197,22 @@ Gateway API Request → Istio Gateway → WASM Plugin → HTTP call to kube-auth
 
 #### Approach 1: Custom WASM Plugin (Recommended)
 
-**Build a simple WASM plugin that calls your existing service**:
+**Build a simple WASM plugin that calls your existing service**.
+
+**✅ Note**: This approach works perfectly with the complete integration example below - you just need to make sure your custom WASM plugin can parse the `pluginConfig` format shown in the integration example.
+
+### Language Options for WASM Plugins
+
+**WASM plugins can be written in multiple languages**:
+
+| Language | Maturity | Pros | Cons |
+|----------|----------|------|------|
+| **Rust** | ✅ Mature | Best proxy-wasm support, memory safe, fast | Learning curve |
+| **C++** | ✅ Mature | Full Envoy integration, performance | Memory management, complexity |
+| **Go (TinyGo)** | ⚠️ Growing | Familiar language, good tooling | Larger binary size, GC overhead |
+| **AssemblyScript** | ⚠️ Experimental | TypeScript-like syntax | Less mature ecosystem |
+
+### Rust Example (Most Common)
 
 ```rust
 // Custom WASM plugin (Rust example)
@@ -1268,6 +1283,83 @@ impl HttpContext for AuthProxy {
 }
 ```
 
+**Configuration Parsing** (to work with the complete integration example):
+
+```rust
+// Add configuration parsing to your WASM plugin
+use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize)]
+struct PluginConfig {
+    auth_service: AuthServiceConfig,
+    routes: Vec<RouteConfig>,
+    oauth_config: Option<OauthConfig>,
+    error_responses: Option<ErrorResponses>,
+}
+
+#[derive(Deserialize)]
+struct AuthServiceConfig {
+    endpoint: String,
+    verify_path: String,
+    timeout: u64,
+}
+
+#[derive(Deserialize)]
+struct RouteConfig {
+    path_prefix: String,
+    auth_required: bool,
+    required_headers: Option<Vec<String>>,
+}
+
+impl RootContext for AuthProxyRoot {
+    fn on_configure(&mut self, _plugin_configuration_size: usize) -> bool {
+        // Parse the pluginConfig from the WasmPlugin resource
+        if let Some(config_bytes) = self.get_plugin_configuration() {
+            match serde_json::from_slice::<PluginConfig>(&config_bytes) {
+                Ok(config) => {
+                    self.config = Some(config);
+                    true
+                }
+                Err(e) => {
+                    log::warn!("Failed to parse plugin configuration: {}", e);
+                    false
+                }
+            }
+        } else {
+            log::warn!("No plugin configuration provided");
+            false
+        }
+    }
+}
+
+impl HttpContext for AuthProxy {
+    fn on_http_request_headers(&mut self) -> Action {
+        // Get the configuration passed from the WasmPlugin
+        let config = self.get_root_context().config.as_ref().unwrap();
+        
+        // Check if auth is required for this path
+        let path = self.get_header(":path").unwrap_or_default();
+        let auth_required = config.routes.iter()
+            .find(|route| path.starts_with(&route.path_prefix))
+            .map(|route| route.auth_required)
+            .unwrap_or(true); // Default to requiring auth
+            
+        if !auth_required {
+            return Action::Continue; // Skip auth for public paths
+        }
+        
+        // Make HTTP call using configured endpoint
+        let auth_url = format!("{}{}", 
+            config.auth_service.endpoint,
+            config.auth_service.verify_path
+        );
+        
+        // Extract headers and make the call (same as before)...
+        // Rest of the implementation stays the same
+    }
+}
+```
+
 **Build and Deploy**:
 ```bash
 # Build WASM
@@ -1277,6 +1369,303 @@ cargo build --target wasm32-unknown-unknown --release
 docker build . -t my-registry/kube-auth-wasm:v1.0.0
 docker push my-registry/kube-auth-wasm:v1.0.0
 ```
+
+**The key point**: Your custom WASM plugin (Approach 1) reads the exact same `pluginConfig` that's shown in the complete integration example. This means:
+
+✅ **Same WasmPlugin YAML** - no changes needed  
+✅ **Same Gateway API resources** - no changes needed  
+✅ **Custom logic** - but driven by the standard configuration format  
+✅ **Full control** - you can add any custom behavior while still using the standard config
+
+### Go (TinyGo) Example
+
+```go
+// Custom WASM plugin in Go using TinyGo
+package main
+
+import (
+    "context"
+    "encoding/json"
+    "fmt"
+    "net/http"
+    
+    "github.com/tetratelabs/proxy-wasm-go-sdk/proxywasm"
+    "github.com/tetratelabs/proxy-wasm-go-sdk/proxywasm/types"
+)
+
+type AuthConfig struct {
+    AuthService struct {
+        Endpoint   string `json:"endpoint"`
+        VerifyPath string `json:"verify_path"`
+        Timeout    int    `json:"timeout"`
+    } `json:"auth_service"`
+    Routes []struct {
+        PathPrefix   string `json:"path_prefix"`
+        AuthRequired bool   `json:"auth_required"`
+    } `json:"routes"`
+}
+
+type AuthPlugin struct {
+    types.DefaultPluginContext
+    config AuthConfig
+}
+
+func (p *AuthPlugin) OnPluginStart(pluginConfigurationSize int) types.OnPluginStartStatus {
+    configData, err := proxywasm.GetPluginConfiguration()
+    if err != nil {
+        proxywasm.LogErrorf("failed to get plugin configuration: %v", err)
+        return types.OnPluginStartStatusFailed
+    }
+    
+    if err := json.Unmarshal(configData, &p.config); err != nil {
+        proxywasm.LogErrorf("failed to parse plugin configuration: %v", err)
+        return types.OnPluginStartStatusFailed
+    }
+    
+    return types.OnPluginStartStatusOK
+}
+
+func (p *AuthPlugin) OnHttpRequestHeaders(numHeaders int, endOfStream bool) types.Action {
+    path, _ := proxywasm.GetHttpRequestHeader(":path")
+    
+    // Check if auth required for this path
+    authRequired := true
+    for _, route := range p.config.Routes {
+        if strings.HasPrefix(path, route.PathPrefix) {
+            authRequired = route.AuthRequired
+            break
+        }
+    }
+    
+    if !authRequired {
+        return types.ActionContinue
+    }
+    
+    // Get auth headers
+    cookie, _ := proxywasm.GetHttpRequestHeader("cookie")
+    auth, _ := proxywasm.GetHttpRequestHeader("authorization")
+    
+    // Make HTTP call to kube-auth-proxy
+    authURL := p.config.AuthService.Endpoint + p.config.AuthService.VerifyPath
+    
+    headers := map[string]string{
+        ":method":    "GET",
+        ":authority": "kube-auth-proxy.auth-system.svc.cluster.local",
+        ":path":      "/auth/verify",
+    }
+    
+    if cookie != "" {
+        headers["cookie"] = cookie
+    }
+    if auth != "" {
+        headers["authorization"] = auth
+    }
+    
+    if _, err := proxywasm.DispatchHttpCall(
+        "kube-auth-proxy",
+        headers,
+        nil,
+        nil,
+        uint32(p.config.AuthService.Timeout),
+        p.handleAuthResponse,
+    ); err != nil {
+        proxywasm.SendHttpResponse(503, nil, []byte("Auth service unavailable"), -1)
+        return types.ActionPause
+    }
+    
+    return types.ActionPause
+}
+
+func (p *AuthPlugin) handleAuthResponse(numHeaders, bodySize, numTrailers int) {
+    status, _ := proxywasm.GetHttpCallResponseHeader(":status")
+    
+    switch status {
+    case "200":
+        // Extract user info from auth response
+        if user, _ := proxywasm.GetHttpCallResponseHeader("x-auth-user"); user != "" {
+            proxywasm.ReplaceHttpRequestHeader("x-forwarded-user", user)
+        }
+        proxywasm.ResumeHttpRequest()
+        
+    case "302":
+        // Forward redirect to client
+        if location, _ := proxywasm.GetHttpCallResponseHeader("location"); location != "" {
+            proxywasm.SendHttpResponse(302, 
+                map[string]string{"location": location}, 
+                []byte("Redirecting to auth"), -1)
+        } else {
+            proxywasm.SendHttpResponse(302, nil, []byte("Redirect required"), -1)
+        }
+        
+    default:
+        proxywasm.SendHttpResponse(403, nil, []byte("Access denied"), -1)
+    }
+}
+
+func main() {
+    proxywasm.SetVMContext(&AuthPlugin{})
+}
+```
+
+**Build Go version**:
+```bash
+# Build with TinyGo
+tinygo build -o plugin.wasm -scheduler=none -target=wasi main.go
+
+# Package same way
+docker build . -t my-registry/kube-auth-wasm-go:v1.0.0
+```
+
+### C++ Example (Envoy Native)
+
+```cpp
+// Custom WASM plugin in C++ using Envoy's proxy-wasm
+#include "proxy_wasm_intrinsics.h"
+#include "nlohmann/json.hpp"
+
+using json = nlohmann::json;
+
+class AuthRootContext : public RootContext {
+private:
+    json config_;
+    
+public:
+    explicit AuthRootContext(uint32_t id) : RootContext(id) {}
+    
+    bool onConfigure(size_t configuration_size) override {
+        auto configuration_data = getBufferBytes(WasmBufferType::PluginConfiguration, 
+                                                0, configuration_size);
+        try {
+            config_ = json::parse(configuration_data->view());
+            return true;
+        } catch (const std::exception& e) {
+            LOG_WARN("Failed to parse configuration: " + std::string(e.what()));
+            return false;
+        }
+    }
+    
+    const json& getConfig() const { return config_; }
+};
+
+class AuthContext : public Context {
+private:
+    AuthRootContext* root_;
+    
+public:
+    explicit AuthContext(uint32_t id, RootContext* root) 
+        : Context(id, root), root_(static_cast<AuthRootContext*>(root)) {}
+    
+    FilterHeadersStatus onRequestHeaders(uint32_t headers) override {
+        auto path = getRequestHeader(":path");
+        if (!path) return FilterHeadersStatus::Continue;
+        
+        // Check if auth required
+        const auto& routes = root_->getConfig()["routes"];
+        bool authRequired = true;
+        
+        for (const auto& route : routes) {
+            std::string pathPrefix = route["path_prefix"];
+            if (path->starts_with(pathPrefix)) {
+                authRequired = route["auth_required"];
+                break;
+            }
+        }
+        
+        if (!authRequired) {
+            return FilterHeadersStatus::Continue;
+        }
+        
+        // Extract headers for auth call
+        std::string authURL = root_->getConfig()["auth_service"]["endpoint"].get<std::string>() +
+                             root_->getConfig()["auth_service"]["verify_path"].get<std::string>();
+        
+        HeaderStringPairs headers{
+            {":method", "GET"},
+            {":authority", "kube-auth-proxy.auth-system.svc.cluster.local"},
+            {":path", "/auth/verify"}
+        };
+        
+        // Forward auth headers
+        if (auto cookie = getRequestHeader("cookie")) {
+            headers.push_back({"cookie", std::string(*cookie)});
+        }
+        if (auto auth = getRequestHeader("authorization")) {
+            headers.push_back({"authorization", std::string(*auth)});
+        }
+        
+        auto result = httpCall("kube-auth-proxy", headers, "", {},
+                              root_->getConfig()["auth_service"]["timeout"],
+                              [this](uint32_t, size_t, uint32_t) {
+                                  this->handleAuthResponse();
+                              });
+                              
+        if (result == WasmResult::Ok) {
+            return FilterHeadersStatus::StopIteration;
+        } else {
+            sendLocalResponse(503, "Auth service unavailable", "", {});
+            return FilterHeadersStatus::StopIteration;
+        }
+    }
+    
+private:
+    void handleAuthResponse() {
+        auto status = getResponseHeader(":status");
+        if (!status) {
+            sendLocalResponse(500, "Invalid auth response", "", {});
+            return;
+        }
+        
+        if (*status == "200") {
+            // Extract user info and continue
+            if (auto user = getResponseHeader("x-auth-user")) {
+                replaceRequestHeader("x-forwarded-user", *user);
+            }
+            continueRequest();
+        } else if (*status == "302") {
+            // Forward redirect
+            HeaderStringPairs responseHeaders;
+            if (auto location = getResponseHeader("location")) {
+                responseHeaders.push_back({"location", *location});
+            }
+            sendLocalResponse(302, "Redirecting to auth", "", responseHeaders);
+        } else {
+            sendLocalResponse(403, "Access denied", "", {});
+        }
+    }
+};
+```
+
+**Build C++ version**:
+```bash
+# Build with Emscripten or Bazel (Envoy's build system)
+bazel build //source/extensions/filters/http/wasm:wasm
+
+# Or with Emscripten
+emcc -O3 -s WASM=1 -s EXPORTED_FUNCTIONS='["_malloc","_free"]' \
+     -I./proxy-wasm-cpp-sdk/include \
+     -o plugin.wasm plugin.cpp
+```
+
+### Key Points
+
+**1. Language Choice Depends On**:
+- **Team familiarity** - use what your team knows
+- **Performance needs** - C++/Rust are fastest
+- **Development speed** - Go might be faster to develop
+- **Ecosystem maturity** - Rust has the most mature proxy-wasm support
+
+**2. Same Integration Regardless of Language**:
+- All languages produce the same `.wasm` binary format
+- Same OCI packaging (`docker build . -t my-registry/plugin:v1.0.0`)
+- Same WasmPlugin configuration
+- Same Gateway API integration
+
+**3. Recommended Approach**:
+- **Start with Rust** if you're comfortable with it (best ecosystem)
+- **Use Go** if your team is more familiar with Go
+- **Use C++** only if you need maximum performance or have existing C++ expertise
+
+The important thing is that **any language that compiles to WASM will work** with your kube-auth-proxy integration!
 
 #### Approach 2: Using Existing HTTP-Capable WASM Plugin
 
