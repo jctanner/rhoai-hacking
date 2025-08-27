@@ -16,6 +16,8 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 
 ## Problem Statement
 
+**🚫 Critical Architectural Constraint**: This project requires **NO service mesh** functionality. Istio is installed **ONLY** for the `WasmPlugin` CRD - there are no service mesh features, no automatic mTLS, no sidecars, and no ServiceEntry resources.
+
 ### Current Situation
 
 **Scenario**: Organizations have deployed [`kube-auth-proxy`](https://github.com/opendatahub-io/kube-auth-proxy/) that:
@@ -105,14 +107,14 @@ impl HttpContext for AuthProxy {
             ("x-forwarded-user", self.get_header("x-forwarded-user")),
         ];
         
-        // Make HTTP call to kube-auth-proxy service
+        // Make HTTP call to kube-auth-proxy service (NO service mesh - direct DNS)
         match self.dispatch_http_call(
-            "kube-auth-proxy",  // Cluster name
+            "kube-auth-proxy.auth-system.svc.cluster.local",  // Direct cluster DNS name
             vec![
                 (":method", "GET"),
                 (":path", "/auth"),  // kube-auth-proxy auth-only endpoint  
                 (":authority", "kube-auth-proxy.auth-system.svc.cluster.local:4180"),
-                (":scheme", "https"),  // HTTPS connection
+                (":scheme", "https"),  // HTTPS connection with serving certificates
             ],
             None,  // No body
             vec![],  // Headers from original request
@@ -234,8 +236,9 @@ spec:
   
   pluginConfig:
     # Auth service configuration (using OpenShift serving certificates)
+    # Note: NO service mesh - direct HTTPS communication with cluster DNS resolution
     auth_service:
-      cluster_name: "outbound|4180||kube-auth-proxy.auth-system.svc.cluster.local"
+      cluster_name: "kube-auth-proxy.auth-system.svc.cluster.local"
       endpoint: "https://kube-auth-proxy.auth-system.svc.cluster.local:4180"  # HTTPS with serving certs
       verify_path: "/auth"  # kube-auth-proxy auth-only endpoint
       timeout: 5000
@@ -423,23 +426,10 @@ spec:
       port: 8080
 
 ---
-# 4. Service Mesh Integration (auto-discovery should work, but explicit if needed)
-apiVersion: networking.istio.io/v1beta1
-kind: ServiceEntry
-metadata:
-  name: kube-auth-proxy-entry
-  namespace: istio-system
-  labels:
-    app: byoidc-wasm-plugin
-spec:
-  hosts:
-  - kube-auth-proxy.auth-system.svc.cluster.local
-  ports:
-  - number: 4180
-    name: https
-    protocol: HTTPS  # HTTPS with serving certificates
-  resolution: DNS
-  location: MESH_INTERNAL
+# 4. DNS Resolution (cluster-internal service discovery)
+# Note: No ServiceEntry needed - standard Kubernetes DNS resolution 
+# The WASM plugin will resolve kube-auth-proxy.auth-system.svc.cluster.local
+# directly via cluster DNS since we are NOT using a service mesh.
 
 ---
 # 5. Secret for kube-auth-proxy
@@ -567,7 +557,7 @@ cargo test --features test
 # Test against real kube-auth-proxy service
 ./examples/test-requests.sh
 
-# Test kube-auth-proxy directly (HTTPS with serving certificate)  
+# Test kube-auth-proxy directly (HTTPS with serving certificate - NO service mesh)  
 curl -v -k -H "Cookie: session=abc123" \
      https://kube-auth-proxy.auth-system.svc.cluster.local:4180/auth
 
@@ -604,7 +594,12 @@ curl -v -H "Cookie: valid_session" https://app.company.com/app/dashboard  # Expe
 
 **⚠️ Important Architectural Decision**: How is TLS actually implemented between the WASM plugin and kube-auth-proxy?
 
-**📋 Deployment Context**: Istio is installed (for WasmPlugin support) but **NOT running as a full service mesh** - no automatic mTLS between services.
+**📋 Deployment Context**: Istio is installed **ONLY for WasmPlugin CRD support** - there is **NO service mesh functionality** enabled. This means:
+- ❌ No automatic mTLS between services
+- ❌ No ServiceEntry resources needed  
+- ❌ No Istio proxy sidecars
+- ✅ Standard Kubernetes DNS resolution
+- ✅ Direct HTTPS communication with certificates
 
 #### Option 1: OpenShift Serving Certificates (Recommended)
 
@@ -864,7 +859,7 @@ wasm-objdump -h target/wasm32-unknown-unknown/release/byoidc_plugin.wasm
 
 ### Integration Opportunities
 
-- **Service Mesh Policies**: Integration with Istio AuthorizationPolicy  
+- **Gateway API Policies**: Integration with Gateway API HTTPRoute and ReferenceGrant resources
 - **External Secrets**: Secure credential management via External Secrets Operator
 - **GitOps**: ArgoCD/Flux deployment patterns for ODH/RHOAI environments
 - **Multi-Cluster**: Cross-cluster auth service federation
