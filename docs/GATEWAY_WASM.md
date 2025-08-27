@@ -1203,13 +1203,9 @@ Gateway API Request → Istio Gateway → WASM Plugin → HTTP call to kube-auth
                     Client ← 302/200 ← WASM Plugin ← 302/200 response
 ```
 
-### Implementation Approaches
+### Implementation Approach
 
-#### Approach 1: Custom WASM Plugin (Recommended)
-
-**Build a simple WASM plugin that calls your existing service**.
-
-**✅ Note**: This approach works perfectly with the complete integration example below - you just need to make sure your custom WASM plugin can parse the `pluginConfig` format shown in the integration example.
+**Build a custom WASM plugin that calls your existing service** using the well-supported `dispatch_http_call()` API.
 
 ### Custom WASM Plugin Example (Rust)
 
@@ -1369,73 +1365,7 @@ docker build . -t my-registry/kube-auth-wasm:v1.0.0
 docker push my-registry/kube-auth-wasm:v1.0.0
 ```
 
-**The key point**: Your custom WASM plugin (Approach 1) reads the exact same `pluginConfig` that's shown in the complete integration example. This means:
-
-✅ **Same WasmPlugin YAML** - no changes needed  
-✅ **Same Gateway API resources** - no changes needed  
-✅ **Custom logic** - but driven by the standard configuration format  
-✅ **Full control** - you can add any custom behavior while still using the standard config
-
-**Build and Deploy**:
-```bash
-# Build WASM
-cargo build --target wasm32-unknown-unknown --release
-
-# Package as OCI image
-docker build . -t my-registry/kube-auth-wasm:v1.0.0
-docker push my-registry/kube-auth-wasm:v1.0.0
-```
-
 **Note**: This example uses Rust, but you can use any language that compiles to WASM (see [Building WASM Extensions](#building-wasm-extensions) for language options and build commands).
-
-#### Approach 2: Using Existing HTTP-Capable WASM Plugin
-
-**If there's an existing WASM plugin that can make HTTP calls** (like a generic HTTP auth plugin), configure it for your service:
-
-```yaml
-apiVersion: extensions.istio.io/v1alpha1
-kind: WasmPlugin
-metadata:
-  name: kube-auth-integration
-  namespace: istio-system
-spec:
-  selector:
-    matchLabels:
-      istio: gateway
-  phase: AUTHN
-  priority: 1000
-  # Use existing HTTP auth WASM plugin
-  url: oci://ghcr.io/http-auth-wasm/plugin:v1.0.0
-  
-  pluginConfig:
-    # Configure for your kube-auth-proxy
-    auth_service:
-      url: "http://kube-auth-proxy.auth-system.svc.cluster.local:8080/auth/verify"
-      method: "GET"
-      timeout: "5s"
-      
-    # Forward original headers to auth service
-    forward_headers:
-      - "authorization"
-      - "cookie" 
-      - "x-forwarded-user"
-      - "x-forwarded-for"
-      
-    # Handle different response codes
-    response_handling:
-      "200":
-        action: "allow"
-        extract_headers:
-          - "x-auth-user"    # Extract user info from auth response
-          - "x-auth-groups"  # Extract group info
-      "302": 
-        action: "redirect"
-        forward_headers:
-          - "location"       # Forward redirect location
-      "default":
-        action: "deny"
-        status_code: 403
-```
 
 ### Complete Gateway API Integration
 
