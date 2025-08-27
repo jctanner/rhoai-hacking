@@ -44,23 +44,19 @@ This project delivers a **custom WASM plugin** that acts as a bridge between **I
 
 ### High-Level Architecture
 
-```
-┌─────────────────┐    ┌──────────────────┐    ┌────────────────────┐    ┌─────────────────┐
-│   Client        │    │  Istio Gateway   │    │   WASM Plugin      │    │ kube-auth-proxy │
-│                 │    │  (Gateway API)   │    │  (Our Solution)    │    │ (FIPS-compliant)│
-└─────────────────┘    └──────────────────┘    └────────────────────┘    └─────────────────┘
-         │                        │                        │                        │
-         │  1. HTTP Request       │                        │                        │
-         │──────────────────────→ │                        │                        │
-         │                        │  2. WASM Filter        │                        │
-         │                        │──────────────────────→ │                        │
-         │                        │                        │  3. dispatch_http_call │
-         │                        │                        │──────────────────────→ │
-         │                        │                        │  4. 200 OK / 302 Found│
-         │                        │                        │ ←──────────────────────│
-         │  5. Response (Allow    │  6. Forward / Redirect │                        │
-         │     or Redirect)       │ ←──────────────────────│                        │
-         │ ←──────────────────────│                        │                        │
+```mermaid
+graph LR
+    Client[Client]
+    Gateway[Istio Gateway<br/>Gateway API]
+    WASM[WASM Plugin<br/>Our Solution]
+    Auth[kube-auth-proxy<br/>FIPS-compliant]
+    
+    Client -->|1. HTTP Request| Gateway
+    Gateway -->|2. WASM Filter| WASM
+    WASM -->|3. dispatch_http_call<br/>HTTPS /auth| Auth
+    Auth -->|4. 202 Accepted / 401 Unauthorized| WASM
+    WASM -->|5. Forward / Redirect| Gateway
+    Gateway -->|6. Response Allow or Redirect| Client
 ```
 
 ### Core Components
