@@ -98,10 +98,13 @@ External authorization filter that delegates authorization decisions to an exter
 ## Gateway API Implementation Analysis
 
 ### Envoy Gateway
-- **Status**: ✅ RESEARCHED
-- **WASM Support**: ✅ **EnvoyExtensionPolicy CRD** - Supports WASM extensions via custom resource
-- **Extension Mechanism**: Link WASM modules to Gateway/HTTPRoute resources
-- **Dynamic Loading**: Supports loading from remote URLs or OCI images
+- **Status**: ✅ **FULLY RESEARCHED** (with official documentation analysis)
+- **WASM Support**: ✅ **EnvoyExtensionPolicy CRD** - Two extension types supported
+  - **HTTP Wasm Extensions**: Fetch from remote HTTP URLs with SHA256 validation
+  - **Image Wasm Extensions**: Package as OCI images for better versioning/distribution
+- **Extension Mechanism**: Link WASM modules to Gateway/HTTPRoute resources via `targetRefs`
+- **Dynamic Loading**: ✅ Supports HTTP URLs, OCI images (`oci://`), local files
+- **Build Toolchain**: ✅ **Docker and buildah support** for creating WASM OCI images
 - **ext_authz Support**: ✅ Standard Envoy ext_authz filter available
 
 ### Istio Gateway API
@@ -320,9 +323,13 @@ From the `docs/src/` directory, we have several relevant PDFs:
 
 ## Key Questions - Research Status
 
-1. **Standardization**: ❓ **No single standard** - Each implementation has own CRDs
-   - Gateway API community discussing plugin standardization ([Discussion #2275](https://github.com/kubernetes-sigs/gateway-api/discussions/2275))
-   - Policy attachment is preferred standardized mechanism
+1. **Standardization**: ✅ **Active standardization efforts** in Gateway API community:
+   - **Current State**: [Gateway API Discussion #2275](https://github.com/kubernetes-sigs/gateway-api/discussions/2275) - official plugin standardization discussion
+   - **Key Debate**: "Plugins" (user-provided code) vs "Custom Filters" using `ExtensionRef` in HTTPRoute
+   - **Three Plugin Categories** identified: In-dataplane functions, RPC sidecar services, loaded scripts/binaries  
+   - **Implementation Reality**: Each has own CRDs (WasmPlugin, EnvoyExtensionPolicy, etc.) 
+   - **Emerging Consensus**: Policy attachment is preferred standardized mechanism
+   - **Challenge**: Balancing portability with implementation-specific capabilities
 
 2. **Implementation Variance**: ✅ **Significant variance** but clear patterns:
    - **Envoy Gateway**: EnvoyExtensionPolicy CRD  
@@ -1659,3 +1666,250 @@ kubectl logs -n istio-system deployment/istio-proxy
 - ✅ **Production ready**: Used in Istio production deployments
 
 This gives you **enterprise-grade auth proxy capabilities** while leveraging **Gateway API standardization** and **Istio's production-ready WASM infrastructure**.
+
+---
+
+# 🔒 **Critical Security Considerations: ext_authz Implementation**
+
+## ⚠️ **Route Cache Clearing Vulnerability**
+
+**From Official Envoy Documentation**: When using per-route `ExtAuthZ` configuration, there's a **critical security risk** where subsequent filters may clear the route cache, potentially leading to **privilege escalation vulnerabilities**.
+
+### **The Attack Vector**
+```yaml
+# VULNERABLE CONFIGURATION EXAMPLE
+http_filters:
+- name: envoy.filters.http.ext_authz
+  typed_config:
+    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+    # ... ext_authz config runs first ...
+    
+- name: envoy.filters.http.lua  # DANGEROUS: Runs after ext_authz
+  typed_config:
+    "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
+    inline_code: |
+      function envoy_on_request(request_handle)
+        -- This clears route cache AFTER ext_authz has run
+        request_handle:clearRouteCache()
+        -- Request may now match a different route with different auth requirements
+      end
+```
+
+**What Happens**:
+1. **Request arrives** → matches Route A (requires auth)
+2. **ext_authz runs** → authenticates user for Route A
+3. **Lua filter runs** → clears route cache 
+4. **Route re-evaluation** → matches Route B (different auth policy)
+5. **Authorization bypassed** → request processed with wrong auth context
+
+### **Mitigation Strategies**
+
+**1. Filter Chain Ordering**:
+```yaml
+# SAFE: Put route-modifying filters BEFORE ext_authz
+http_filters:
+- name: envoy.filters.http.lua        # Route modifications first
+- name: envoy.filters.http.ext_authz  # Auth decisions last
+- name: envoy.filters.http.router    # Terminal filter
+```
+
+**2. WASM Plugin Approach** (inherently safer):
+```yaml
+# Using WasmPlugin instead of raw EnvoyFilter
+apiVersion: extensions.istio.io/v1alpha1
+kind: WasmPlugin
+metadata:
+  name: integrated-auth
+spec:
+  phase: AUTHN  # Istio manages filter ordering
+  priority: 1000
+  # WASM module handles both routing logic AND auth in single filter
+  url: oci://your-registry.com/auth-wasm:v1.0.0
+```
+
+**3. Gateway API Policy Attachment** (recommended):
+```yaml
+# Use Gateway API policies instead of low-level filters
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: api-auth
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: protected-api
+  # Policy attachment is route-aware by design
+```
+
+## 🎯 **Why This Matters for WASM Auth Proxies**
+
+**Traditional ext_authz Risk**:
+- Multiple separate filters can interfere with each other
+- Route cache clearing happens between filters
+- Security decisions made in wrong context
+
+**WASM Auth Proxy Advantage**:
+- **Single filter execution**: All auth logic in one WASM module
+- **No intermediate cache clearing**: Route context preserved throughout
+- **Atomic decisions**: Authentication and routing handled together
+
+**Best Practice for Auth Proxy Implementation**:
+```rust
+// Inside WASM auth proxy
+impl Context for AuthProxy {
+    fn on_http_request_headers(&mut self) -> Action {
+        // 1. Extract route information ONCE
+        let route_info = self.get_route_context();
+        
+        // 2. Make auth decision based on route
+        let auth_result = self.authenticate_for_route(route_info);
+        
+        // 3. No opportunity for cache clearing between steps
+        match auth_result {
+            AuthResult::Allow => Action::Continue,
+            AuthResult::Deny => Action::Pause, // Return 401/403
+        }
+    }
+}
+```
+
+This vulnerability analysis emphasizes why **WASM-based auth proxies** and **Gateway API policy attachment** are **more secure** than traditional multi-filter approaches.
+
+---
+
+# 📦 **WASM Image Building and Distribution**
+
+## Building WASM OCI Images for Gateway API
+
+**From Official Envoy Gateway Documentation**: There are **two supported image formats** for packaging WASM extensions - both work with any OCI registry.
+
+### Method 1: Docker Format
+
+**Simple Dockerfile approach**:
+```dockerfile
+# Dockerfile
+FROM scratch
+COPY plugin.wasm ./
+```
+
+**Build and push**:
+```bash
+# Build the WASM binary first (language-specific)
+cargo build --target wasm32-unknown-unknown --release  # Rust example
+cp target/wasm32-unknown-unknown/release/plugin.wasm .
+
+# Build Docker image
+docker build . -t my-registry/auth-proxy-wasm:v1.0.0
+docker push my-registry/auth-proxy-wasm:v1.0.0
+```
+
+### Method 2: OCI Spec Compliant Format (buildah)
+
+**Using buildah for pure OCI images**:
+```bash
+# Create working container from scratch
+buildah --name auth-wasm from scratch
+
+# Copy WASM binary to create layer
+buildah copy auth-wasm plugin.wasm ./
+
+# Commit and push to registry
+buildah commit auth-wasm docker://my-registry/auth-proxy-wasm:v1.0.0
+```
+
+## Using WASM Images in Gateway API
+
+### Envoy Gateway EnvoyExtensionPolicy
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyExtensionPolicy
+metadata:
+  name: auth-proxy-wasm
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: protected-api
+    
+  wasm:
+  - name: auth-filter
+    rootID: auth_proxy_root
+    code:
+      type: Image  # Use OCI image
+      image:
+        url: my-registry/auth-proxy-wasm:v1.0.0
+        # Optional: specify pull policy, secrets, etc.
+    config:
+      auth_endpoints:
+        - url: "https://auth.example.com"
+          type: "oidc"
+```
+
+**Alternative: HTTP URL approach**:
+```yaml
+wasm:
+- name: auth-filter
+  rootID: auth_proxy_root
+  code:
+    type: HTTP  # Direct HTTP URL
+    http:
+      url: "https://github.com/user/repo/releases/download/v1.0.0/auth-proxy.wasm"
+      sha256: "79c9f85128bb0177b6511afa85d587224efded376ac0ef76df56595f1e6315c0"
+```
+
+## Distribution Strategies
+
+### **Strategy 1: Public Registry (Development)**
+```bash
+# Use public registries for open-source plugins
+docker push ghcr.io/yourorg/auth-proxy-wasm:v1.0.0
+```
+
+### **Strategy 2: Private Registry (Production)**
+```bash
+# Enterprise registries with RBAC
+docker push registry.company.com/security/auth-proxy-wasm:v1.0.0
+```
+
+### **Strategy 3: CI/CD Integration**
+```yaml
+# GitHub Actions example
+name: Build and Push WASM
+on:
+  push:
+    tags: ['v*']
+    
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: wasm32-unknown-unknown
+        
+    - name: Build WASM
+      run: cargo build --target wasm32-unknown-unknown --release
+      
+    - name: Build and Push Image
+      run: |
+        cp target/wasm32-unknown-unknown/release/*.wasm plugin.wasm
+        docker build . -t ghcr.io/${{ github.repository }}/auth-proxy:${{ github.ref_name }}
+        docker push ghcr.io/${{ github.repository }}/auth-proxy:${{ github.ref_name }}
+```
+
+## Key Benefits of OCI Image Distribution
+
+✅ **Versioning**: Semantic versioning with image tags  
+✅ **Security**: Image signing and vulnerability scanning  
+✅ **Caching**: Registry layer caching for faster pulls  
+✅ **Toolchain**: Existing container tooling works  
+✅ **RBAC**: Registry access controls  
+✅ **Multi-arch**: Platform-specific builds if needed  
+
+This approach makes **WASM plugin distribution** as mature as **container image distribution**, leveraging the entire OCI ecosystem for Gateway API extensibility.
