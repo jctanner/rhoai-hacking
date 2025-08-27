@@ -3,14 +3,15 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Key Technologies](#key-technologies)  
-3. [Gateway API Implementation Landscape](#gateway-api-implementation-landscape)
-4. [Critical Security Considerations](#critical-security-considerations)
-5. [Building WASM Extensions](#building-wasm-extensions)
-6. [Deployment Methods](#deployment-methods)
-7. [Practical Implementation Examples](#practical-implementation-examples)
-8. [Advanced Topics: Kuadrant Architecture Deep Dive](#advanced-topics-kuadrant-architecture-deep-dive)
-9. [Research Sources & Standardization Status](#research-sources--standardization-status)
+2. [Definitions and Terminology](#definitions-and-terminology)
+3. [Key Technologies](#key-technologies)  
+4. [Gateway API Implementation Landscape](#gateway-api-implementation-landscape)
+5. [Critical Security Considerations](#critical-security-considerations)
+6. [Building WASM Extensions](#building-wasm-extensions)
+7. [Deployment Methods](#deployment-methods)
+8. [Practical Implementation Examples](#practical-implementation-examples)
+9. [Advanced Topics: Kuadrant Architecture Deep Dive](#advanced-topics-kuadrant-architecture-deep-dive)
+10. [Research Sources & Standardization Status](#research-sources--standardization-status)
 
 ---
 
@@ -32,6 +33,205 @@ This document provides a comprehensive guide to implementing **WebAssembly (WASM
 3. **Build & Deploy** with practical, hands-on examples
 4. **Advanced patterns** with real-world architecture deep-dives
 5. **Research context** and standardization status
+
+---
+
+## Definitions and Terminology
+
+The WASM + Gateway API ecosystem has overlapping terminology that can be confusing. Here are clear definitions with examples:
+
+### Core WASM Concepts
+
+**WASM (WebAssembly)**  
+**What**: Bytecode format for sandboxed, portable code execution  
+**Example**: A `.wasm` file compiled from Rust, C++, Go, etc.  
+**Think**: Like a safe, cross-platform executable
+
+**WASM Plugin**  
+**What**: A WASM binary that extends proxy functionality  
+**Example**: `auth-plugin.wasm` - handles JWT validation  
+**Think**: Like a browser extension, but for proxies
+
+**WASM Extension**  
+**What**: Same as WASM Plugin (different vendors use different terms)  
+**Example**: Envoy Gateway calls them "extensions", Istio calls them "plugins"  
+**Think**: Synonyms - same concept, different naming
+
+**WASM Filter**  
+**What**: A WASM plugin integrated into Envoy's filter chain  
+**Example**: The same `auth-plugin.wasm` becomes an `envoy.filters.http.wasm` filter  
+**Think**: Plugin (the code) becomes a Filter (when running in Envoy)
+
+**WASM Shim** (Kuadrant-specific)  
+**What**: A specific WASM plugin that acts as a "bridge" or "adapter"  
+**Example**: [Kuadrant's wasm-shim](https://github.com/Kuadrant/wasm-shim) - translates policies into service calls  
+**Think**: Like a universal translator between Gateway API policies and backend services
+
+### Policy vs Filter Hierarchy
+
+**Filter** (Envoy Level)  
+**What**: Low-level Envoy proxy component that processes requests  
+**Example**: `envoy.filters.http.jwt_authn` - built-in JWT validation  
+**Think**: Like middleware functions in a web framework  
+**Configuration**: Raw Envoy YAML
+
+**EnvoyFilter** (Istio Level)  
+**What**: Istio custom resource that modifies Envoy's filter chain  
+**Example**: Inject custom WASM filter into sidecars  
+**Think**: Low-level "surgery" on Envoy configuration  
+**Configuration**: Kubernetes YAML (complex)
+
+**WasmPlugin** (Istio Level)  
+**What**: Istio's high-level way to add WASM plugins  
+**Example**: Add JWT validation to all gateways  
+**Think**: EnvoyFilter's simpler, safer cousin  
+**Configuration**: Kubernetes YAML (simpler)
+
+**EnvoyExtensionPolicy** (Envoy Gateway Level)  
+**What**: Envoy Gateway's way to add WASM extensions  
+**Example**: Add rate limiting to specific HTTPRoutes  
+**Think**: Like WasmPlugin but for Envoy Gateway  
+**Configuration**: Kubernetes YAML
+
+**Gateway API Policy** (Standard Level)  
+**What**: High-level, portable policy that works across implementations  
+**Example**: `BackendTLSPolicy`, `SecurityPolicy` (proposed)  
+**Think**: Like CSS - same policy works on different "browsers" (gateway implementations)  
+**Configuration**: Standard Kubernetes YAML
+
+**AuthPolicy** (Kuadrant Level)  
+**What**: Kuadrant's custom policy for authentication  
+**Example**: JWT validation + external auth service calls  
+**Think**: High-level policy that the operator translates to WASM configuration  
+**Configuration**: Kubernetes YAML (gets translated to WASM)
+
+### Authorization Terminology
+
+**ext_authz** (Envoy Filter)  
+**What**: Built-in Envoy filter for external authorization  
+**Example**: `envoy.filters.http.ext_authz` - calls external gRPC/HTTP service  
+**Think**: "Phone a friend" for auth decisions
+
+**External Authorization**  
+**What**: Pattern where proxy delegates auth decisions to external service  
+**Example**: Envoy calls Authorino to check if user can access `/admin`  
+**Think**: Centralized auth service that multiple proxies can use
+
+**Authorization Service**  
+**What**: The actual service that makes auth decisions  
+**Example**: Authorino, OPA, custom auth microservice  
+**Think**: The "friend" that ext_authz "phones"
+
+### Kuadrant-Specific Terms
+
+**Action Sets**  
+**What**: Kuadrant's internal structure grouping related actions  
+**Example**: "api-auth" action set with JWT + rate limit actions  
+**Think**: Like a recipe - a sequence of steps to execute
+
+**Predicates**  
+**What**: Conditions that determine when actions should run  
+**Example**: `request.url_path.startsWith("/api/")` - only for API calls  
+**Think**: if/when conditions in programming
+
+**CEL Expressions**  
+**What**: Common Expression Language - Google's expression language  
+**Example**: `auth.identity.role == "admin"` - check user role  
+**Think**: Like Excel formulas, but for request processing
+
+### Configuration Resources
+
+**Gateway** (Gateway API)  
+**What**: Defines network entry point with listeners  
+**Example**: HTTPS listener on port 443 for `*.example.com`  
+**Think**: Like a load balancer configuration
+
+**HTTPRoute** (Gateway API)  
+**What**: Defines routing rules from Gateway to backend services  
+**Example**: `/api/*` routes to `api-service:8080`  
+**Think**: Like URL rewrite rules
+
+**EnvoyExtensionPolicy** (Envoy Gateway)  
+**What**: Attaches WASM extensions to Gateway/HTTPRoute  
+**Example**: Add auth WASM to all routes under `/private/`  
+**Think**: "Attach this plugin to these routes"
+
+**WasmPlugin** (Istio)  
+**What**: Configures WASM plugin for Istio workloads  
+**Example**: Add rate limiting to all ingress gateways  
+**Think**: "Run this WASM code on these workloads"
+
+### Processing Concepts
+
+**Filter Chain** (Envoy)  
+**What**: Ordered sequence of filters processing requests  
+**Example**: jwt_authn → rbac → wasm → router  
+**Think**: Assembly line - each station does one job
+
+**Phases** (Istio)  
+**What**: Logical groupings of filter chain positions  
+**Example**: AUTHN → AUTHZ → STATS → UNSPECIFIED  
+**Think**: Like "departments" in the assembly line
+
+**Priority** (Istio)  
+**What**: Ordering within a phase  
+**Example**: Priority 1000 runs before priority 500 in same phase  
+**Think**: Line numbers within each department
+
+## Terminology in Context: Complete Example
+
+Here's how all these terms work together:
+
+```yaml
+# 1. Gateway API Policy (high-level, portable)
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy          # ← Kuadrant Policy
+metadata:
+  name: api-auth
+spec:
+  targetRef:
+    kind: HTTPRoute       # ← Gateway API Resource
+    name: api-routes      # ← Routes this applies to
+  
+# 2. Operator Translation (behind the scenes)
+# AuthPolicy → Action Sets → CEL Predicates → WASM Configuration
+
+# 3. WASM Plugin Deployment (what actually runs)
+apiVersion: extensions.istio.io/v1alpha1  
+kind: WasmPlugin          # ← Istio Configuration Resource
+metadata:
+  name: kuadrant-wasm
+spec:
+  phase: AUTHN            # ← Istio Phase
+  priority: 1000          # ← Istio Priority
+  url: oci://registry.com/kuadrant-wasm-shim:v1.0.0  # ← WASM Plugin
+  pluginConfig:           # ← Gets translated to WASM Filter configuration
+    actionSets:           # ← Kuadrant Action Sets
+    - name: api-auth-actions
+      predicates:         # ← CEL Expressions
+      - "request.url_path.startsWith('/api/')"
+      actions:
+      - service: authorino # ← External Authorization Service
+        
+# 4. Runtime Execution (what happens to requests)
+# Request → Envoy → Filter Chain → WASM Filter → ext_authz → Authorization Service
+```
+
+**Key Insight**: The **higher-level the abstraction**, the **more portable** but **less powerful**. The **lower-level**, the **more powerful** but **less portable**.
+
+```
+Gateway API Policy (most portable, least powerful)
+        ↓
+Implementation Policy (AuthPolicy, etc.)
+        ↓  
+Implementation CRD (WasmPlugin, EnvoyExtensionPolicy)
+        ↓
+WASM Filter Configuration
+        ↓
+Envoy Filter Chain (least portable, most powerful)
+```
+
+This layered approach lets you choose your level of abstraction based on your needs for portability vs power.
 
 ---
 
