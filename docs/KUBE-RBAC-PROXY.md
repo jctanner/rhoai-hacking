@@ -12,6 +12,23 @@ Both `kube-rbac-proxy` and `oauth-proxy` are security-enhancing HTTP proxies tha
 
 This document will compare their core mechanics, typical use cases, and provide guidance on when to choose one over the other, or how to use them together.
 
+## High-Level Architecture
+
+### `kube-rbac-proxy`
+
+The architecture of `kube-rbac-proxy` is simple and focused. It acts as a gatekeeper that intercepts all incoming requests, validates credentials and permissions against the Kubernetes API, and forwards valid requests to the upstream service.
+
+```mermaid
+graph TD;
+    Client["Client (with auth credentials)"] --> Proxy["kube-rbac-proxy"];
+    Proxy --> Upstream["Upstream Service"];
+    Proxy --> K8sAPI["Kubernetes API Server<br/>- TokenReview<br/>- SubjectAccessReview"];
+    style Proxy fill:#f9f9f9,stroke:#333,stroke-width:2px;
+    style Upstream fill:#f9f9f9,stroke:#333,stroke-width:2px;
+    style Client fill:#f9f9f9,stroke:#333,stroke-width:2px;
+    style K8sAPI fill:#f9f9f9,stroke:#333,stroke-width:2px;
+```
+
 ## Core Authorization Flows
 
 ### `kube-rbac-proxy`: Per-Request RBAC Enforcement
