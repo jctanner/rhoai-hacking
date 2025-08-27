@@ -12,6 +12,7 @@
 8. [Practical Implementation Examples](#practical-implementation-examples)
 9. [Advanced Topics: Kuadrant Architecture Deep Dive](#advanced-topics-kuadrant-architecture-deep-dive)
 10. [Research Sources & Standardization Status](#research-sources--standardization-status)
+11. [Appendix: Integrating Existing Auth Proxy with Istio WASM Plugins](#appendix-integrating-existing-auth-proxy-with-istio-wasm-plugins)
 
 ---
 
