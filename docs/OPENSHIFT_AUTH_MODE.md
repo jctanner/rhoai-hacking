@@ -84,6 +84,8 @@ spec:
 
 **Description**: No cluster-managed authentication system. Requires external authentication infrastructure.
 
+**⚠️ Advanced Configuration**: While technically configurable, this mode is rarely used in practice and requires significant expertise and external infrastructure.
+
 **Architecture**:
 
 ```
@@ -93,9 +95,26 @@ User/Client → External Auth System → Webhook Token Authenticator → kube-ap
 **Characteristics**:
 
 - Completely external authentication
-- Requires manual configuration of external systems
-- Uses webhook token authenticators or external OAuth metadata
+- **Requires manual configuration** of external OAuth/OIDC systems
+- **Must provide webhook token authenticators** for token validation via TokenReview API
+- **Must configure external OAuth metadata** pointing to your authentication system
 - Full control over authentication flow
+- **No OpenShift-managed tokens** - all token lifecycle handled externally
+
+**Prerequisites for Configuration**:
+
+- External OAuth/OIDC server infrastructure
+- Webhook token authenticator service
+- OAuth metadata configuration
+- Manual user identity management
+- Custom token validation logic
+
+**Typical Use Cases**:
+
+- Air-gapped environments with existing enterprise authentication
+- Highly regulated environments requiring external identity providers
+- Custom authentication solutions that don't fit standard patterns
+- Migration scenarios requiring temporary disabling of OpenShift auth
 
 ## Feature Gates
 
