@@ -6,6 +6,72 @@ This document outlines the different authentication modes available in OpenShift
 
 OpenShift supports multiple authentication architectures, controlled by the `Authentication` custom resource (`config.openshift.io/v1`) and feature gates. The authentication mode determines how users and clients authenticate with the cluster.
 
+## Architecture Overview
+
+```mermaid
+graph TB
+    %% User/Client Entry Points
+    User[User/Client]
+
+    %% Authentication Mode Decision
+    User --> AuthMode{Authentication Mode}
+
+    %% IntegratedOAuth Mode
+    AuthMode -->|IntegratedOAuth| OAuthServer[OpenShift OAuth Server]
+    OAuthServer --> IdP[Identity Provider<br/>HTPasswd, LDAP, GitHub, etc.]
+    IdP --> OAuthServer
+    OAuthServer --> OSToken[OpenShift Token]
+
+    %% Token Validation for IntegratedOAuth
+    OSToken --> APIServer1[kube-apiserver]
+    APIServer1 --> WebhookInternal[Internal Webhook<br/>webhook-authentication-integrated-oauth]
+    WebhookInternal --> TokenReview1[TokenReview API]
+    TokenReview1 --> OAuthServer
+    OAuthServer --> ValidResponse1[Validation Response]
+    ValidResponse1 --> APIServer1
+
+    %% OIDC Mode
+    AuthMode -->|OIDC Type| ExternalOIDC[External OIDC Provider]
+    ExternalOIDC --> JWTToken[JWT Token]
+    JWTToken --> APIServer2[kube-apiserver]
+    APIServer2 --> DirectValidation[Direct JWT Validation<br/>No Webhook]
+    DirectValidation --> APIServer2
+
+    %% None Mode
+    AuthMode -->|None Type| ExternalAuth[External Auth System]
+    ExternalAuth --> ExtToken[External Token]
+    ExtToken --> APIServer3[kube-apiserver]
+    APIServer3 --> WebhookExternal[External Webhook<br/>Custom Configuration]
+    WebhookExternal --> TokenReview2[TokenReview API]
+    TokenReview2 --> ExternalValidator[External Validation Service]
+    ExternalValidator --> ValidResponse2[Validation Response]
+    ValidResponse2 --> APIServer3
+
+    %% Final API Access
+    APIServer1 --> APIAccess[API Resource Access]
+    APIServer2 --> APIAccess
+    APIServer3 --> APIAccess
+
+    %% Feature Gate Control
+    FeatureGate[ExternalOIDC<br/>Feature Gate] -.-> ExternalOIDC
+    FeatureGate -.-> JWTToken
+
+    %% Styling
+    classDef userEntry fill:#e1f5fe
+    classDef oauthComponents fill:#f3e5f5
+    classDef oidcComponents fill:#fff3e0
+    classDef noneComponents fill:#fce4ec
+    classDef apiComponents fill:#e8f5e8
+    classDef webhookComponents fill:#f0f4c3
+
+    class User,AuthMode userEntry
+    class OAuthServer,IdP,OSToken,WebhookInternal,TokenReview1,ValidResponse1 oauthComponents
+    class ExternalOIDC,JWTToken,DirectValidation oidcComponents
+    class ExternalAuth,ExtToken,WebhookExternal,TokenReview2,ExternalValidator,ValidResponse2 noneComponents
+    class APIServer1,APIServer2,APIServer3,APIAccess apiComponents
+    class WebhookInternal,WebhookExternal webhookComponents
+```
+
 ## Authentication Types
 
 OpenShift supports three primary authentication types via `Authentication.spec.type`:
