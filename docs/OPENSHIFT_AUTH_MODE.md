@@ -537,6 +537,335 @@ spec:
 
 > **⚠️ Note**: The official documentation recommends using the `oc patch` command method rather than directly editing the FeatureGate CR, as it provides a cleaner rollback path and proper validation.
 
+## Programmatic Authentication Mode Detection
+
+When building custom controllers that need to integrate with OpenShift's authentication system (e.g., deploying `kube-auth-proxy` instances), you need to programmatically determine the cluster's current authentication mode to configure the proxy with the correct parameters.
+
+### Source of Truth
+
+The **Authentication CR** (`authentication.config.openshift.io/v1`) is the definitive source of truth for determining the cluster's authentication mode. The logic mirrors what the `cluster-authentication-operator` uses internally.
+
+### Go Code Implementation
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+
+    configv1 "github.com/openshift/api/config/v1"
+    configclient "github.com/openshift/client-go/config/clientset/versioned"
+    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+    "k8s.io/client-go/rest"
+)
+
+type AuthenticationMode string
+
+const (
+    ModeIntegratedOAuth AuthenticationMode = "IntegratedOAuth"
+    ModeOIDC            AuthenticationMode = "OIDC"
+    ModeNone            AuthenticationMode = "None"
+)
+
+type AuthModeDetector struct {
+    configClient configclient.Interface
+}
+
+func NewAuthModeDetector(config *rest.Config) (*AuthModeDetector, error) {
+    configClient, err := configclient.NewForConfig(config)
+    if err != nil {
+        return nil, fmt.Errorf("creating config client: %w", err)
+    }
+
+    return &AuthModeDetector{
+        configClient: configClient,
+    }, nil
+}
+
+func (d *AuthModeDetector) GetAuthenticationMode(ctx context.Context) (AuthenticationMode, *configv1.Authentication, error) {
+    // Get the cluster Authentication CR (always named "cluster")
+    auth, err := d.configClient.ConfigV1().Authentications().Get(ctx, "cluster", metav1.GetOptions{})
+    if err != nil {
+        return "", nil, fmt.Errorf("getting authentication config: %w", err)
+    }
+
+    // Determine mode based on Authentication CR spec
+    mode := d.determineMode(auth)
+    return mode, auth, nil
+}
+
+func (d *AuthModeDetector) determineMode(auth *configv1.Authentication) AuthenticationMode {
+    // Check explicit type field first
+    switch auth.Spec.Type {
+    case configv1.AuthenticationTypeOIDC:
+        return ModeOIDC
+    case configv1.AuthenticationTypeIntegratedOAuth, "":
+        // Empty string is equivalent to IntegratedOAuth (default)
+        return ModeIntegratedOAuth
+    }
+
+    // Advanced mode detection: check for webhook authenticator without OAuth metadata
+    if auth.Spec.WebhookTokenAuthenticator != nil &&
+       (auth.Spec.OAuthMetadata == nil || auth.Spec.OAuthMetadata.Name == "") {
+        return ModeNone
+    }
+
+    // Default to IntegratedOAuth if unclear
+    return ModeIntegratedOAuth
+}
+
+// GetProxyConfiguration returns the configuration needed for kube-auth-proxy
+func (d *AuthModeDetector) GetProxyConfiguration(ctx context.Context) (*ProxyConfig, error) {
+    mode, auth, err := d.GetAuthenticationMode(ctx)
+    if err != nil {
+        return nil, err
+    }
+
+    config := &ProxyConfig{
+        Mode: mode,
+    }
+
+    switch mode {
+    case ModeIntegratedOAuth:
+        config.OAuthConfig = &OAuthProxyConfig{
+            // Use OpenShift OAuth server endpoints
+            AuthorizeURL:    "https://oauth-openshift.apps.<cluster-domain>/oauth/authorize",
+            TokenURL:        "https://oauth-openshift.apps.<cluster-domain>/oauth/token",
+            UserinfoURL:     "https://oauth-openshift.apps.<cluster-domain>/oauth/userinfo",
+            IssuerURL:       auth.Status.IntegratedOAuthMetadata.Name, // From status
+            ClientIDFile:    "/var/run/secrets/oauth/client-id",
+            ClientSecretFile: "/var/run/secrets/oauth/client-secret",
+        }
+
+    case ModeOIDC:
+        if len(auth.Spec.OIDCProviders) == 0 {
+            return nil, fmt.Errorf("OIDC mode configured but no providers found")
+        }
+
+        // Use first OIDC provider (extend logic for multiple providers as needed)
+        provider := auth.Spec.OIDCProviders[0]
+        config.OIDCConfig = &OIDCProxyConfig{
+            IssuerURL:       provider.Issuer.URL,
+            ClientID:        provider.OIDCClients[0].ClientID, // Assumes client configured
+            Audiences:       provider.Audiences,
+            ClaimMappings:   provider.ClaimMappings,
+        }
+
+    case ModeNone:
+        config.WebhookConfig = &WebhookProxyConfig{
+            // Use external webhook authenticator
+            WebhookConfigFile: "/etc/webhook/config",
+            CacheTTL:         auth.Spec.WebhookTokenAuthenticator.KubeConfig.Name,
+        }
+    }
+
+    return config, nil
+}
+
+// Configuration structures for kube-auth-proxy
+type ProxyConfig struct {
+    Mode          AuthenticationMode  `json:"mode"`
+    OAuthConfig   *OAuthProxyConfig   `json:"oauth,omitempty"`
+    OIDCConfig    *OIDCProxyConfig    `json:"oidc,omitempty"`
+    WebhookConfig *WebhookProxyConfig `json:"webhook,omitempty"`
+}
+
+type OAuthProxyConfig struct {
+    AuthorizeURL     string `json:"authorize_url"`
+    TokenURL         string `json:"token_url"`
+    UserinfoURL      string `json:"userinfo_url"`
+    IssuerURL        string `json:"issuer_url"`
+    ClientIDFile     string `json:"client_id_file"`
+    ClientSecretFile string `json:"client_secret_file"`
+}
+
+type OIDCProxyConfig struct {
+    IssuerURL     string                        `json:"issuer_url"`
+    ClientID      string                        `json:"client_id"`
+    Audiences     []string                      `json:"audiences"`
+    ClaimMappings *configv1.ClaimMappings       `json:"claim_mappings,omitempty"`
+}
+
+type WebhookProxyConfig struct {
+    WebhookConfigFile string `json:"webhook_config_file"`
+    CacheTTL          string `json:"cache_ttl"`
+}
+```
+
+### Usage Example
+
+```go
+func main() {
+    // Get in-cluster config (or use kubeconfig for development)
+    config, err := rest.InClusterConfig()
+    if err != nil {
+        panic(err)
+    }
+
+    detector, err := NewAuthModeDetector(config)
+    if err != nil {
+        panic(err)
+    }
+
+    ctx := context.Background()
+    mode, auth, err := detector.GetAuthenticationMode(ctx)
+    if err != nil {
+        panic(err)
+    }
+
+    fmt.Printf("Cluster authentication mode: %s\n", mode)
+
+    // Get proxy configuration
+    proxyConfig, err := detector.GetProxyConfiguration(ctx)
+    if err != nil {
+        panic(err)
+    }
+
+    // Deploy kube-auth-proxy with appropriate configuration
+    deployProxy(proxyConfig)
+}
+```
+
+### Key Implementation Notes
+
+#### **1. Authentication CR as Source of Truth**
+
+- Always query `authentication.config.openshift.io/cluster` (name is always "cluster")
+- The `spec.type` field is the primary indicator
+- Empty `type` equals `IntegratedOAuth` (default behavior)
+
+#### **2. Mode Detection Logic**
+
+- **OIDC Mode**: `spec.type == "OIDC"` AND `spec.oidcProviders` populated
+- **IntegratedOAuth Mode**: `spec.type == ""` OR `spec.type == "IntegratedOAuth"`
+- **None Mode**: `spec.webhookTokenAuthenticator` set WITHOUT `spec.oauthMetadata`
+
+#### **3. Configuration Extraction**
+
+- **IntegratedOAuth**: Use `status.integratedOAuthMetadata` for issuer URL
+- **OIDC**: Extract from `spec.oidcProviders[].issuer.url` and client configuration
+- **None**: Use `spec.webhookTokenAuthenticator.kubeConfig` reference
+
+#### **4. Rollout State Validation**
+
+**Critical**: When `spec.type == "OIDC"`, you must verify the configuration has fully rolled out before deploying proxy instances. The Authentication CR may show OIDC mode, but kube-apiserver pods might still be restarting with the new configuration.
+
+```go
+// Add rollout validation to your AuthModeDetector
+func (d *AuthModeDetector) IsOIDCFullyDeployed(ctx context.Context) (bool, error) {
+    mode, auth, err := d.GetAuthenticationMode(ctx)
+    if err != nil {
+        return false, err
+    }
+
+    // Only relevant for OIDC mode
+    if mode != ModeOIDC {
+        return true, nil
+    }
+
+    // Get KubeAPIServer CR to check rollout status
+    kasClient := d.configClient.OperatorV1().KubeAPIServers()
+    kas, err := kasClient.Get(ctx, "cluster", metav1.GetOptions{})
+    if err != nil {
+        return false, fmt.Errorf("getting kubeapiserver status: %w", err)
+    }
+
+    // Collect all active revisions across control plane nodes
+    observedRevisions := make(map[int32]bool)
+    for _, nodeStatus := range kas.Status.NodeStatuses {
+        observedRevisions[nodeStatus.CurrentRevision] = true
+    }
+
+    if len(observedRevisions) == 0 {
+        return false, nil // No nodes reporting status yet
+    }
+
+    // Verify each revision has proper OIDC configuration
+    coreClient, err := kubernetes.NewForConfig(d.restConfig)
+    if err != nil {
+        return false, err
+    }
+
+    for revision := range observedRevisions {
+        // Check auth-config-<revision> ConfigMap exists (OIDC provider config)
+        authConfigName := fmt.Sprintf("auth-config-%d", revision)
+        _, err := coreClient.CoreV1().ConfigMaps("openshift-kube-apiserver").Get(
+            ctx, authConfigName, metav1.GetOptions{})
+        if errors.IsNotFound(err) {
+            return false, nil // Rollout still in progress
+        } else if err != nil {
+            return false, fmt.Errorf("checking auth-config-%d: %w", revision, err)
+        }
+
+        // Check main config-<revision> has OIDC configuration
+        configName := fmt.Sprintf("config-%d", revision)
+        cm, err := coreClient.CoreV1().ConfigMaps("openshift-kube-apiserver").Get(
+            ctx, configName, metav1.GetOptions{})
+        if err != nil {
+            return false, fmt.Errorf("checking config-%d: %w", revision, err)
+        }
+
+        configYaml := cm.Data["config.yaml"]
+
+        // Validate OIDC-specific configuration is present
+        if !strings.Contains(configYaml, `"oauthMetadataFile":""`) ||
+           strings.Contains(configYaml, `"authentication-token-webhook-config-file":`) ||
+           !strings.Contains(configYaml, `"authentication-config":["/etc/kubernetes/static-pod-resources/configmaps/auth-config/auth-config.json"]`) {
+            return false, nil // This revision doesn't have OIDC config yet
+        }
+    }
+
+    return true, nil // All revisions have proper OIDC configuration
+}
+```
+
+#### **5. Controller Integration Pattern**
+
+```go
+func (r *YourController) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+    // Determine authentication mode
+    mode, auth, err := r.authDetector.GetAuthenticationMode(ctx)
+    if err != nil {
+        return ctrl.Result{}, err
+    }
+
+    // For OIDC mode, wait for full rollout before proceeding
+    if mode == ModeOIDC {
+        fullyDeployed, err := r.authDetector.IsOIDCFullyDeployed(ctx)
+        if err != nil {
+            return ctrl.Result{}, err
+        }
+
+        if !fullyDeployed {
+            r.Log.Info("OIDC configuration still rolling out, requeueing...")
+            return ctrl.Result{RequeueAfter: time.Minute}, nil
+        }
+    }
+
+    // Safe to deploy/configure kube-auth-proxy now
+    proxyConfig, err := r.authDetector.GetProxyConfiguration(ctx)
+    if err != nil {
+        return ctrl.Result{}, err
+    }
+
+    return r.reconcileProxy(ctx, proxyConfig)
+}
+```
+
+#### **6. Controller Setup Considerations**
+
+Your custom controller should:
+
+- **Watch Authentication CR** for changes using informers
+- **Watch KubeAPIServer CR** for rollout status updates (OIDC mode only)
+- **Requeue reconciliation** during OIDC rollouts instead of failing
+- **Handle rollout coordination** similar to cluster-authentication-operator
+- **Validate configuration** before deploying proxy instances
+- **Implement proper backoff** for rollout waiting (avoid tight loops)
+
+This approach ensures your `kube-auth-proxy` instances are only deployed after the cluster's authentication configuration has fully stabilized, preventing authentication failures during the transition period.
+
 ---
 
 _This document reflects the authentication architecture found in the OpenShift Kubernetes codebase as of the current analysis._
