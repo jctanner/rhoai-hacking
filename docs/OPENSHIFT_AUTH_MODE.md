@@ -537,53 +537,6 @@ spec:
 
 > **⚠️ Note**: The official documentation recommends using the `oc patch` command method rather than directly editing the FeatureGate CR, as it provides a cleaner rollback path and proper validation.
 
-## Security Implications
-
-### IntegratedOAuth Security
-
-- Centralized token management
-- OpenShift-controlled token lifecycle
-- Unified audit logging through OAuth server
-
-### Direct OIDC Security
-
-- External provider token validation
-- JWT signature verification
-- Direct provider trust relationship
-- Advanced claim validation with CEL
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Feature gate not enabled**: OIDC type unavailable
-2. **Configuration conflicts**: Webhook authenticators with OIDC type
-3. **Token validation failures**: External OIDC connectivity issues
-4. **Claim mapping errors**: CEL expression compilation failures
-
-### Diagnostic Commands
-
-```bash
-# Check current authentication configuration
-oc get authentication cluster -o yaml
-
-# Check feature gate status
-oc get featuregate cluster -o yaml
-
-# Check OAuth configuration (IntegratedOAuth mode)
-oc get oauth cluster -o yaml
-
-# Check authentication admission controller logs
-oc logs -n openshift-kube-apiserver <pod> | grep ValidateAuthentication
-```
-
-## References
-
-- [OpenShift Authentication API](https://docs.openshift.com/container-platform/latest/rest_api/config_apis/authentication-config-openshift-io-v1.html)
-- [Kubernetes Authentication](https://kubernetes.io/docs/reference/access-authn-authz/authentication/)
-- [OIDC Specification](https://openid.net/connect/)
-- [CEL Expression Language](https://github.com/google/cel-spec)
-
 ---
 
 _This document reflects the authentication architecture found in the OpenShift Kubernetes codebase as of the current analysis._
