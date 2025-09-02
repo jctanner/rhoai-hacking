@@ -293,6 +293,211 @@ spec:
           expression: "claims.sub" # CEL expression
 ```
 
+## ExternalOIDC Implementation Process
+
+The implementation of ExternalOIDC involves a coordinated process between feature gates, custom resources, and cluster operators. This section details the step-by-step process and the components involved.
+
+> **📖 Official Documentation**: The complete administrative procedure for configuring external OIDC authentication is documented in the [Red Hat OpenShift Container Platform 4.19 Authentication and Authorization Guide](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/authentication_and_authorization/external-auth). This section focuses on the technical implementation details and system orchestration that occurs behind the scenes.
+
+```mermaid
+sequenceDiagram
+    participant Admin as Cluster Admin
+    participant FG as FeatureGate CR
+    participant Auth as Authentication CR
+    participant CAO as cluster-authentication-operator
+    participant CKAO as cluster-kube-apiserver-operator
+    participant KAS as kube-apiserver
+    participant OAuth as OAuth Server
+    participant OIDC as External OIDC Provider
+
+    Note over Admin, OIDC: Phase 1: Enable Feature Gate
+    Admin->>FG: Update FeatureGate CR<br/>customFeatureGates:<br/>  - ExternalOIDC: Enabled
+    FG->>CKAO: Feature gate change detected
+    CKAO->>KAS: Restart kube-apiserver pods<br/>(enables OIDC API fields)
+
+    Note over Admin, OIDC: Phase 2: Configure OIDC Authentication
+    Admin->>Auth: Update Authentication CR<br/>spec.type: OIDC<br/>spec.oidcProviders: [...]
+    Auth->>CAO: Authentication CR change detected
+    CAO->>CAO: Validate OIDC configuration<br/>(discovery, claims, etc.)
+    CAO->>KAS: Generate kube-apiserver config<br/>with OIDC authenticator
+    CAO->>CKAO: Signal configuration change
+    CKAO->>KAS: Rolling restart with new config
+
+    Note over Admin, OIDC: Phase 3: Runtime Token Validation
+    Admin->>KAS: kubectl request with OIDC token
+    KAS->>OIDC: Validate JWT token<br/>(direct validation)
+    OIDC-->>KAS: Token valid + claims
+    KAS->>KAS: Apply CEL claim mappings<br/>(username, groups, uid)
+    KAS-->>Admin: Authorized request response
+
+    Note over OAuth: OAuth server continues running<br/>but bypassed for API auth
+```
+
+### Implementation Steps
+
+#### Step 1: Feature Gate Enablement
+
+**Admin Action:**
+
+```yaml
+# Update FeatureGate CR
+apiVersion: config.openshift.io/v1
+kind: FeatureGate
+metadata:
+  name: cluster
+spec:
+  customFeatureGates:
+    - enabled: true
+      name: ExternalOIDC
+```
+
+**System Response:**
+
+- `cluster-kube-apiserver-operator` detects feature gate change
+- Triggers rolling restart of kube-apiserver static pods
+- New API fields become available in Authentication CR schema
+- Admission controllers start accepting OIDC configurations
+
+#### Step 2: Authentication Configuration
+
+**Admin Action:**
+
+```yaml
+# Update Authentication CR
+apiVersion: config.openshift.io/v1
+kind: Authentication
+metadata:
+  name: cluster
+spec:
+  type: OIDC
+  oidcProviders:
+    - name: corporate-oidc
+      issuer: https://oidc.corp.example.com
+      audiences:
+        - openshift-cluster
+      claimMappings:
+        username:
+          expression: "claims.preferred_username"
+        groups:
+          expression: "claims.groups"
+```
+
+**System Response:**
+
+- `cluster-authentication-operator` validates OIDC configuration
+- Performs OIDC discovery against provider
+- Generates kube-apiserver authentication configuration
+- Creates necessary secrets and configmaps
+- Triggers kube-apiserver reconfiguration
+
+#### Step 3: kube-apiserver Reconfiguration
+
+**Automatic Process:**
+
+```yaml
+# Generated kube-apiserver config includes:
+authentication:
+  oidc:
+    issuerURL: https://oidc.corp.example.com
+    clientID: openshift-cluster
+    usernameClaim: preferred_username
+    groupsClaim: groups
+    # CEL claim mappings compiled into config
+```
+
+**System Actions:**
+
+- `cluster-kube-apiserver-operator` detects config change
+- Updates kube-apiserver static pod manifests
+- Performs rolling restart of control plane nodes
+- New authenticator chain includes OIDC token validator
+
+#### Step 4: Runtime Token Flow
+
+**Token Validation Process:**
+
+1. **Client Request**: User sends request with OIDC JWT token
+2. **Token Extraction**: kube-apiserver extracts bearer token
+3. **OIDC Validation**: Direct validation against external provider
+4. **Claim Processing**: Apply CEL expressions to map claims
+5. **Authorization**: Standard RBAC authorization with mapped identity
+
+### Key Components and Responsibilities
+
+#### cluster-authentication-operator
+
+**File**: `pkg/controllers/externaloidc/externaloidc_controller.go`
+
+- Watches Authentication CR for OIDC configuration
+- Validates OIDC provider connectivity and metadata
+- Generates kube-apiserver authentication configuration
+- Manages OIDC client secrets and certificates
+
+#### cluster-kube-apiserver-operator
+
+- Manages kube-apiserver static pod configuration
+- Handles rolling restarts when authentication config changes
+- Applies generated OIDC authenticator configuration
+
+#### Admission Controllers
+
+**File**: `openshift-kube-apiserver/admission/customresourcevalidation/authentication/validate_authentication.go`
+
+- Validates OIDC provider configurations
+- Compiles and validates CEL claim mapping expressions
+- Enforces feature gate requirements for OIDC fields
+
+### Configuration Validation
+
+The system performs extensive validation during configuration:
+
+```go
+// CEL expression validation
+func validateClaimMappings(mappings *configv1.ClaimMappings) error {
+    // Compile CEL expressions for username, groups, uid mappings
+    // Validate expression syntax and cost estimation
+    // Ensure required claims are mappable
+}
+
+// OIDC provider validation
+func validateOIDCProvider(provider *configv1.OIDCProvider) error {
+    // Perform OIDC discovery
+    // Validate issuer URL accessibility
+    // Check supported algorithms and claims
+}
+```
+
+### Rollback Process
+
+**Disabling ExternalOIDC (Official Process):**
+
+The [official Red Hat documentation](https://docs.redhat.com/en/documentation/openshift_container_platform/4.19/html/authentication_and_authorization/external-auth#disabling-direct-authentication_external-auth) provides the supported method:
+
+```bash
+# Official command to disable external OIDC
+oc patch authentication.config/cluster --type=merge -p='
+spec:
+  type: ""
+  oidcProviders: null
+'
+```
+
+**System Response:**
+
+1. **Authentication CR updated**: `type` set to empty string (equivalent to `IntegratedOAuth`)
+2. **OIDC providers removed**: `oidcProviders` field cleared
+3. **kube-apiserver restart**: Removes OIDC authenticator from chain
+4. **OAuth server**: Resumes handling API authentication via internal webhook
+5. **Cluster rollout**: Wait for all nodes to update to new revision
+
+**Feature Gate Disable (Advanced):**
+
+1. **Update FeatureGate CR**: Set `ExternalOIDC: Disabled`
+2. **API validation**: OIDC fields become invalid in Authentication CR
+3. **Forced cleanup**: Any OIDC configuration must be removed first
+
+> **⚠️ Note**: The official documentation recommends using the `oc patch` command method rather than directly editing the FeatureGate CR, as it provides a cleaner rollback path and proper validation.
+
 ## Security Implications
 
 ### IntegratedOAuth Security
