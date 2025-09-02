@@ -18,6 +18,7 @@ OpenShift supports three primary authentication types via `Authentication.spec.t
 
 ```
 User/Client → OpenShift OAuth Server → External Identity Provider → OAuth Server → OpenShift Token
+Token Validation: Client → kube-apiserver → webhook-authentication-integrated-oauth → OAuth Server
 ```
 
 **Characteristics**:
@@ -26,6 +27,7 @@ User/Client → OpenShift OAuth Server → External Identity Provider → OAuth 
 - OAuth server acts as identity broker/federation gateway
 - Supports multiple identity providers simultaneously
 - Issues OpenShift-specific tokens
+- kube-apiserver validates tokens via internal webhook to OAuth server
 - Maintains user sessions and identity mapping
 - Always available (no feature gate required)
 
@@ -89,7 +91,8 @@ spec:
 **Architecture**:
 
 ```
-User/Client → External Auth System → Webhook Token Authenticator → kube-apiserver
+User/Client → External Auth System → External Token
+Token Validation: Client → kube-apiserver → External Webhook Authenticator → External Validation Service
 ```
 
 **Characteristics**:
@@ -140,15 +143,16 @@ Extends ExternalOIDC with advanced claim mapping:
 
 ## Authentication Mode Comparison
 
-| Feature                | IntegratedOAuth   | OIDC             | None              |
-| ---------------------- | ----------------- | ---------------- | ----------------- |
-| **OAuth Server Role**  | Identity Broker   | Bypassed for API | Not Used          |
-| **Token Type**         | OpenShift Tokens  | External JWT     | External/Webhook  |
-| **Identity Providers** | Multiple          | Single OIDC      | External System   |
-| **Feature Gate**       | None Required     | ExternalOIDC     | None Required     |
-| **Claim Mapping**      | Basic             | Advanced (CEL)   | External System   |
-| **Session Management** | OpenShift Managed | Provider Managed | External System   |
-| **Upgrade Impact**     | Supported         | May Restrict     | Manual Management |
+| Feature                | IntegratedOAuth                   | OIDC                  | None              |
+| ---------------------- | --------------------------------- | --------------------- | ----------------- |
+| **OAuth Server Role**  | Identity Broker + Token Validator | Bypassed for API      | Not Used          |
+| **Token Type**         | OpenShift Tokens                  | External JWT          | External/Webhook  |
+| **Token Validation**   | Internal Webhook to OAuth         | Direct JWT Validation | External Webhook  |
+| **Identity Providers** | Multiple                          | Single OIDC           | External System   |
+| **Feature Gate**       | None Required                     | ExternalOIDC          | None Required     |
+| **Claim Mapping**      | Basic                             | Advanced (CEL)        | External System   |
+| **Session Management** | OpenShift Managed                 | Provider Managed      | External System   |
+| **Upgrade Impact**     | Supported                         | May Restrict          | Manual Management |
 
 ## Key Implementation Details
 
@@ -163,15 +167,45 @@ Extends ExternalOIDC with advanced claim mapping:
 When switching from `IntegratedOAuth` to `OIDC`:
 
 - OAuth server process **continues running**
-- API authentication **bypasses** OAuth server
+- API authentication **bypasses** OAuth server (no more internal webhook validation)
+- kube-apiserver switches from webhook validation to direct JWT validation
 - Console/UI may **still use** OAuth server for web flows
 - OAuth metadata endpoints may remain available
 
 ### Validation Rules
 
-- `WebhookTokenAuthenticator` only allowed with `None` or `IntegratedOAuth` types
+- `WebhookTokenAuthenticator` allowed with `None` or `IntegratedOAuth` types (IntegratedOAuth uses internal webhook)
 - OIDC providers only validated when `ExternalOIDC` feature gate is enabled
 - Complex cross-validation ensures configuration consistency
+
+### Real-World Configuration Example
+
+A typical OpenShift cluster (like CRC) shows this configuration pattern:
+
+```yaml
+# Authentication resource (defaults)
+apiVersion: config.openshift.io/v1
+kind: Authentication
+spec:
+  type: ""  # Empty = IntegratedOAuth (default)
+  webhookTokenAuthenticator:
+    kubeConfig:
+      name: webhook-authentication-integrated-oauth  # Internal webhook
+status:
+  integratedOAuthMetadata:
+    name: oauth-openshift  # OAuth server metadata
+
+# OAuth resource (identity providers)
+apiVersion: config.openshift.io/v1
+kind: OAuth
+spec:
+  identityProviders:
+  - name: developer
+    type: HTPasswd
+    htpasswd:
+      fileData:
+        name: htpass-secret
+```
 
 ## Feature Gate Control
 
