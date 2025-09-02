@@ -412,6 +412,45 @@ authentication:
 - Performs rolling restart of control plane nodes
 - New authenticator chain includes OIDC token validator
 
+**Rollout State Monitoring:**
+
+The `cluster-authentication-operator` actively monitors the rollout to ensure OIDC is properly deployed across all control plane nodes before declaring success:
+
+**File**: `pkg/controllers/common/external_oidc.go`
+
+```go
+// OIDCAvailable() function performs comprehensive rollout verification:
+func (c *AuthConfigChecker) OIDCAvailable() (bool, error) {
+    // 1. Verify Authentication CR has type: OIDC
+    if auth.Spec.Type != configv1.AuthenticationTypeOIDC {
+        return false, nil
+    }
+
+    // 2. Collect all active revisions across control plane nodes
+    for _, nodeStatus := range kas.Status.NodeStatuses {
+        observedRevisions.Insert(nodeStatus.CurrentRevision)
+    }
+
+    // 3. For each revision, verify OIDC configuration exists and is correct
+    for _, revision := range observedRevisions.UnsortedList() {
+        // Check auth-config-<revision> ConfigMap exists (OIDC provider config)
+        // Check config-<revision> ConfigMap has proper kube-apiserver args:
+        //   - oauthMetadataFile: ""                    (OAuth disabled)
+        //   - NO authentication-token-webhook-config   (No OAuth webhook)
+        //   - authentication-config: [auth-config.json] (OIDC enabled)
+    }
+}
+```
+
+**Safety Guarantees:**
+
+- **Atomic Rollout**: Returns `false` until ALL nodes have proper OIDC configuration
+- **No Mixed Modes**: Prevents scenarios where some nodes use OAuth, others OIDC
+- **Configuration Consistency**: Every revision must have identical OIDC setup
+- **Rollback Detection**: Immediately detects configuration inconsistencies
+
+This explains why OIDC rollouts take several minutes - the system waits for every control plane node to successfully restart with validated OIDC configuration before considering the change complete.
+
 #### Step 4: Runtime Token Flow
 
 **Token Validation Process:**
