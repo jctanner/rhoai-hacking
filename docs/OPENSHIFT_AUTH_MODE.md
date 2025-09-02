@@ -193,22 +193,6 @@ spec:
           expression: "claims.sub" # CEL expression
 ```
 
-## Migration Considerations
-
-### From IntegratedOAuth to OIDC
-
-1. Enable `ExternalOIDC` feature gate
-2. Configure external OIDC provider
-3. Update `Authentication.spec.type` to `OIDC`
-4. Update client configurations to use external OIDC endpoints
-5. Test authentication flows thoroughly
-
-### Rollback Considerations
-
-- Feature gate changes may be irreversible
-- Token compatibility between modes
-- User identity mapping preservation
-
 ## Security Implications
 
 ### IntegratedOAuth Security
