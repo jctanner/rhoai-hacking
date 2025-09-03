@@ -259,75 +259,6 @@ curl -X POST "http://localhost:8080/admin/realms/openshift/clients" \
 
 For managed OpenShift services, consult the specific documentation for your platform rather than following these BYOIDC instructions.
 
-## ROSA (Red Hat OpenShift on AWS) Integration
-
-**⚠️ CRITICAL: External auth providers must be enabled at cluster creation time and cannot be changed afterwards!**
-
-### ROSA Cluster Creation
-
-When creating a ROSA cluster that will use external identity providers like Keycloak, you **must** include the `--external-auth-providers-enabled` flag during cluster creation:
-
-```bash
-rosa create cluster \
-    --sts \
-    --oidc-config-id $OIDC_CONFIG_ID \
-    --cluster-name=$CLUSTER_NAME \
-    --version=4.19.4 \
-    --sts \
-    --mode=auto \
-    --hosted-cp \
-    --subnet-ids=$PRIVATE_SUBNET,$PUBLIC_SUBNET \
-    --compute-machine-type $MACHINE_POOL_TYPE \
-    --role-arn=$INSTALLER_ROLE \
-    --support-role-arn=$SUPPORT_ROLE \
-    --worker-iam-role=$WORKER_ROLE \
-    --external-auth-providers-enabled
-```
-
-**Note**: Replace `4.19.4` with the latest available OpenShift version. You can check available versions with:
-```bash
-rosa list versions --channel-group=stable
-```
-
-**Key Points:**
-- The `--external-auth-providers-enabled` flag is **required** for Keycloak integration
-- This setting **cannot be modified** after cluster creation
-- If you forget this flag, you'll need to recreate the cluster entirely
-- ROSA uses different identity provider configuration methods than self-managed OpenShift
-
-### ROSA Identity Provider Configuration
-
-Once your ROSA cluster is created with external auth providers enabled, configure Keycloak as an external auth provider using the ROSA CLI:
-
-```bash
-rosa create external-auth-provider \
-    --cluster=$ROSA_CLUSTER_NAME \
-    --name=keycloak \
-    --issuer-url=https://your-keycloak-domain/realms/your-realm \
-    --issuer-audiences=rosa-console,rosa-cli,odh-dashboard \
-    --claim-mapping-username-claim=preferred_username \
-    --claim-mapping-groups-claim=groups \
-    --console-client-id=rosa-console \
-    --console-client-secret=your-console-client-secret
-```
-
-**Configuration Parameters:**
-- `--cluster`: Your ROSA cluster name
-- `--name`: Name for the external auth provider (e.g., "keycloak")
-- `--issuer-url`: Your Keycloak realm URL (replace with your actual domain and realm)
-- `--issuer-audiences`: Comma-separated list of audiences (console, CLI, and ODH)
-- `--claim-mapping-username-claim`: Maps to `preferred_username` from Keycloak
-- `--claim-mapping-groups-claim`: Maps to `groups` claim for RBAC
-- `--console-client-id`: Client ID for the console (must match Keycloak client)
-- `--console-client-secret`: Client secret from Keycloak
-
-**Prerequisites for ROSA External Auth:**
-- ROSA cluster created with `--external-auth-providers-enabled`
-- Keycloak realm configured with appropriate clients:
-  - `rosa-console`: Confidential client for OpenShift Console
-  - `rosa-cli`: Public client for CLI access  
-  - ODH client configured with `odh-dashboard` audience
-
 ### Prerequisites
 - **Self-managed OpenShift 4.19+ cluster** (not ROSA) with cluster-admin privileges
 - Accessible Keycloak instance with configured realm and client
@@ -477,6 +408,75 @@ oc get pods -n openshift-authentication
 # Check login page for new identity provider
 # Visit: https://console-openshift-console.apps.your-cluster-domain.com
 ```
+
+## ROSA (Red Hat OpenShift on AWS) Integration
+
+**⚠️ CRITICAL: External auth providers must be enabled at cluster creation time and cannot be changed afterwards!**
+
+### ROSA Cluster Creation
+
+When creating a ROSA cluster that will use external identity providers like Keycloak, you **must** include the `--external-auth-providers-enabled` flag during cluster creation:
+
+```bash
+rosa create cluster \
+    --sts \
+    --oidc-config-id $OIDC_CONFIG_ID \
+    --cluster-name=$CLUSTER_NAME \
+    --version=4.19.4 \
+    --sts \
+    --mode=auto \
+    --hosted-cp \
+    --subnet-ids=$PRIVATE_SUBNET,$PUBLIC_SUBNET \
+    --compute-machine-type $MACHINE_POOL_TYPE \
+    --role-arn=$INSTALLER_ROLE \
+    --support-role-arn=$SUPPORT_ROLE \
+    --worker-iam-role=$WORKER_ROLE \
+    --external-auth-providers-enabled
+```
+
+**Note**: Replace `4.19.4` with the latest available OpenShift version. You can check available versions with:
+```bash
+rosa list versions --channel-group=stable
+```
+
+**Key Points:**
+- The `--external-auth-providers-enabled` flag is **required** for Keycloak integration
+- This setting **cannot be modified** after cluster creation
+- If you forget this flag, you'll need to recreate the cluster entirely
+- ROSA uses different identity provider configuration methods than self-managed OpenShift
+
+### ROSA Identity Provider Configuration
+
+Once your ROSA cluster is created with external auth providers enabled, configure Keycloak as an external auth provider using the ROSA CLI:
+
+```bash
+rosa create external-auth-provider \
+    --cluster=$ROSA_CLUSTER_NAME \
+    --name=keycloak \
+    --issuer-url=https://your-keycloak-domain/realms/your-realm \
+    --issuer-audiences=rosa-console,rosa-cli,odh-dashboard \
+    --claim-mapping-username-claim=preferred_username \
+    --claim-mapping-groups-claim=groups \
+    --console-client-id=rosa-console \
+    --console-client-secret=your-console-client-secret
+```
+
+**Configuration Parameters:**
+- `--cluster`: Your ROSA cluster name
+- `--name`: Name for the external auth provider (e.g., "keycloak")
+- `--issuer-url`: Your Keycloak realm URL (replace with your actual domain and realm)
+- `--issuer-audiences`: Comma-separated list of audiences (console, CLI, and ODH)
+- `--claim-mapping-username-claim`: Maps to `preferred_username` from Keycloak
+- `--claim-mapping-groups-claim`: Maps to `groups` claim for RBAC
+- `--console-client-id`: Client ID for the console (must match Keycloak client)
+- `--console-client-secret`: Client secret from Keycloak
+
+**Prerequisites for ROSA External Auth:**
+- ROSA cluster created with `--external-auth-providers-enabled`
+- Keycloak realm configured with appropriate clients:
+  - `rosa-console`: Confidential client for OpenShift Console
+  - `rosa-cli`: Public client for CLI access  
+  - ODH client configured with `odh-dashboard` audience
 
 ## ODH Client Configuration
 
