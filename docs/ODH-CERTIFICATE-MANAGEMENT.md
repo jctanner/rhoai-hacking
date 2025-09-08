@@ -115,7 +115,13 @@ Domain names for certificates are determined hierarchically:
 
 When `type: OpenshiftDefaultIngress` is configured, the system executes a multi-step process to discover and propagate OpenShift's ingress certificate:
 
+**Source Files:**
+- `pkg/cluster/cert.go` - Core certificate discovery and propagation functions
+- `internal/controller/components/kserve/kserve_support.go` - KServe integration logic
+
 #### Step 1: Discover the Ingress Controller
+**Function:** `FindAvailableIngressController()` in `pkg/cluster/cert.go`
+
 ```go
 // Location: openshift-ingress-operator/default
 IngressControllerName = types.NamespacedName{
@@ -127,6 +133,8 @@ IngressControllerName = types.NamespacedName{
 The system queries the default OpenShift ingress controller resource to understand the cluster's ingress configuration.
 
 #### Step 2: Determine Certificate Secret Name
+**Function:** `GetDefaultIngressCertSecretName()` in `pkg/cluster/cert.go`
+
 ```go
 func GetDefaultIngressCertSecretName(ingressCtrl *operatorv1.IngressController) string {
     if ingressCtrl.Spec.DefaultCertificate != nil {
@@ -141,6 +149,8 @@ The certificate secret name is determined by:
 - **Default Certificate**: Otherwise, use the pattern `router-certs-{controller-name}` (typically `router-certs-default`)
 
 #### Step 3: Retrieve the Certificate Secret
+**Functions:** `FindDefaultIngressSecret()` and `GetSecret()` in `pkg/cluster/cert.go`
+
 ```go
 // Source location: openshift-ingress namespace
 const IngressNamespace = "openshift-ingress"
@@ -149,6 +159,8 @@ const IngressNamespace = "openshift-ingress"
 The system fetches the actual certificate secret from the `openshift-ingress` namespace using the determined secret name.
 
 #### Step 4: Copy Certificate to Target Namespace
+**Functions:** `PropagateDefaultIngressCertificate()` and `copySecretToNamespace()` in `pkg/cluster/cert.go`
+
 ```go
 func copySecretToNamespace(ctx context.Context, c client.Client, secret *corev1.Secret, newSecretName, namespace string) error {
     newSecret := &corev1.Secret{
