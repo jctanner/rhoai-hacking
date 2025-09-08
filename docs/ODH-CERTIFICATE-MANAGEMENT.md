@@ -111,6 +111,109 @@ Domain names for certificates are determined hierarchically:
 - **Secret name**: `knative-serving-cert`
 - **Domain**: OpenShift cluster's ingress domain (auto-detected)
 
+### OpenShift Default Ingress Certificate Logic
+
+When `type: OpenshiftDefaultIngress` is configured, the system executes a multi-step process to discover and propagate OpenShift's ingress certificate:
+
+#### Step 1: Discover the Ingress Controller
+```go
+// Location: openshift-ingress-operator/default
+IngressControllerName = types.NamespacedName{
+    Namespace: "openshift-ingress-operator",
+    Name:      "default",
+}
+```
+
+The system queries the default OpenShift ingress controller resource to understand the cluster's ingress configuration.
+
+#### Step 2: Determine Certificate Secret Name
+```go
+func GetDefaultIngressCertSecretName(ingressCtrl *operatorv1.IngressController) string {
+    if ingressCtrl.Spec.DefaultCertificate != nil {
+        return ingressCtrl.Spec.DefaultCertificate.Name  // Custom certificate
+    }
+    return "router-certs-" + ingressCtrl.Name            // Default: "router-certs-default"
+}
+```
+
+The certificate secret name is determined by:
+- **Custom Certificate**: If a custom certificate is configured in the ingress controller, use that secret name
+- **Default Certificate**: Otherwise, use the pattern `router-certs-{controller-name}` (typically `router-certs-default`)
+
+#### Step 3: Retrieve the Certificate Secret
+```go
+// Source location: openshift-ingress namespace
+const IngressNamespace = "openshift-ingress"
+```
+
+The system fetches the actual certificate secret from the `openshift-ingress` namespace using the determined secret name.
+
+#### Step 4: Copy Certificate to Target Namespace
+```go
+func copySecretToNamespace(ctx context.Context, c client.Client, secret *corev1.Secret, newSecretName, namespace string) error {
+    newSecret := &corev1.Secret{
+        ObjectMeta: metav1.ObjectMeta{
+            Name:      newSecretName,        // e.g., "knative-serving-cert"
+            Namespace: namespace,            // e.g., "istio-system"
+        },
+        Data: secret.Data,                   // Copy certificate data
+        Type: secret.Type,                   // Preserve secret type (kubernetes.io/tls)
+    }
+    // Apply with field ownership for proper resource management
+}
+```
+
+The certificate is copied to the target namespace (typically the Service Mesh control plane namespace like `istio-system`) with:
+- **New name**: As specified in the KServe configuration (default: `knative-serving-cert`)
+- **Same data**: Exact copy of the certificate and private key
+- **Proper ownership**: Managed by the ODH operator with field ownership
+
+#### Complete Flow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     OpenShift Default Ingress Certificate Flow              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+1. Query Ingress Controller
+   ┌─────────────────────────────────┐
+   │ openshift-ingress-operator/     │ ──┐
+   │ IngressController "default"     │   │
+   └─────────────────────────────────┘   │
+                                         ▼
+2. Determine Certificate Secret Name     │
+   ┌─────────────────────────────────┐   │
+   │ Check: spec.defaultCertificate  │◄──┘
+   │ • Custom: use specified name    │
+   │ • Default: "router-certs-default"│
+   └─────────────────────────────────┘
+                    │
+                    ▼
+3. Fetch Certificate Secret
+   ┌─────────────────────────────────┐
+   │ openshift-ingress/              │
+   │ Secret "router-certs-default"   │
+   │ • tls.crt (certificate)         │
+   │ • tls.key (private key)         │
+   └─────────────────────────────────┘
+                    │
+                    ▼
+4. Copy to Target Namespace
+   ┌─────────────────────────────────┐
+   │ istio-system/                   │
+   │ Secret "knative-serving-cert"   │
+   │ • Same certificate data         │
+   │ • ODH operator ownership        │
+   └─────────────────────────────────┘
+```
+
+#### Implementation Notes
+
+1. **Automatic Discovery**: No manual certificate configuration required
+2. **Cluster Integration**: Uses the same certificates that secure the cluster's ingress traffic
+3. **Certificate Rotation**: Automatically inherits any certificate updates from OpenShift
+4. **Production Ready**: Leverages enterprise-grade certificate management
+
 ## 2. Trusted CA Bundle Management
 
 ### Purpose
