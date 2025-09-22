@@ -50,6 +50,14 @@ import boto3
 bucket_name = 'XXXXXX'
 key_id = os.environ.get('AWS_ACCESS_KEY_ID')
 secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
+
+s3_client = boto3.client(
+    "s3",
+    endpoint_url="https://minio.tannerjc.net",  # your MinIO server
+    aws_access_key_id=key_id,
+    aws_secret_access_key=secret_key,
+    region_name="us-east-1"  # MinIO usually ignores this, but boto3 requires it
+)
 ```
 
 ```
