@@ -358,12 +358,12 @@ oc create secret generic console-secret \
   -n openshift-config
 ```
 
-#### 4. Create OAuth Configuration:
+#### 4. Create Authentication Configuration:
 
-**Create the OAuth configuration file (`oauth-byoidc-config.yaml`):**
+**Create the Authentication configuration file (`authentication-byoidc-config.yaml`):**
 ```yaml
 apiVersion: config.openshift.io/v1
-kind: OAuth
+kind: Authentication
 metadata:
   name: cluster
 spec:
@@ -372,7 +372,6 @@ spec:
     claimMappings:
       groups:
         claim: groups
-        prefixPolicy: NoPrefix
       username:
         claim: preferred_username
         prefixPolicy: NoPrefix
@@ -397,7 +396,7 @@ spec:
 
 #### 5. Apply Configuration:
 ```bash
-oc apply -f oauth-byoidc-config.yaml
+oc apply -f authentication-byoidc-config.yaml
 ```
 
 #### 6. Verify Configuration:
