@@ -791,6 +791,591 @@ Kuadrant supports policy hierarchy where policies can be attached at different l
 - **Ambient Mode**: New sidecar-less approach (requires Istio 1.15+)
 - **Istio Gateway Only**: Just the gateway component without the mesh
 
+## Multi-Cluster Capabilities
+
+Kuadrant provides advanced multi-cluster ingress management and global load balancing capabilities, enabling enterprises to distribute applications across multiple Kubernetes clusters for improved availability, performance, and disaster recovery.
+
+### Overview
+
+**Multi-cluster features enable**:
+- **Global traffic management** across geographically distributed clusters
+- **Automated DNS configuration** for multi-cluster gateways
+- **Intelligent load balancing** based on geography or custom weights
+- **Programmatic workload placement** and movement between clusters
+- **High availability** with automatic failover
+- **Disaster recovery** capabilities
+
+### Architecture
+
+Kuadrant's multi-cluster capabilities are built on:
+
+1. **Open Cluster Management (OCM)** - Multi-cluster control plane
+2. **Multi-Cluster Gateway Controller** - Gateway distribution and DNS management
+3. **DNS Operator** - Integration with DNS providers (AWS Route53, GCP Cloud DNS, Azure DNS)
+4. **Gateway API** - Standard API for gateway configuration across clusters
+
+```
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                          Hub Cluster (Control Plane)                           │
+│                                                                                │
+│  ┌─────────────────────┐    ┌─────────────────────┐    ┌─────────────────┐     │
+│  │ Multi-Cluster       │    │ DNS Operator        │    │ OCM Hub         │     │
+│  │ Gateway Controller  │────│ (Route53, GCP DNS,  │    │ (Placement)     │     │
+│  │                     │    │  Azure DNS)         │    │                 │     │
+│  └─────────────────────┘    └─────────────────────┘    └─────────────────┘     │
+│            │                           │                        │              │
+│            │                           │                        │              │
+└────────────┼───────────────────────────┼────────────────────────┼──────────────┘
+             │                           │                        │
+             │                           │                        │
+    ┌────────┼───────────────────────────┼────────────────────────┼──────────┐
+    │        │                           │                        │          │
+    │        ▼                           ▼                        ▼          │
+┌───┴────────────────────┐  ┌────────────────────────┐  ┌────────────────────────┐
+│   Cluster 1 (AWS)      │  │  Cluster 2 (GCP)       │  │  Cluster 3 (Azure)     │
+│                        │  │                        │  │                        │
+│  ┌──────────────────┐  │  │  ┌──────────────────┐  │  │  ┌──────────────────┐  │
+│  │ Gateway Instance │  │  │  │ Gateway Instance │  │  │  │ Gateway Instance │  │
+│  │ + Kuadrant       │  │  │  │ + Kuadrant       │  │  │  │ + Kuadrant       │  │
+│  │ + Policies       │  │  │  │ + Policies       │  │  │  │ + Policies       │  │
+│  └──────────────────┘  │  │  └──────────────────┘  │  │  └──────────────────┘  │
+│          │             │  │          │             │  │          │             │
+│          ▼             │  │          ▼             │  │          ▼             │
+│  ┌──────────────────┐  │  │  ┌──────────────────┐  │  │  ┌──────────────────┐  │
+│  │ Application Pods │  │  │  │ Application Pods │  │  │  │ Application Pods │  │
+│  └──────────────────┘  │  │  └──────────────────┘  │  │  └──────────────────┘  │
+└────────────────────────┘  └────────────────────────┘  └────────────────────────┘
+             │                          │                          │
+             └──────────────────────────┴──────────────────────────┘
+                                        │
+                                        ▼
+                           ┌─────────────────────────┐
+                           │  DNS Provider           │
+                           │  (Global Load Balancing)│
+                           │  - Geo-based routing    │
+                           │  - Weighted routing     │
+                           │  - Health checks        │
+                           └─────────────────────────┘
+```
+
+### Multi-Cluster Gateway Management
+
+#### 1. Gateway Distribution
+
+**MGCGateway** (Multi-Cluster Gateway) is the custom resource that defines a gateway to be distributed across multiple clusters:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: Gateway
+metadata:
+  name: prod-web
+  namespace: multi-cluster-gateways
+spec:
+  gatewayClassName: kuadrant-multi-cluster-gateway-instance-per-cluster
+  listeners:
+  - name: api
+    hostname: api.example.com
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: api-example-com-tls
+        kind: Secret
+    allowedRoutes:
+      namespaces:
+        from: All
+```
+
+#### 2. Cluster Placement
+
+Use OCM's **Placement** resource to control which clusters receive the gateway:
+
+```yaml
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: prod-web-placement
+  namespace: multi-cluster-gateways
+spec:
+  numberOfClusters: 3
+  clusterSets:
+  - global-production
+  predicates:
+  - requiredClusterSelector:
+      labelSelector:
+        matchLabels:
+          environment: production
+          gateway-capable: "true"
+      claimSelector:
+        matchExpressions:
+        - key: cloud-provider
+          operator: In
+          values: ["aws", "gcp", "azure"]
+```
+
+#### 3. TLS Certificate Distribution
+
+**TLSPolicy** ensures TLS certificates are automatically provisioned and distributed to all gateway instances:
+
+```yaml
+apiVersion: kuadrant.io/v1
+kind: TLSPolicy
+metadata:
+  name: prod-web-tls
+  namespace: multi-cluster-gateways
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: prod-web
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: letsencrypt-production
+```
+
+**How it works**:
+1. TLSPolicy watches the Gateway resource
+2. Creates cert-manager Certificate resources for all hostnames
+3. Distributes certificates to all clusters via OCM
+4. Automatically renews certificates before expiration
+
+### Global Load Balancing with DNSPolicy
+
+**DNSPolicy** provides intelligent DNS-based load balancing across multiple gateway instances.
+
+#### Load Balancing Strategies
+
+**1. Weighted Load Balancing**
+
+Distribute traffic based on custom weights assigned to clusters or cloud providers:
+
+```yaml
+apiVersion: kuadrant.io/v1
+kind: DNSPolicy
+metadata:
+  name: prod-web-dns
+  namespace: multi-cluster-gateways
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: prod-web
+  loadBalancing:
+    weighted:
+      defaultWeight: 100
+      custom:
+      # Send more traffic to AWS (larger capacity)
+      - selector:
+          matchLabels:
+            cloud-provider: aws
+        weight: 200
+      # Reduce traffic to Azure (smaller capacity)
+      - selector:
+          matchLabels:
+            cloud-provider: azure
+        weight: 50
+```
+
+**Result**: Traffic is distributed proportionally:
+- AWS clusters: ~50% (200/400 total weight)
+- GCP clusters: ~25% (100/400 total weight)
+- Azure clusters: ~12.5% (50/400 total weight)
+
+**2. Geographic Load Balancing**
+
+Route users to the nearest cluster based on geographic location:
+
+```yaml
+apiVersion: kuadrant.io/v1
+kind: DNSPolicy
+metadata:
+  name: prod-web-geo-dns
+  namespace: multi-cluster-gateways
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: prod-web
+  loadBalancing:
+    geo:
+      defaultGeo: US
+      # Route European traffic to European clusters
+      - geo: EU
+        selector:
+          matchLabels:
+            region: europe
+      # Route Asian traffic to Asian clusters
+      - geo: AS
+        selector:
+          matchLabels:
+            region: asia
+      # Route North American traffic
+      - geo: NA
+        selector:
+          matchLabels:
+            region: north-america
+```
+
+**3. Combined Weighted + Geographic**
+
+Use both strategies together for optimal traffic distribution:
+
+```yaml
+apiVersion: kuadrant.io/v1
+kind: DNSPolicy
+metadata:
+  name: prod-web-advanced-dns
+  namespace: multi-cluster-gateways
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: prod-web
+  loadBalancing:
+    # Geographic routing first
+    geo:
+      defaultGeo: US
+      - geo: EU
+        selector:
+          matchLabels:
+            region: europe
+    # Then weighted within each region
+    weighted:
+      defaultWeight: 100
+      custom:
+      - selector:
+          matchLabels:
+            cluster-tier: premium
+        weight: 200
+      - selector:
+          matchLabels:
+            cluster-tier: standard
+        weight: 100
+```
+
+#### DNS Provider Configuration
+
+Kuadrant integrates with major cloud DNS providers:
+
+**AWS Route53**:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+  namespace: kuadrant-dns-system
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE
+  AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+---
+apiVersion: kuadrant.io/v1alpha1
+kind: ManagedZone
+metadata:
+  name: example-com
+  namespace: multi-cluster-gateways
+spec:
+  domainName: example.com
+  description: Example.com managed zone
+  dnsProviderSecretRef:
+    name: aws-credentials
+```
+
+**GCP Cloud DNS**:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gcp-credentials
+  namespace: kuadrant-dns-system
+type: Opaque
+stringData:
+  GOOGLE: |
+    {
+      "type": "service_account",
+      "project_id": "my-project",
+      "private_key_id": "key-id",
+      "private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+      "client_email": "dns-admin@my-project.iam.gserviceaccount.com"
+    }
+
+---
+apiVersion: kuadrant.io/v1alpha1
+kind: ManagedZone
+metadata:
+  name: example-com-gcp
+  namespace: multi-cluster-gateways
+spec:
+  domainName: example.com
+  description: Example.com on GCP
+  dnsProviderSecretRef:
+    name: gcp-credentials
+```
+
+**Azure DNS**:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: azure-credentials
+  namespace: kuadrant-dns-system
+type: Opaque
+stringData:
+  AZURE_SUBSCRIPTION_ID: 12345678-1234-1234-1234-123456789012
+  AZURE_TENANT_ID: 87654321-4321-4321-4321-210987654321
+  AZURE_CLIENT_ID: abcdef12-ab12-ab12-ab12-abcdef123456
+  AZURE_CLIENT_SECRET: your-client-secret
+
+---
+apiVersion: kuadrant.io/v1alpha1
+kind: ManagedZone
+metadata:
+  name: example-com-azure
+  namespace: multi-cluster-gateways
+spec:
+  domainName: example.com
+  description: Example.com on Azure
+  dnsProviderSecretRef:
+    name: azure-credentials
+```
+
+### Programmatic Workload Movement
+
+Kuadrant enables automated application and workload movement across clusters for resource optimization, scaling, and disaster recovery.
+
+#### Use Cases
+
+1. **Cost Optimization** - Move workloads to clusters with lower costs
+2. **Resource Balancing** - Distribute load across available capacity
+3. **Disaster Recovery** - Failover to healthy clusters
+4. **Geographic Expansion** - Deploy to new regions dynamically
+5. **Maintenance Windows** - Drain clusters for upgrades
+
+#### Implementation with OCM Placement
+
+**Dynamic Cluster Selection**:
+
+```yaml
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: dynamic-app-placement
+  namespace: applications
+spec:
+  # Automatically select best 3 clusters
+  numberOfClusters: 3
+  prioritizerPolicy:
+    mode: Exact
+    configurations:
+    # Prefer clusters with more available resources
+    - scoreCoordinate:
+        type: BuiltIn
+        builtIn: ResourceAllocatableCPU
+      weight: 1
+    - scoreCoordinate:
+        type: BuiltIn
+        builtIn: ResourceAllocatableMemory
+      weight: 1
+  predicates:
+  # Only select healthy clusters
+  - requiredClusterSelector:
+      labelSelector:
+        matchExpressions:
+        - key: health
+          operator: In
+          values: ["healthy"]
+      claimSelector:
+        matchExpressions:
+        # Clusters with sufficient capacity
+        - key: cpu.available
+          operator: Gt
+          values: ["10"]
+        - key: memory.available
+          operator: Gt
+          values: ["32Gi"]
+```
+
+**Application Placement Decision**:
+
+OCM automatically creates PlacementDecision resources based on the Placement criteria:
+
+```yaml
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: PlacementDecision
+metadata:
+  name: dynamic-app-placement-decision-1
+  ownerReferences:
+  - apiVersion: cluster.open-cluster-management.io/v1beta1
+    kind: Placement
+    name: dynamic-app-placement
+status:
+  decisions:
+  - clusterName: aws-us-east-1
+    reason: "High available resources"
+  - clusterName: gcp-us-central1
+    reason: "High available resources"
+  - clusterName: azure-eastus
+    reason: "High available resources"
+```
+
+#### Automated Failover
+
+**Health-Based Placement**:
+
+```yaml
+apiVersion: cluster.open-cluster-management.io/v1beta1
+kind: Placement
+metadata:
+  name: ha-app-placement
+  namespace: critical-apps
+spec:
+  numberOfClusters: 3
+  # Tolerate 1 cluster failure
+  tolerations:
+  - key: cluster.open-cluster-management.io/unreachable
+    operator: Exists
+    tolerationSeconds: 300
+  predicates:
+  - requiredClusterSelector:
+      labelSelector:
+        matchLabels:
+          tier: production
+          ha-enabled: "true"
+```
+
+**How automated failover works**:
+1. OCM continuously monitors cluster health
+2. If a cluster becomes unhealthy, OCM updates PlacementDecision
+3. Multi-Cluster Gateway Controller removes unhealthy cluster from DNS
+4. Traffic automatically routes to healthy clusters
+5. When cluster recovers, it's automatically added back
+
+#### Workload Migration Example
+
+**Before Migration** (3 clusters):
+```yaml
+# Placement selects 3 clusters
+spec:
+  numberOfClusters: 3
+  predicates:
+  - requiredClusterSelector:
+      labelSelector:
+        matchLabels:
+          region: north-america
+```
+
+**Trigger Migration** (expand to 5 clusters):
+```yaml
+# Update placement to include more clusters
+spec:
+  numberOfClusters: 5
+  predicates:
+  - requiredClusterSelector:
+      labelSelector:
+        matchExpressions:
+        - key: region
+          operator: In
+          values: ["north-america", "europe"]
+```
+
+**Result**:
+1. OCM identifies 2 additional clusters in Europe
+2. Multi-Cluster Gateway Controller deploys gateway to new clusters
+3. DNSPolicy automatically adds new clusters to DNS records
+4. Traffic gradually shifts to include European clusters
+5. Geographic load balancing routes EU users to EU clusters
+
+### Multi-Cluster Policy Enforcement
+
+Kuadrant policies (AuthPolicy, RateLimitPolicy, etc.) work seamlessly across all gateway instances:
+
+```yaml
+# Single AuthPolicy applies to all gateway instances
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: prod-web-auth
+  namespace: multi-cluster-gateways
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: prod-web
+  rules:
+    authentication:
+      "jwt":
+        jwt:
+          issuerUrl: "https://auth.example.com"
+          audiences: ["api.example.com"]
+
+---
+# Single RateLimitPolicy applies globally
+apiVersion: kuadrant.io/v1
+kind: RateLimitPolicy
+metadata:
+  name: prod-web-ratelimit
+  namespace: multi-cluster-gateways
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: prod-web
+  limits:
+    "global-per-user":
+      counters:
+      - expression: auth.identity.username
+      rates:
+      - limit: 1000
+        window: 60s
+```
+
+**Key benefit**: Define policies once, enforce everywhere. Kuadrant automatically distributes and synchronizes policies across all clusters.
+
+### Multi-Cluster Deployment Best Practices
+
+1. **Cluster Labeling**
+   - Use consistent labels across clusters (region, cloud-provider, tier)
+   - Labels enable dynamic placement and load balancing
+
+2. **DNS Strategy**
+   - Use geo-based routing for latency-sensitive applications
+   - Use weighted routing for gradual rollouts and A/B testing
+   - Combine both for optimal user experience
+
+3. **Certificate Management**
+   - Use TLSPolicy for automated certificate lifecycle
+   - Leverage Let's Encrypt or enterprise CA
+   - Ensure cert-manager is installed in all clusters
+
+4. **Health Monitoring**
+   - Configure OCM health checks
+   - Set appropriate tolerations for transient failures
+   - Monitor DNSRecord status for DNS propagation
+
+5. **Disaster Recovery**
+   - Deploy to at least 3 clusters across different availability zones
+   - Use numberOfClusters with tolerations for automatic failover
+   - Test failover scenarios regularly
+
+### Current Limitations
+
+1. **OCM Requirement**: Multi-cluster features currently require Open Cluster Management
+2. **Gateway Provider**: Primarily tested with Istio Gateway (other providers in development)
+3. **DNS Scope**: DNSPolicy applies to entire Gateway, not individual listeners
+4. **Control Plane**: Requires a dedicated hub cluster for OCM
+
+### Future Roadmap
+
+**Planned improvements for multi-cluster capabilities**:
+- Decouple from OCM to support other multi-cluster platforms
+- Per-listener DNS policies for more granular control
+- On-cluster DNS provider support (CoreDNS, external-dns)
+- Enhanced workload migration with traffic shifting controls
+- Integration with GitOps tools (ArgoCD, Flux) for declarative placement
+
 ## Security Features
 
 ### Authentication Methods
