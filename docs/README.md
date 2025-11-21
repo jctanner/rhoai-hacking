@@ -23,16 +23,6 @@ Explains the two core custom resources managed by the OpenDataHub operator:
 - `DataScienceCluster (DSC)` - Component management and configuration
 - Resource relationship diagrams and controller workflows
 
-### [OCP_GATEWAY_ARCHITECTURE.md](OCP_GATEWAY_ARCHITECTURE.md)
-**Gateway API Architecture in OpenShift**
-
-Complete architectural flow for Gateway API implementation in OpenShift:
-- How Gateway resources are reconciled
-- Address population from cloud load balancers
-- DNS record management
-- Bare metal deployment scenarios
-- Integration with Istio/Service Mesh
-
 ### [IMAGES.md](IMAGES.md)
 **OpenDataHub Platform Docker Images Catalog**
 
@@ -131,6 +121,16 @@ Comprehensive analysis of the cluster-ingress-operator:
 - Integration with OpenShift Service Mesh (Istio)
 - DNS management and cloud provider integration
 - Source code analysis and architecture diagrams
+
+### [OCP_GATEWAY_ARCHITECTURE.md](OCP_GATEWAY_ARCHITECTURE.md)
+**Gateway API Architecture in OpenShift**
+
+Complete architectural flow for Gateway API implementation in OpenShift:
+- How Gateway resources are reconciled
+- Address population from cloud load balancers
+- DNS record management
+- Bare metal deployment scenarios
+- Integration with Istio/Service Mesh
 
 ### [GATEWAY_WASM.md](GATEWAY_WASM.md)
 **Gateway API and WASM Extensions: Complete Implementation Guide**
