@@ -8,8 +8,16 @@ This document provides a comprehensive overview of how the Kuadrant components w
 
 1. **Kuadrant Operator** - The main orchestrator that manages the entire platform
 2. **Authorino** - Authentication and authorization service
-3. **Limitador** - Rate limiting service  
+3. **Limitador** - Rate limiting service (supports both request-based and AI token-based limiting)
 4. **WASM Shim** - Envoy proxy extension that bridges Gateway API and services
+
+### API Versions
+
+Kuadrant policies are currently at different API maturity levels:
+
+- **v1** (Stable): `AuthPolicy`, `RateLimitPolicy`, `DNSPolicy`, `TLSPolicy`
+- **v1beta1** (Beta): `Kuadrant` (main configuration resource)
+- **v1alpha1** (Alpha): `TokenRateLimitPolicy` (token-based rate limiting for AI/LLM workloads)
 
 ## Gateway API Providers vs Service Mesh
 
@@ -148,11 +156,12 @@ spec:
 - Supports both Istio and Envoy Gateway providers
 
 **Primary CRDs**:
-- `Kuadrant` - Main configuration resource
-- `AuthPolicy` - Authentication and authorization policies
-- `RateLimitPolicy` - Rate limiting policies
-- `DNSPolicy` - DNS management policies
-- `TLSPolicy` - TLS/SSL certificate policies
+- `Kuadrant` - Main configuration resource (v1beta1)
+- `AuthPolicy` - Authentication and authorization policies (v1)
+- `RateLimitPolicy` - Request-based rate limiting policies (v1)
+- `TokenRateLimitPolicy` - Token-based rate limiting for AI/LLM workloads (v1alpha1)
+- `DNSPolicy` - DNS management policies (v1)
+- `TLSPolicy` - TLS/SSL certificate policies (v1)
 
 **Architecture Role**: 
 - Watches Gateway API resources (Gateway, HTTPRoute)
@@ -216,6 +225,53 @@ spec:
 - Integrates with Envoy through Rate Limit filter
 - Can use authentication context from Authorino for user-based limiting
 - Supports both global and per-user rate limiting
+
+**Token-Based Rate Limiting (v1alpha1)**:
+
+In addition to traditional request-based rate limiting, Limitador supports **token-based rate limiting** specifically designed for AI/LLM workloads through the `TokenRateLimitPolicy` CRD:
+
+- **Automatic Token Tracking**: Extracts `usage.total_tokens` from OpenAI-compatible API responses
+- **Accurate Usage Metering**: Tracks actual token consumption rather than request counts
+- **User Segmentation**: Different limits for different user tiers (free, premium, enterprise)
+- **Multiple Time Windows**: Burst protection, hourly quotas, and daily limits
+- **Integration with AuthPolicy**: Uses authentication claims for user-based token limiting
+- **Graceful Fallback**: Falls back to request counting if token parsing fails
+
+**Key Differences from RateLimitPolicy**:
+- **RateLimitPolicy**: Limits based on request counts (e.g., 100 requests/minute)
+- **TokenRateLimitPolicy**: Limits based on actual AI token consumption (e.g., 20,000 tokens/day)
+
+**Token Tracking Workflow**:
+1. Gateway monitors AI/LLM API requests that match TokenRateLimitPolicy rules
+2. After receiving the response, extracts token usage from response body
+3. Sends rate limit request to Limitador with actual token count as `hits_addend`
+4. Limitador tracks cumulative token usage and enforces limits
+
+**Example Use Case**:
+```yaml
+# Different token limits for different user tiers
+limits:
+  free-tier:
+    rates:
+    - limit: 20000      # 20k tokens per day
+      window: 24h
+    when:
+    - predicate: 'auth.identity.groups.split(",").exists(g, g == "free")'
+    counters:
+    - expression: auth.identity.userid
+  premium-tier:
+    rates:
+    - limit: 200000     # 200k tokens per day
+      window: 24h
+    when:
+    - predicate: 'auth.identity.groups.split(",").exists(g, g == "premium")'
+    counters:
+    - expression: auth.identity.userid
+```
+
+**Current Limitations**:
+- Only supports non-streaming OpenAI-style responses (where `stream: false`)
+- Streaming response support planned for future releases
 
 ### 4. **WASM Shim** (`wasm-shim`)
 
@@ -745,6 +801,112 @@ spec:
 # Same HTTPRoute, AuthPolicy, and RateLimitPolicy as above
 # Kuadrant automatically configures the appropriate WASM filters
 ```
+
+**Option C: Token-Based Rate Limiting for AI/LLM Workloads**
+
+```yaml
+# Gateway configuration
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: llm-gateway
+spec:
+  gatewayClassName: istio
+  listeners:
+  - name: http
+    port: 80
+    protocol: HTTP
+    hostname: "api.example.com"
+
+---
+# HTTPRoute to AI/LLM service
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: llm-route
+spec:
+  parentRefs:
+  - name: llm-gateway
+  hostnames:
+  - "api.example.com"
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /v1/chat/completions
+    backendRefs:
+    - name: openai-compatible-service
+      port: 8080
+
+---
+# AuthPolicy for user authentication
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: llm-auth
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: llm-route
+  rules:
+    authentication:
+      "jwt-auth":
+        jwt:
+          issuerUrl: "https://auth.example.com"
+          audiences: ["llm-api"]
+
+---
+# TokenRateLimitPolicy for token-based limiting
+apiVersion: kuadrant.io/v1alpha1
+kind: TokenRateLimitPolicy
+metadata:
+  name: llm-token-limits
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: llm-route
+  limits:
+    free-tier:
+      rates:
+      - limit: 20000      # 20k tokens per day
+        window: 24h
+      - limit: 1000       # 1k tokens per hour (burst protection)
+        window: 1h
+      when:
+      - predicate: 'auth.identity.groups.split(",").exists(g, g == "free")'
+      counters:
+      - expression: auth.identity.userid
+    premium-tier:
+      rates:
+      - limit: 200000     # 200k tokens per day
+        window: 24h
+      - limit: 10000      # 10k tokens per hour
+        window: 1h
+      when:
+      - predicate: 'auth.identity.groups.split(",").exists(g, g == "premium")'
+      counters:
+      - expression: auth.identity.userid
+    enterprise-tier:
+      rates:
+      - limit: 1000000    # 1M tokens per day
+        window: 24h
+      when:
+      - predicate: 'auth.identity.groups.split(",").exists(g, g == "enterprise")'
+      counters:
+      - expression: auth.identity.organization
+```
+
+**How This Works**:
+1. User sends request to `/v1/chat/completions` endpoint
+2. AuthPolicy validates JWT and extracts user identity and groups
+3. Request is forwarded to OpenAI-compatible service
+4. Service returns response with `usage.total_tokens` in response body
+5. Gateway extracts actual token count from response
+6. TokenRateLimitPolicy applies appropriate limit based on user tier
+7. Limitador tracks cumulative token usage per user/organization
+8. If limit exceeded, subsequent requests return 429 (Too Many Requests)
 
 ### Multi-Environment Configuration
 
