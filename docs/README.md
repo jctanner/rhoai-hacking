@@ -113,24 +113,27 @@ Superior architectural pattern using centralized authentication:
 
 ## Gateway & Service Mesh
 
-### [GATEWAY.md](GATEWAY.md)
-**OpenShift Ingress Operator Gateway API Implementation**
+### [OCP_GATEWAY_HOWTO.md](OCP_GATEWAY_HOWTO.md)
+**OpenShift Gateway API: Practical Usage Guide**
 
-Comprehensive analysis of the cluster-ingress-operator:
-- Gateway API controllers (gatewayapi, gatewayclass, gateway-service-dns)
-- Integration with OpenShift Service Mesh (Istio)
-- DNS management and cloud provider integration
-- Source code analysis and architecture diagrams
+Implementation guide focused on using Gateway API in OpenShift:
+- Understanding the 4 cluster-ingress-operator controllers
+- Manual GatewayClass creation and namespace requirements
+- Envoy Filter capabilities in gateway-only mode
+- Single-node environment workarounds (SNO/CRC with Route bridge)
+- DNS management details (listeners vs HTTPRoutes)
+- Troubleshooting and debugging commands
 
 ### [OCP_GATEWAY_ARCHITECTURE.md](OCP_GATEWAY_ARCHITECTURE.md)
 **Gateway API Architecture in OpenShift**
 
-Complete architectural flow for Gateway API implementation in OpenShift:
-- How Gateway resources are reconciled
-- Address population from cloud load balancers
-- DNS record management
-- Bare metal deployment scenarios
-- Integration with Istio/Service Mesh
+Complete architectural reference covering the full Gateway API stack:
+- 3-layer architecture (cluster-ingress-operator → sail-operator → Istio)
+- End-to-end data flows with diagrams
+- Gateway address population from cloud load balancers
+- DNS management flow across all layers
+- Bare metal deployment scenarios and solutions
+- File references with exact line numbers
 
 ### [GATEWAY_WASM.md](GATEWAY_WASM.md)
 **Gateway API and WASM Extensions: Complete Implementation Guide**
