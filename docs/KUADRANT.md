@@ -19,6 +19,150 @@ Kuadrant policies are currently at different API maturity levels:
 - **v1beta1** (Beta): `Kuadrant` (main configuration resource)
 - **v1alpha1** (Alpha): `TokenRateLimitPolicy` (token-based rate limiting for AI/LLM workloads)
 
+## Kuadrant vs Red Hat Connectivity Link
+
+**Kuadrant** is the upstream open source project that provides Kubernetes-native API security and traffic management.
+
+**Red Hat Connectivity Link** is the downstream commercial product based on Kuadrant, offering:
+- Enterprise support and lifecycle management
+- Integration with Red Hat OpenShift
+- Additional enterprise features and tooling
+- Professional services and training
+
+This documentation focuses on the open source Kuadrant project. For Red Hat Connectivity Link specific features and support, please refer to the official Red Hat documentation.
+
+## Why Kuadrant?
+
+### The Problem
+
+Modern applications need consistent API security across multiple services, but implementing authentication, authorization, rate limiting, DNS management, and TLS for each service individually creates several challenges:
+
+- **Configuration Sprawl**: Each service needs its own auth proxy, rate limiter, and configuration
+- **Inconsistent Security**: Different teams implement security differently, creating gaps
+- **Operational Complexity**: Managing hundreds of sidecar proxies, secrets, and configurations
+- **Lack of Centralized Control**: No single place to enforce organization-wide policies
+- **Platform Lock-in**: Cloud-specific solutions don't work across environments
+
+### Traditional Solutions Fall Short
+
+**Option 1: Manual Per-Service Configuration**
+- ❌ Requires deploying oauth-proxy sidecars for every service
+- ❌ Scattered rate limit configurations across multiple ConfigMaps
+- ❌ No centralized visibility or control
+- ❌ Difficult to enforce organization-wide policies
+
+**Option 2: Full Service Mesh (Istio with sidecars everywhere)**
+- ❌ Requires injecting sidecars into every pod
+- ❌ High operational complexity and resource overhead
+- ❌ Learning curve for service mesh concepts
+- ❌ Many teams don't need service-to-service mTLS
+
+**Option 3: Commercial API Gateways (Kong, Apigee, etc.)**
+- ❌ Vendor lock-in and licensing costs
+- ❌ Not Kubernetes-native (different APIs, paradigms)
+- ❌ Often require specialized infrastructure
+- ❌ Limited integration with Gateway API standard
+
+### The Kuadrant Approach
+
+Kuadrant solves these problems by providing **policy-driven API security at the gateway level** using the Kubernetes-native Gateway API:
+
+**✅ Declarative Policy Attachment**
+- Attach policies to Gateway API resources (Gateway, HTTPRoute)
+- Policies follow your traffic routing naturally
+- Change policies without modifying application code
+
+**✅ Works Without Service Mesh**
+- No sidecar injection required
+- Protection at the ingress point (gateway)
+- Application pods remain unchanged
+- Much lower resource overhead
+
+**✅ Kubernetes-Native & Standards-Based**
+- Uses Gateway API Policy Attachment (GEP-713)
+- Works with any Gateway API provider (Istio, Envoy Gateway, etc.)
+- Portable across cloud providers and on-premises
+- Fits naturally into GitOps workflows
+
+**✅ Centralized but Granular Control**
+- Platform teams set defaults at Gateway level
+- Application teams override for specific routes
+- Clear policy hierarchy (defaults → overrides)
+- Single source of truth for security policies
+
+**✅ Specialized for Modern Use Cases**
+- AI/LLM token-based rate limiting (TokenRateLimitPolicy)
+- Multi-cluster DNS management (DNSPolicy)
+- Certificate lifecycle management (TLSPolicy)
+- Built for cloud-native architectures
+
+### When to Use Kuadrant
+
+**Perfect Fit:**
+- ✅ Kubernetes environments using or migrating to Gateway API
+- ✅ Need centralized auth/rate limiting without full service mesh complexity
+- ✅ Managing multiple services with different security requirements
+- ✅ Want declarative, GitOps-friendly API security
+- ✅ Protecting AI/LLM APIs with token-based rate limiting
+- ✅ Multi-cluster or hybrid cloud deployments
+
+**Not Ideal For:**
+- ❌ Single static application with simple needs
+- ❌ Already heavily invested in a different API gateway ecosystem
+- ❌ Need service-to-service security within the mesh (use full Istio)
+- ❌ Require features beyond Gateway API scope
+
+### Real-World Scenarios
+
+**Scenario 1: Multi-Tenant SaaS Platform**
+- Problem: 100+ microservices, each team configuring auth differently
+- Solution: Single AuthPolicy at Gateway, teams customize per-route
+- Benefit: Consistent security, centralized control, team autonomy
+
+**Scenario 2: AI/LLM API Gateway**
+- Problem: Need to limit users by actual token consumption, not requests
+- Solution: TokenRateLimitPolicy with tiered limits (free/premium/enterprise)
+- Benefit: Fair usage-based billing, prevents cost overruns
+
+**Scenario 3: Migration from Proprietary Gateway**
+- Problem: Locked into commercial API gateway, want cloud portability
+- Solution: Kuadrant on standard Gateway API
+- Benefit: Vendor neutrality, runs anywhere Kubernetes runs
+
+**Scenario 4: Rate Limiting Without Mesh**
+- Problem: Need per-user rate limiting but don't want service mesh overhead
+- Solution: RateLimitPolicy + AuthPolicy at gateway
+- Benefit: Advanced rate limiting without sidecar injection
+
+### Comparison Matrix
+
+| Feature | Kuadrant | Per-Service Sidecars | Full Service Mesh | Commercial Gateway |
+|---------|----------|---------------------|-------------------|-------------------|
+| **Standards-Based** | ✅ Gateway API | ❌ Various | ⚠️ Istio-specific | ❌ Proprietary |
+| **No Sidecars Required** | ✅ Gateway only | ❌ Every pod | ❌ Every pod | ✅ Centralized |
+| **Declarative Policies** | ✅ CRDs | ⚠️ Config files | ⚠️ Config files | ⚠️ GUI/API |
+| **Multi-Provider Support** | ✅ Any Gateway API | ❌ N/A | ❌ Istio only | ❌ Vendor-specific |
+| **AI Token Rate Limiting** | ✅ Built-in | ❌ Custom dev | ❌ Custom dev | ⚠️ May require plugin |
+| **GitOps Friendly** | ✅ Native | ⚠️ Possible | ⚠️ Possible | ⚠️ Limited |
+| **Learning Curve** | Low | Medium | High | Medium |
+| **Resource Overhead** | Low | High | Very High | Low-Medium |
+| **Cost** | Free/OSS | Free/OSS | Free/OSS | $$$$ |
+
+### Bottom Line
+
+**Use Kuadrant if you want:**
+- Modern, Kubernetes-native API security
+- Gateway API compatibility and portability
+- Centralized control without operational complexity
+- Specialized features like AI token rate limiting
+- The benefits of gateway-level security without vendor lock-in
+
+**Skip Kuadrant if you:**
+- Don't use Kubernetes or Gateway API
+- Need service-to-service mesh features (use full Istio instead)
+- Have simple needs (basic Ingress may suffice)
+- Are already invested in and happy with another solution
+
 ## Gateway API Providers vs Service Mesh
 
 **Important Note**: Kuadrant works with any Gateway API provider and does **NOT require a full service mesh**:
