@@ -694,6 +694,366 @@ oc run -it --rm debug --image=registry.access.redhat.com/ubi9/ubi:latest --resta
 openssl s_client -connect console-openshift-console.apps-crc.testing:443 -servername console-openshift-console.apps-crc.testing
 ```
 
+## Transitioning to MetalLB
+
+The `endpointPublishingStrategy` field cannot be updated on an existing IngressController. This restriction means you cannot directly change a running IngressController from HostNetwork to LoadBalancerService.
+
+However, you have two migration paths available.
+
+### Migration Constraints
+
+From the IngressController API documentation:
+```
+endpointPublishingStrategy cannot be updated.
+```
+
+This is a permanent field once the IngressController is created. The only way to change strategies is to delete and recreate the IngressController, or create a second one.
+
+### Option 1: Second IngressController (Zero Downtime)
+
+OpenShift supports multiple IngressController instances running simultaneously. Create a new IngressController with LoadBalancerService while keeping the existing default.
+
+**Prerequisites**:
+- MetalLB installed and configured with IP address pool
+- Available IP addresses in the MetalLB pool
+- Ability to use a different apps domain OR route selectors to control routing
+
+**Architecture**:
+```mermaid
+graph TD
+    A[Client] -->|DNS lookup| B{Which domain?}
+
+    B -->|*.apps-crc.testing| C[Old Router<br/>HostNetwork<br/>192.168.126.11]
+    B -->|*.apps-new.crc.testing| D[New Router<br/>LoadBalancer<br/>192.168.126.200]
+
+    C -->|Direct binding| E[Node:80/443]
+    D -->|MetalLB VIP| F[LoadBalancer Service]
+
+    F -->|NodePort| G[Router Pods]
+
+    H[Routes with default domain] -->|Served by| C
+    I[Routes with new domain] -->|Served by| D
+```
+
+**Procedure**:
+
+1. Install MetalLB and configure IP pool:
+   ```yaml
+   apiVersion: metallb.io/v1beta1
+   kind: IPAddressPool
+   metadata:
+     name: ingress-pool
+     namespace: metallb-system
+   spec:
+     addresses:
+     - 192.168.126.200-192.168.126.210
+   ```
+
+2. Create second IngressController:
+   ```yaml
+   apiVersion: operator.openshift.io/v1
+   kind: IngressController
+   metadata:
+     name: metallb-ingress
+     namespace: openshift-ingress-operator
+   spec:
+     domain: apps-new.crc.testing
+     endpointPublishingStrategy:
+       type: LoadBalancerService
+       loadBalancer:
+         scope: External
+         dnsManagementPolicy: Unmanaged
+     replicas: 1
+   ```
+
+3. Verify MetalLB assigned IP:
+   ```bash
+   oc get service router-metallb-ingress -n openshift-ingress
+   ```
+
+   Expected output:
+   ```
+   NAME                    TYPE           EXTERNAL-IP        PORT(S)
+   router-metallb-ingress  LoadBalancer   192.168.126.200    80:30080/TCP,443:30443/TCP
+   ```
+
+4. Configure DNS for new domain:
+   ```
+   # /etc/NetworkManager/dnsmasq.d/crc-new.conf
+   address=/apps-new.crc.testing/192.168.126.200
+   address=/.apps-new.crc.testing/192.168.126.200
+   ```
+
+5. Test with new route:
+   ```bash
+   oc create route edge test --service=myservice --hostname=test-myproject.apps-new.crc.testing
+   curl https://test-myproject.apps-new.crc.testing
+   ```
+
+6. Migration options:
+
+   **Option A**: Gradually move routes to new domain (requires application reconfiguration)
+
+   **Option B**: Use route selectors to control which routes go to which IngressController:
+   ```yaml
+   # Update metallb-ingress to select specific routes
+   spec:
+     routeSelector:
+       matchLabels:
+         router: metallb
+   ```
+
+   Then label routes:
+   ```bash
+   oc label route myroute router=metallb
+   ```
+
+7. After full migration, delete old IngressController:
+   ```bash
+   oc delete ingresscontroller default -n openshift-ingress-operator
+   ```
+
+8. Optionally rename `metallb-ingress` to `default` (requires delete/recreate):
+   ```bash
+   oc get ingresscontroller metallb-ingress -n openshift-ingress-operator -o yaml > metallb-backup.yaml
+   oc delete ingresscontroller metallb-ingress -n openshift-ingress-operator
+   # Edit metallb-backup.yaml: change name to 'default', remove resourceVersion/uid
+   oc apply -f metallb-backup.yaml
+   ```
+
+**Downtime**: Zero - both routers run simultaneously during migration
+
+**Complexity**: High - requires domain change or route selector management
+
+**Best for**: Production environments requiring zero downtime
+
+### Option 2: Delete and Recreate Default (Brief Downtime)
+
+Delete the existing default IngressController and recreate it with LoadBalancerService strategy.
+
+**Prerequisites**:
+- MetalLB installed and configured with IP address pool
+- Acceptable brief outage window (30-60 seconds)
+
+**Migration Flow**:
+```mermaid
+sequenceDiagram
+    participant A as Admin
+    participant IC as IngressController
+    participant R as Router Pods
+    participant M as MetalLB
+    participant D as DNS
+
+    Note over IC,R: Initial state: HostNetwork
+    A->>IC: Delete IngressController default
+    IC->>R: Terminate router pods
+    Note over R: Routes unavailable
+
+    A->>IC: Create IngressController with LoadBalancerService
+    IC->>R: Create new router pods
+    R->>M: Request LoadBalancer IP
+    M->>R: Assign 192.168.126.200
+
+    A->>D: Update DNS to 192.168.126.200
+    Note over R: Routes available again
+```
+
+**Procedure**:
+
+1. Install MetalLB and configure IP pool (same as Option 1)
+
+2. Backup current IngressController:
+   ```bash
+   oc get ingresscontroller default -n openshift-ingress-operator -o yaml > default-ingress-backup.yaml
+   ```
+
+3. Note current configuration details:
+   ```bash
+   # Check replica count, domain, and other settings
+   oc get ingresscontroller default -n openshift-ingress-operator -o yaml | grep -A 10 "^spec:"
+   ```
+
+4. Delete default IngressController:
+   ```bash
+   oc delete ingresscontroller default -n openshift-ingress-operator
+   ```
+
+   Routes become unavailable at this point.
+
+5. Wait for router pods to terminate:
+   ```bash
+   oc get pods -n openshift-ingress -w
+   ```
+
+6. Create new IngressController with LoadBalancerService:
+   ```yaml
+   apiVersion: operator.openshift.io/v1
+   kind: IngressController
+   metadata:
+     name: default
+     namespace: openshift-ingress-operator
+   spec:
+     endpointPublishingStrategy:
+       type: LoadBalancerService
+       loadBalancer:
+         scope: External
+         dnsManagementPolicy: Unmanaged
+     replicas: 1  # Match previous replica count
+   ```
+
+7. Verify LoadBalancer IP assignment:
+   ```bash
+   oc get service router-default -n openshift-ingress
+   ```
+
+8. Wait for router pods to become ready:
+   ```bash
+   oc get pods -n openshift-ingress -w
+   ```
+
+   Routes become available again.
+
+9. Update DNS to point to MetalLB IP:
+   ```bash
+   # /etc/NetworkManager/dnsmasq.d/crc-snc.conf
+   # Change from:
+   # address=/.apps-crc.testing/192.168.126.11
+   # To:
+   address=/.apps-crc.testing/192.168.126.200
+   ```
+
+10. Reload NetworkManager:
+    ```bash
+    sudo systemctl reload NetworkManager
+    ```
+
+11. Verify DNS resolution:
+    ```bash
+    nslookup console-openshift-console.apps-crc.testing
+    ```
+
+12. Test route access:
+    ```bash
+    curl https://console-openshift-console.apps-crc.testing
+    ```
+
+**Downtime**: 30-60 seconds (time to terminate old pods and start new ones)
+
+**Complexity**: Low - straightforward delete and recreate
+
+**Best for**: Development, test, and CRC environments where brief downtime is acceptable
+
+**Rollback**: If issues occur, recreate with HostNetwork using the backup:
+```bash
+oc delete ingresscontroller default -n openshift-ingress-operator
+# Edit backup file to restore HostNetwork strategy
+oc apply -f default-ingress-backup.yaml
+```
+
+### Post-Migration Verification
+
+After migrating to MetalLB, verify the configuration:
+
+**Check endpoint publishing strategy**:
+```bash
+oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.status.endpointPublishingStrategy}' | jq
+```
+
+Expected output:
+```json
+{
+  "loadBalancer": {
+    "allowedSourceRanges": [],
+    "dnsManagementPolicy": "Unmanaged",
+    "scope": "External"
+  },
+  "type": "LoadBalancerService"
+}
+```
+
+**Verify router pod networking**:
+```bash
+oc get pod -n openshift-ingress -o jsonpath='{.items[0].spec.hostNetwork}' && echo
+```
+
+Should return: `false` (container networking, not host networking)
+
+**Check LoadBalancer service**:
+```bash
+oc get service router-default -n openshift-ingress
+```
+
+Should show `TYPE: LoadBalancer` with `EXTERNAL-IP` from MetalLB pool
+
+**Verify routes are accessible**:
+```bash
+oc get routes -A
+curl -k https://console-openshift-console.apps-crc.testing
+```
+
+**Check MetalLB assignment**:
+```bash
+oc get ipaddresspool -n metallb-system
+oc get l2advertisement -n metallb-system  # If using L2 mode
+```
+
+### Comparison of Migration Options
+
+| Aspect | Option 1: Second Controller | Option 2: Delete/Recreate |
+|--------|----------------------------|--------------------------|
+| Downtime | Zero | 30-60 seconds |
+| Complexity | High | Low |
+| DNS changes | New domain required initially | Update existing domain |
+| Route migration | Gradual per route | All routes at once |
+| Rollback | Keep both running | Restore from backup |
+| Domain strategy | Requires new domain or selectors | Same domain |
+| Best for | Production | Dev/test/CRC |
+| Risk | Low (can test before cutover) | Medium (brief outage) |
+
+### Common Issues and Solutions
+
+**MetalLB not assigning IP**:
+- Check IPAddressPool configuration
+- Verify L2Advertisement or BGPAdvertisement exists
+- Check MetalLB controller and speaker pods are running
+
+**Routes not accessible after migration**:
+- Verify DNS points to correct IP
+- Check router pods are running and ready
+- Confirm routes appear in HAProxy maps: `oc exec -n openshift-ingress <router-pod> -- cat /var/lib/haproxy/conf/os_edge_reencrypt_be.map`
+
+**NodePort conflicts**:
+- MetalLB uses NodePorts to route traffic
+- Ensure NodePort range is available (default 30000-32767)
+- Check for conflicts: `oc get svc -A | grep NodePort`
+
+**DNS caching issues**:
+- Clear local DNS cache after updating records
+- Test with `dig` or `nslookup` to verify resolution
+- May need to restart dnsmasq: `sudo systemctl restart NetworkManager`
+
+### Additional Considerations
+
+**Multi-node clusters**:
+- MetalLB provides floating VIP that can move between nodes
+- Router pods can run on different nodes without changing external IP
+- Better HA compared to HostNetwork where each pod binds to specific node IP
+
+**Performance**:
+- LoadBalancer adds slight overhead (NodePort layer)
+- HostNetwork has direct binding (marginally lower latency)
+- For most workloads, difference is negligible
+
+**Security**:
+- LoadBalancer allows source IP restrictions via `allowedSourceRanges`
+- HostNetwork requires external firewall rules on nodes
+- Container network isolation is cleaner separation
+
+**Monitoring**:
+- MetalLB exposes metrics for IP pool usage
+- Can monitor which service has which IP assignment
+- LoadBalancer service status shows in Kubernetes API
+
 ## Summary
 
 OpenShift networking architecture varies by platform but follows consistent patterns:
@@ -704,5 +1064,6 @@ OpenShift networking architecture varies by platform but follows consistent patt
 4. **Traffic flow depends on strategy**: HostNetwork (direct binding) or LoadBalancer (via Service)
 5. **DNS management varies**: Automatic on cloud, manual or ExternalDNS on bare metal
 6. **Load balancing options**: Cloud LB (automatic), MetalLB (bare metal), or external LB
+7. **Migration is possible**: Can transition from HostNetwork to MetalLB via delete/recreate or second controller
 
 The system is designed to work out-of-the-box on cloud platforms while providing flexibility for bare metal deployments.
