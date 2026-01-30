@@ -16,12 +16,28 @@ This project provides tools, scripts, and documentation for:
 
 ```
 .
+├── dockerfiles/          # Build container Dockerfiles
 ├── patches/              # Source code patches applied during builds
 ├── scripts/              # Automation scripts for build, install, upgrade, and cleanup
 ├── src/                  # Source code repositories (OLM and ODH operator)
 ├── *.md                  # Documentation files
 └── README.md            # This file
 ```
+
+### Build Containers
+
+The `dockerfiles/` directory contains Dockerfiles for the build environment containers:
+
+- **`build-container.Dockerfile`** - Go 1.24 build environment for v2.25.0
+  - Based on `registry.access.redhat.com/ubi9/go-toolset:1.24`
+  - Includes podman, make, and git
+
+- **`build-container-go125.Dockerfile`** - Go 1.25 build environment for v3.0.0
+  - Based on `registry.access.redhat.com/ubi9/go-toolset:1.25`
+  - Includes podman with insecure policy for nested container builds
+  - Configured for privileged operations
+
+These containers provide isolated, reproducible build environments with all necessary tools.
 
 ### Source Code Patches
 
@@ -82,6 +98,12 @@ This ensures reproducible builds without requiring manual edits to the source co
 
 All scripts are located in the `scripts/` directory.
 
+### Build Environment
+
+| Script | Purpose |
+|--------|---------|
+| `build-containers.sh` | Build the olm-build-env containers (one-time setup) |
+
 ### Build and Push
 
 | Script | Purpose | Patches Applied |
@@ -119,13 +141,19 @@ All scripts are located in the `scripts/` directory.
 
 ### Basic Workflow
 
-1. **Clean up any existing installation:**
+1. **Build the build containers** (one-time setup):
+   ```bash
+   ./scripts/build-containers.sh
+   ```
+   This creates `olm-build-env:go1.24` and `olm-build-env:go1.25` images.
+
+2. **Clean up any existing installation:**
    ```bash
    ./scripts/cleanup-odh-complete.sh
    ./scripts/verify-etcd-clean.sh
    ```
 
-2. **Build and push operator bundles** (if using personal registry):
+3. **Build and push operator bundles** (if using personal registry):
    ```bash
    ./scripts/build-and-push-v2.25.0.sh
    ./scripts/build-and-push-v3.0.0.sh
