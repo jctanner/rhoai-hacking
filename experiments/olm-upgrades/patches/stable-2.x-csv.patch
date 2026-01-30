@@ -1,0 +1,13 @@
+diff --git a/bundle/manifests/rhods-operator.clusterserviceversion.yaml b/bundle/manifests/rhods-operator.clusterserviceversion.yaml
+index 199b84fe..38d39328 100644
+--- a/bundle/manifests/rhods-operator.clusterserviceversion.yaml
++++ b/bundle/manifests/rhods-operator.clusterserviceversion.yaml
+@@ -1615,7 +1615,7 @@ spec:
+                       fieldPath: metadata.namespace
+                 - name: DEFAULT_MANIFESTS_PATH
+                   value: /opt/manifests
+-                image: REPLACE_IMAGE:latest
++                image: registry.tannerjc.net/opendatahub/rhods-operator:v2.25.0
+                 imagePullPolicy: Always
+                 livenessProbe:
+                   httpGet:

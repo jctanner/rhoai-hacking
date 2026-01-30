@@ -1,0 +1,25 @@
+diff --git a/config/rhoai/manifests/bases/rhods-operator.clusterserviceversion.yaml b/config/rhoai/manifests/bases/rhods-operator.clusterserviceversion.yaml
+index ec8941f6..888ea20b 100644
+--- a/config/rhoai/manifests/bases/rhods-operator.clusterserviceversion.yaml
++++ b/config/rhoai/manifests/bases/rhods-operator.clusterserviceversion.yaml
+@@ -278,4 +278,5 @@ spec:
+   minKubeVersion: 1.25.0
+   provider:
+     name: Red Hat
++  replaces: rhods-operator.v2.25.0
+   version: 3.0.0
+diff --git a/pkg/upgrade/upgrade_utils.go b/pkg/upgrade/upgrade_utils.go
+index 649d70ac..d951f5ce 100644
+--- a/pkg/upgrade/upgrade_utils.go
++++ b/pkg/upgrade/upgrade_utils.go
+@@ -69,8 +69,8 @@ func getOdhDashboardConfig(ctx context.Context, cli client.Client, applicationNS
+ 		return odhConfig, true, nil
+ 	}
+
+-	// If not found in cluster, check if it's a "not found" error
+-	if !k8serr.IsNotFound(err) {
++	// If not found in cluster (either instance or CRD missing), load from manifests
++	if !k8serr.IsNotFound(err) && !meta.IsNoMatchError(err) {
+ 		return nil, false, fmt.Errorf("failed to get OdhDashboardConfig from cluster: %w", err)
+ 	}
+

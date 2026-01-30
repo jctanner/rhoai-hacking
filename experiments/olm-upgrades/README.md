@@ -16,11 +16,28 @@ This project provides tools, scripts, and documentation for:
 
 ```
 .
+├── patches/              # Source code patches applied during builds
 ├── scripts/              # Automation scripts for build, install, upgrade, and cleanup
 ├── src/                  # Source code repositories (OLM and ODH operator)
 ├── *.md                  # Documentation files
 └── README.md            # This file
 ```
+
+### Source Code Patches
+
+The `patches/` directory contains git patches that are automatically applied during the build process:
+
+- **`stable-2.x-csv.patch`** - Fixes CSV image references for v2.25.0 builds
+- **`main-upgrade-fixes.patch`** - Adds upgrade path declaration and OdhDashboardConfig error handling for v3.0.0
+
+These patches are necessary because the source checkouts in `src/` are ephemeral (not tracked in this repo). The build scripts automatically:
+1. Reset the working tree to clean state
+2. Apply relevant patches
+3. Parameterize registry paths
+4. Verify patches applied correctly
+5. Continue with the build
+
+This ensures reproducible builds without requiring manual edits to the source code.
 
 ## Documentation
 
@@ -67,10 +84,12 @@ All scripts are located in the `scripts/` directory.
 
 ### Build and Push
 
-| Script | Purpose |
-|--------|---------|
-| `build-and-push-v2.25.0.sh` | Build and push ODH operator v2.25.0 bundle |
-| `build-and-push-v3.0.0.sh` | Build and push ODH operator v3.0.0 bundle |
+| Script | Purpose | Patches Applied |
+|--------|---------|-----------------|
+| `build-and-push-v2.25.0.sh` | Build and push ODH operator v2.25.0 bundle | `stable-2.x-csv.patch` |
+| `build-and-push-v3.0.0.sh` | Build and push ODH operator v3.0.0 bundle | `main-upgrade-fixes.patch` |
+
+**Note:** Build scripts automatically reset source trees and apply patches before building.
 
 ### Install and Upgrade
 
@@ -143,6 +162,23 @@ All scripts are located in the `scripts/` directory.
    ```
 
 ## Key Findings
+
+### Required Source Code Patches
+
+To enable v2.25.0 → v3.0.0 upgrades, two patches are required:
+
+**1. stable-2.x-csv.patch (v2.25.0)**
+- Replaces placeholder `REPLACE_IMAGE:latest` with actual operator image reference
+- Ensures the CSV contains the correct container image path
+- Applied automatically during v2.25.0 build
+
+**2. main-upgrade-fixes.patch (v3.0.0)**
+- Adds `replaces: rhods-operator.v2.25.0` to enable OLM upgrade path
+- Fixes OdhDashboardConfig error handling to prevent crashes during upgrade
+- Handles both "not found" instances and missing CRD scenarios
+- Applied automatically during v3.0.0 build
+
+See [BUG-DASHBOARDCONFIG.md](./BUG-DASHBOARDCONFIG.md) for details on the dashboard config fix.
 
 ### What OLM Does Beyond Pod Replacement
 

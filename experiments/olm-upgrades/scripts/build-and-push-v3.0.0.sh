@@ -21,9 +21,21 @@ echo "=========================================="
 
 cd "${WORKSPACE}"
 
+# Step 0: Reset and apply patches
+echo ""
+echo "Step 0/5: Resetting source and applying patches..."
+git reset --hard HEAD
+git clean -fd
+
+# Apply upgrade fixes patch
+echo "  Applying main-upgrade-fixes.patch..."
+git apply ../../../patches/main-upgrade-fixes.patch
+
+echo "  ✓ Patches applied"
+
 # Step 1: Build and push RHOAI operator image
 echo ""
-echo "Step 1/4: Building and pushing RHOAI operator image..."
+echo "Step 1/5: Building and pushing RHOAI operator image..."
 podman run --rm --user root \
   -v $(pwd):/workspace:Z \
   --security-opt label=disable \
@@ -33,7 +45,7 @@ podman run --rm --user root \
 
 # Step 2: Generate bundle manifests
 echo ""
-echo "Step 2/4: Generating bundle manifests..."
+echo "Step 2/5: Generating bundle manifests..."
 podman run --rm --user root \
   -v $(pwd):/workspace:Z \
   --security-opt label=disable \
@@ -43,7 +55,7 @@ podman run --rm --user root \
 
 # Step 3: Build and push RHOAI bundle image (not ODH bundle)
 echo ""
-echo "Step 3/4: Building and pushing RHOAI bundle image..."
+echo "Step 3/5: Building and pushing RHOAI bundle image..."
 podman run --rm --user root \
   -v $(pwd):/workspace:Z \
   --security-opt label=disable \
@@ -51,9 +63,24 @@ podman run --rm --user root \
   ${BUILD_ENV} \
   bash -c "podman build --no-cache -f Dockerfiles/rhoai-bundle.Dockerfile -t ${BUNDLE_IMG} . && podman push ${BUNDLE_IMG}"
 
-# Step 4: Verify images in registry
+# Step 4: Verify patches applied
 echo ""
-echo "Step 4/4: Verifying images..."
+echo "Step 4/5: Verifying patches applied..."
+if grep -q "replaces: rhods-operator.v2.25.0" config/rhoai/manifests/bases/rhods-operator.clusterserviceversion.yaml; then
+  echo "  ✓ CSV replaces field correctly set"
+else
+  echo "  ✗ WARNING: CSV replaces field may not be correct"
+fi
+
+if grep -q "IsNoMatchError" pkg/upgrade/upgrade_utils.go; then
+  echo "  ✓ OdhDashboardConfig error handling fixed"
+else
+  echo "  ✗ WARNING: OdhDashboardConfig fix may not be applied"
+fi
+
+# Step 5: Verify images in registry
+echo ""
+echo "Step 5/5: Verifying images..."
 echo "Checking operator image..."
 podman pull ${OPERATOR_IMG} >/dev/null 2>&1 && echo "✓ Operator image available: ${OPERATOR_IMG}" || echo "✗ Operator image not found"
 echo "Checking bundle image..."
