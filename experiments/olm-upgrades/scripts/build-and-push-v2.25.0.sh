@@ -241,7 +241,11 @@ echo "  Fixing container image references..."
 sed -i "s|containerImage: REPLACE_IMAGE:latest|containerImage: ${REGISTRY}/opendatahub-operator:v${VERSION}|g" bundle/manifests/rhods-operator.clusterserviceversion.yaml
 sed -i "s|image: REPLACE_IMAGE:latest|image: ${REGISTRY}/opendatahub-operator:v${VERSION}|g" bundle/manifests/rhods-operator.clusterserviceversion.yaml
 
-echo "  ✓ Bundle CSV patched for OpenDataHub"
+# Change package name from rhods-operator to opendatahub-operator (for v3.0.0 upgrade compatibility)
+echo "  Updating package name in bundle metadata..."
+sed -i 's|operators.operatorframework.io.bundle.package.v1: rhods-operator|operators.operatorframework.io.bundle.package.v1: opendatahub-operator|g' bundle/metadata/annotations.yaml
+
+echo "  ✓ Bundle CSV and metadata patched for OpenDataHub"
 
 # Step 8: Build and push bundle image (stable-2.x uses bundle.Dockerfile, not rhoai-bundle.Dockerfile)
 echo ""
@@ -286,10 +290,16 @@ if ! grep -q 'displayName: Open Data Hub' bundle/manifests/rhods-operator.cluste
   ERRORS=$((ERRORS + 1))
 fi
 
+if ! grep -q 'operators.operatorframework.io.bundle.package.v1: opendatahub-operator' bundle/metadata/annotations.yaml; then
+  echo "    ✗ ERROR: Bundle package name is not 'opendatahub-operator'"
+  ERRORS=$((ERRORS + 1))
+fi
+
 if [ $ERRORS -eq 0 ]; then
-  echo "  ✓ Bundle CSV correctly patched"
+  echo "  ✓ Bundle CSV and metadata correctly patched"
   echo "    - Image: opendatahub-operator:v${VERSION}"
   echo "    - CSV name: opendatahub-operator.v${VERSION}"
+  echo "    - Package name: opendatahub-operator"
   echo "    - Namespaces: opendatahub"
   echo "    - Display name: Open Data Hub"
 else
