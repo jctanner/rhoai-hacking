@@ -1,7 +1,7 @@
-# Bug Report: Operator Startup Crash - Missing OdhDashboardConfig Error Handling
+# Upgrade Test: OdhDashboardConfig Error Handling and Version Caching
 
-**Discovered:** 2026-01-29
-**Severity:** HIGH - Prevents operator from starting in common deployment scenarios
+**Discovered:** 2026-01-29 (OdhDashboardConfig), 2026-02-02 (Version Caching)
+**Severity:** HIGH - Prevents operator from starting and blocks architectural migrations
 **Component:** opendatahub-operator upgrade package
 **Affects:** v3.3.0 (likely affects other 3.x versions)
 
@@ -481,11 +481,117 @@ odhDashboardConfigPath = "/dashboard/rhoai/shared/odhdashboardconfig/odhdashboar
 
 This fallback exists and works correctly - the bug simply prevents it from being reached.
 
+## Related Issue: Version Caching Bug Blocks Route Migration
+
+### Discovery Context
+
+During upgrade testing from v2.25.0 → v3.3.0 (2026-02-02), a second issue was discovered related to operator version caching.
+
+### Symptoms
+
+After successful OLM upgrade:
+- Operator v3.3.0 image running
+- CSV showing v3.3.0
+- **Dashboard Route object still present** (should have been replaced by HTTPRoute)
+- Dashboard version annotation showing 2.25.0 instead of 3.3.0
+
+### Root Cause
+
+The operator caches its version from the CSV only at startup in `pkg/cluster/cluster_config.go`:
+
+```go
+func getRelease(ctx context.Context, cli client.Client) (common.Release, error) {
+    // ...
+    csv, err := GetClusterServiceVersion(ctx, cli, operatorNamespace)
+    initRelease.Version = csv.Spec.Version
+    return initRelease, nil
+}
+```
+
+This cached version is used for:
+1. **Resource annotations** - `platform.opendatahub.io/version`
+2. **Manifest path selection** - Determines which manifests to render
+
+### Impact on Upgrades
+
+**Expected v3.3.0 Behavior:**
+- Operator renders manifests from v3.3.0 path
+- Kustomization includes `httproute.yaml`, excludes `routes.yaml`
+- GC action deletes old Route object
+- HTTPRoute created
+
+**Actual Behavior After Upgrade:**
+- Operator cached version 2.25.0 (likely race condition during upgrade)
+- Operator renders manifests from v2.25.0 path
+- Kustomization includes `routes.yaml`
+- Route object kept alive by reconciliation
+- **Architectural migration blocked**
+
+### Evidence
+
+Operator pod age after upgrade:
+```bash
+$ oc get pods -n opendatahub-operator-system -l control-plane=controller-manager
+NAME                                                       AGE
+opendatahub-operator-controller-manager-796b6547dc-2bg8s   121m
+```
+
+Pods started during upgrade but never restarted to reload CSV version.
+
+Dashboard annotations before operator restart:
+```yaml
+metadata:
+  annotations:
+    platform.opendatahub.io/version: 2.25.0
+```
+
+Resources before operator restart:
+- Route `odh-dashboard` in `opendatahub` namespace: **Present**
+- HTTPRoute `odh-dashboard` in `opendatahub` namespace: **Missing**
+
+### Resolution
+
+Manual operator pod restart required:
+```bash
+oc delete pod -n opendatahub-operator-system -l control-plane=controller-manager
+```
+
+After restart:
+- Operator loads v3.3.0 from CSV
+- Version annotation: 3.3.0
+- Route deleted by GC action
+- HTTPRoute created
+- Gateway API migration complete
+
+### Scope
+
+This affects all v2.x → v3.x upgrades:
+- Version annotations remain at old version
+- Architectural migrations incomplete
+- Resources use old manifest versions
+- Manual intervention required
+
+### Recommendation
+
+**Operator Should Restart After OLM Upgrade:**
+
+Options:
+1. **OLM triggers restart** - Deployment spec change to force pod recreation
+2. **Operator watches CSV** - Detect version changes and restart
+3. **Documentation** - Instruct users to restart operator pods after upgrade
+
+**Testing Required:**
+- Verify operator pod restart behavior during OLM upgrades
+- Test version caching with various upgrade paths
+- Confirm architectural migrations complete without manual intervention
+
 ## Conclusion
 
 This is a **critical bug** that prevents the operator from starting in common deployment scenarios. The fix is **simple and low-risk** - just adding one additional error type check to allow fallback to manifests when CRDs don't exist.
 
 The bug demonstrates the importance of testing "minimal configuration" scenarios where optional components aren't deployed yet.
+
+The version caching issue is a **separate critical bug** that blocks architectural migrations during upgrades and requires manual operator restart to complete.
 
 **Priority:** HIGH - Should be fixed before next release
 **Risk:** LOW - One-line fix, well-understood error handling
