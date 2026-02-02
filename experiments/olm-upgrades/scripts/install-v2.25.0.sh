@@ -2,8 +2,8 @@
 set -e
 
 REGISTRY="registry.tannerjc.net/opendatahub"
-BUNDLE_IMG="${REGISTRY}/rhods-operator-bundle:v2.25.0"
-NAMESPACE="redhat-ods-operator"
+BUNDLE_IMG="${REGISTRY}/opendatahub-operator-bundle:v2.25.0"
+NAMESPACE="opendatahub-operator-system"
 
 echo "============================================"
 echo "Installing v2.25.0 Operator"

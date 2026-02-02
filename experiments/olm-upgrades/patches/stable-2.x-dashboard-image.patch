@@ -1,0 +1,33 @@
+diff --git a/manifests/odh/params.env b/manifests/odh/params.env
+index 1a2b3c4d..5e6f7g8h 100644
+--- a/manifests/odh/params.env
++++ b/manifests/odh/params.env
+@@ -1,5 +1,5 @@
+ # Injected variables from the Operator
+-odh-dashboard-image=quay.io/opendatahub/odh-dashboard:main
++odh-dashboard-image=quay.io/opendatahub/odh-dashboard:v2.25.2-odh
+ oauth-proxy-image=registry.redhat.io/openshift4/ose-oauth-proxy-rhel9@sha256:ca21e218e26c46e3c63d926241846f8f307fd4a586cc4b04147da49af6018ef5
+ dashboard-url=https://www.redhat.com
+ section-title=Open Data Hub
+diff --git a/manifests/rhoai/addon/params.env b/manifests/rhoai/addon/params.env
+index 9a8b7c6d..1f2e3d4c 100644
+--- a/manifests/rhoai/addon/params.env
++++ b/manifests/rhoai/addon/params.env
+@@ -1,5 +1,5 @@
+ # Injected variables from the Operator
+-odh-dashboard-image=quay.io/opendatahub/odh-dashboard:main
++odh-dashboard-image=quay.io/opendatahub/odh-dashboard:v2.25.2-odh
+ oauth-proxy-image=registry.redhat.io/openshift4/ose-oauth-proxy-rhel9@sha256:ca21e218e26c46e3c63d926241846f8f307fd4a586cc4b04147da49af6018ef5
+ dashboard-url=https://www.redhat.com
+ section-title=OpenShift AI
+diff --git a/manifests/rhoai/onprem/params.env b/manifests/rhoai/onprem/params.env
+index 4d5e6f7g..8h9i0j1k 100644
+--- a/manifests/rhoai/onprem/params.env
++++ b/manifests/rhoai/onprem/params.env
+@@ -1,5 +1,5 @@
+ # Injected variables from the Operator
+-odh-dashboard-image=quay.io/opendatahub/odh-dashboard:main
++odh-dashboard-image=quay.io/opendatahub/odh-dashboard:v2.25.2-odh
+ oauth-proxy-image=registry.redhat.io/openshift4/ose-oauth-proxy-rhel9@sha256:ca21e218e26c46e3c63d926241846f8f307fd4a586cc4b04147da49af6018ef5
+ dashboard-url=https://www.redhat.com
+ section-title=OpenShift AI

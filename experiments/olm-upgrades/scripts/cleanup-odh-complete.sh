@@ -14,17 +14,17 @@ NC='\033[0m' # No Color
 
 # Step 1: Clean up OLM resources
 echo -e "${YELLOW}[1/8] Cleaning up OLM resources...${NC}"
-operator-sdk cleanup rhods-operator -n redhat-ods-operator --timeout=30s 2>&1 || echo "Cleanup command failed or timed out, continuing..."
+operator-sdk cleanup opendatahub-operator -n opendatahub-operator-system --timeout=30s 2>&1 || echo "Cleanup command failed or timed out, continuing..."
 
 echo ""
 echo -e "${YELLOW}[2/8] Deleting CSVs, Subscriptions, and CatalogSources...${NC}"
-oc delete csv --all -n redhat-ods-operator --force --grace-period=0 2>/dev/null || true
-oc delete subscription --all -n redhat-ods-operator --force --grace-period=0 2>/dev/null || true
-oc delete catalogsource --all -n redhat-ods-operator --force --grace-period=0 2>/dev/null || true
+oc delete csv --all -n opendatahub-operator-system --force --grace-period=0 2>/dev/null || true
+oc delete subscription --all -n opendatahub-operator-system --force --grace-period=0 2>/dev/null || true
+oc delete catalogsource --all -n opendatahub-operator-system --force --grace-period=0 2>/dev/null || true
 
 echo ""
-echo -e "${YELLOW}[3/8] Deleting all ODH/RHOAI namespaces...${NC}"
-for ns in redhat-ods-operator redhat-ods-applications redhat-ods-monitoring; do
+echo -e "${YELLOW}[3/8] Deleting all ODH namespaces...${NC}"
+for ns in opendatahub-operator-system opendatahub; do
   if oc get namespace $ns 2>/dev/null; then
     echo "  Deleting namespace: $ns"
     oc delete namespace $ns --force --grace-period=0 2>/dev/null || true &
