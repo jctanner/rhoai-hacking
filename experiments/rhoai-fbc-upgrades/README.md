@@ -97,16 +97,17 @@ The production bundle in a running cluster contains metadata that source code do
 
 - **`SCRIPTS_GUIDE.md`** - Complete script documentation
 - **`UPGRADE_TEST_WORKFLOW.md`** - Step-by-step upgrade testing guide
-- **`QUICK_START.txt`** - Quick reference
+- **`QUICK_START.md`** - Quick start guide with setup instructions
 
 ### Data Directories
 
-- **`example_cluster_info/`** - Cluster-extracted bundle and catalog
-  - `rhoai-fbc/bundles/3.3.0/` - Production bundle (38 manifests, 95 RELATED_IMAGE vars)
-  - `rhoai-fbc/catalog.yaml` - Production FBC catalog (80 YAML docs)
-  - `rhoai-fbc/csv-3.3.0.yaml` - Production CSV
+- **`src/`** - Operator source code (create this directory)
+  - `red-hat-data-services/rhods-operator.3.3/` - Clone RHOAI operator here
 
-- **`catalog-build/`** - Generated catalog artifacts
+- **`example_cluster_info/`** - Cluster-extracted bundle data
+  - `rhoai-fbc/bundles/3.3.0/` - Production bundle (38 manifests, 95 RELATED_IMAGE vars)
+
+- **`catalog-build/`** - Generated catalog artifacts (created during build)
   - `catalog.yaml` - Built FBC catalog with upgrade path
 
 - **`manifests/`** - Test manifests
@@ -305,7 +306,7 @@ RELATED_IMAGE_ODH_NOTEBOOK_CONTROLLER_IMAGE=registry.redhat.io/rhoai/odh-noteboo
 cd ./src/red-hat-data-services/rhods-operator.3.3
 
 # 2. Build operator image
-cd /home/jtanner/workspace/github/jctanner.redhat/2026_02_04_dashboard_route_garbage_cleanup/rhoai-hacking/experiments/rhoai-fbc-upgrades
+cd -  # Return to rhoai-fbc-upgrades directory
 ./build-rhoai-images.sh  # Only builds operator, not bundle
 
 # 3. Build bundle+catalog with cluster data
@@ -370,7 +371,7 @@ We're testing operator code changes, not component images. The RELATED_IMAGE var
 ## Repository Structure
 
 ```
-rhoai-hacking/experiments/rhoai-fbc-upgrades/
+rhoai-fbc-upgrades/  ← Can be cloned anywhere
 ├── build-custom-bundle.sh          # ⭐ Main build script
 ├── build-rhoai-images.sh           # Build operator from source
 ├── build-from-extracted-bundle.sh  # Build with RH operator image
@@ -380,16 +381,21 @@ rhoai-hacking/experiments/rhoai-fbc-upgrades/
 ├── full-cleanup-rhoai.sh           # Complete cleanup (13 steps)
 ├── verify-cleanup.sh               # Verify cleanup
 ├── verify-etcd-clean.sh            # Verify etcd cleanup
+├── README.md                       # This file - complete technical guide
 ├── SCRIPTS_GUIDE.md                # Scripts documentation
 ├── UPGRADE_TEST_WORKFLOW.md        # Upgrade testing guide
-├── QUICK_START.txt                 # Quick reference
-├── catalog-build/                  # Built catalog artifacts
+├── QUICK_START.md                  # Quick start guide
+├── .gitignore                      # Ignores src/ and build artifacts
+├── src/                            # Create this - operator source code
+│   └── red-hat-data-services/
+│       └── rhods-operator.3.3/     # Clone RHOAI operator here (rhoai-3.3 branch)
+├── catalog-build/                  # Built catalog artifacts (generated)
 │   └── catalog.yaml                # FBC catalog with upgrade path
-├── example_cluster_info/            # Cluster-extracted data
+├── example_cluster_info/           # Cluster-extracted bundle data
 │   └── rhoai-fbc/
-│       ├── bundles/3.3.0/          # Production bundle (95 RELATED_IMAGE)
-│       ├── catalog.yaml            # Production FBC catalog
-│       └── csv-3.3.0.yaml          # Production CSV
+│       └── bundles/3.3.0/          # Production bundle (95 RELATED_IMAGE)
+│           ├── manifests/          # 38 manifest files (1 CSV + 37 CRDs)
+│           └── metadata/           # Bundle metadata
 └── manifests/                      # Test manifests
     ├── minimal-dsc.yaml
     ├── rhods-dashboard.yaml
