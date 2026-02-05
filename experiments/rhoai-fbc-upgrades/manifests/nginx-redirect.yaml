@@ -1,0 +1,90 @@
+# Self-contained YAML for RHODS Dashboard redirect to Data Science Gateway
+# Purpose: Maintain backward compatibility after RHOAI 3.3 upgrade removes rhods-dashboard route
+# Usage: Update APPSDOMAIN value in the Pod env section, then: oc apply -f nginx-redirect.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-redirect-config
+  namespace: redhat-ods-applications
+  labels:
+    app: nginx-redirect
+data:
+  redirect.conf: |
+    location / {
+        return 301 https://data-science-gateway.${APPSDOMAIN}$request_uri;
+    }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-redirect
+  namespace: redhat-ods-applications
+  labels:
+    app: nginx-redirect
+spec:
+  restartPolicy: Always
+  containers:
+  - name: nginx
+    image: registry.redhat.io/ubi9/nginx-126:latest
+    command:
+    - /bin/bash
+    - -c
+    - |
+      envsubst < /tmp/redirect.conf.template > /opt/app-root/etc/nginx.default.d/redirect.conf
+      exec nginx -g 'daemon off;'
+    ports:
+    - containerPort: 8080
+      protocol: TCP
+    env:
+    - name: APPSDOMAIN
+      # UPDATE THIS VALUE for your cluster
+      # Example: apps.jtannertest.eh5f.s1.devshift.org
+      value: "apps.jtannertest.eh5f.s1.devshift.org"
+    volumeMounts:
+    - name: nginx-config
+      mountPath: /tmp/redirect.conf.template
+      subPath: redirect.conf
+  volumes:
+  - name: nginx-config
+    configMap:
+      name: nginx-redirect-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-redirect
+  namespace: redhat-ods-applications
+  labels:
+    app: nginx-redirect
+spec:
+  ports:
+  - name: http
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: nginx-redirect
+  type: ClusterIP
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: rhods-dashboard
+  namespace: redhat-ods-applications
+  annotations:
+    haproxy.router.openshift.io/hsts_header: max-age=31536000;includeSubDomains;preload
+    kubernetes.io/tls-acme: "true"
+  labels:
+    app: nginx-redirect
+spec:
+  port:
+    targetPort: http
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: edge
+  to:
+    kind: Service
+    name: nginx-redirect
+    weight: 100
+  wildcardPolicy: None

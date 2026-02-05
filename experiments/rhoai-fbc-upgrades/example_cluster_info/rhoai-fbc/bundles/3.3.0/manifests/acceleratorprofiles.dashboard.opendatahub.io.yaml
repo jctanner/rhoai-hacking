@@ -1,0 +1,167 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    internal.config.kubernetes.io/previousKinds: CustomResourceDefinition
+    internal.config.kubernetes.io/previousNames: acceleratorprofiles.dashboard.opendatahub.io
+    internal.config.kubernetes.io/previousNamespaces: _non_namespaceable_
+  creationTimestamp: "2026-01-30T16:31:00Z"
+  generation: 1
+  labels:
+    app: rhods-dashboard
+    app.kubernetes.io/part-of: rhods-dashboard
+    app.opendatahub.io/rhods-dashboard: "true"
+    platform.opendatahub.io/part-of: platform
+  name: acceleratorprofiles.dashboard.opendatahub.io
+  resourceVersion: "3445174"
+  uid: f3e460ae-3660-4480-9994-84798e17a0f0
+spec:
+  conversion:
+    strategy: None
+  group: dashboard.opendatahub.io
+  names:
+    kind: AcceleratorProfile
+    listKind: AcceleratorProfileList
+    plural: acceleratorprofiles
+    singular: acceleratorprofile
+  scope: Namespaced
+  versions:
+  - deprecated: true
+    deprecationWarning: 'Deprecated: Please use Hardware Profiles (hardwareprofiles.opendatahub.io.crd.yaml)
+      instead.'
+    name: v1
+    schema:
+      openAPIV3Schema:
+        properties:
+          spec:
+            properties:
+              description:
+                description: A short description of the accelerator profile.
+                type: string
+              displayName:
+                description: The display name of the accelerator profile.
+                type: string
+              enabled:
+                description: Indicates whether the accelerator profile is available
+                  for new resources.
+                type: boolean
+              identifier:
+                description: 'The resource identifier of the accelerator device. Example:
+                  nvidia.com/gpu'
+                type: string
+              tolerations:
+                description: Any number of Kubernetes toleration values that are added
+                  to resources when created or updated to this accelerator profile.
+                items:
+                  properties:
+                    effect:
+                      description: 'Taint effect. Empty matches all effects. Allowed:
+                        ''NoSchedule'', ''PreferNoSchedule'', ''NoExecute''.'
+                      type: string
+                    key:
+                      description: Taint key. Empty matches all keys.
+                      type: string
+                    operator:
+                      description: 'Relationship with the value. Valid: ''Exists'',
+                        ''Equal''. Defaults to ''Equal''.'
+                      type: string
+                    tolerationSeconds:
+                      description: Duration in seconds. If effect is 'NoExecute',
+                        specifies eviction time. Default is forever.
+                      type: integer
+                    value:
+                      description: Tolerance value. If key is empty, use 'Exists'
+                        to match all values and keys.
+                      type: string
+                  required:
+                  - key
+                  type: object
+                type: array
+            required:
+            - displayName
+            - enabled
+            - identifier
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+  - deprecated: true
+    name: v1alpha
+    schema:
+      openAPIV3Schema:
+        properties:
+          spec:
+            properties:
+              description:
+                description: A short description of the accelerator profile.
+                type: string
+              displayName:
+                description: The display name of the accelerator profile.
+                type: string
+              enabled:
+                description: Indicates whether the accelerator profile is available
+                  for new resources.
+                type: boolean
+              identifier:
+                description: 'The resource identifier of the accelerator device. Example:
+                  nvidia.com/gpu'
+                type: string
+              tolerations:
+                description: Any number of Kubernetes toleration values that are added
+                  to resources when created or updated to this accelerator profile.
+                items:
+                  properties:
+                    effect:
+                      description: 'Taint effect. Empty matches all effects. Allowed:
+                        ''NoSchedule'', ''PreferNoSchedule'', ''NoExecute''.'
+                      type: string
+                    key:
+                      description: Taint key. Empty matches all keys.
+                      type: string
+                    operator:
+                      description: 'Relationship with the value. Valid: ''Exists'',
+                        ''Equal''. Defaults to ''Equal''.'
+                      type: string
+                    tolerationSeconds:
+                      description: Duration in seconds. If effect is 'NoExecute',
+                        specifies eviction time. Default is forever.
+                      type: integer
+                    value:
+                      description: Tolerance value. If key is empty, use 'Exists'
+                        to match all values and keys.
+                      type: string
+                  required:
+                  - key
+                  type: object
+                type: array
+            required:
+            - displayName
+            - enabled
+            - identifier
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: false
+status:
+  acceptedNames:
+    kind: AcceleratorProfile
+    listKind: AcceleratorProfileList
+    plural: acceleratorprofiles
+    singular: acceleratorprofile
+  conditions:
+  - lastTransitionTime: "2026-01-30T16:31:00Z"
+    message: no conflicts found
+    reason: NoConflicts
+    status: "True"
+    type: NamesAccepted
+  - lastTransitionTime: "2026-01-30T16:31:00Z"
+    message: the initial names have been accepted
+    reason: InitialNamesAccepted
+    status: "True"
+    type: Established
+  storedVersions:
+  - v1

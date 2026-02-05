@@ -1,0 +1,8 @@
+# Operator source code (users clone this locally)
+src/
+
+# Build artifacts
+catalog-build/
+
+# Temporary directories
+tmp/

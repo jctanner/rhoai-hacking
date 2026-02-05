@@ -1,0 +1,53 @@
+# Test Route CR for validating GC deletion behavior
+# This Route has all the required elements to be deleted by GC:
+# 1. Label: platform.opendatahub.io/part-of=dashboard (so GC finds it)
+# 2. Owner reference to Dashboard CR (passes onlyOwned check)
+# 3. Mismatched version annotation (triggers deletion predicate)
+#
+# INSTRUCTIONS:
+# 1. Run: ./fill-route-values.sh to auto-populate the placeholders
+# OR manually replace the placeholders:
+# 2. Replace <DASHBOARD_UID> with actual Dashboard CR UID (from: oc get dashboard <name> -o jsonpath='{.metadata.uid}')
+# 3. Replace <DASHBOARD_NAME> with actual Dashboard CR name (e.g., "default-dashboard")
+# 4. Replace <NAMESPACE> with the namespace where Dashboard deploys (e.g., "opendatahub")
+#    Note: Dashboard CR is cluster-scoped, but Route must be in the deployment namespace
+# 5. Apply: oc apply -f test-route.yaml
+# 6. Trigger reconciliation: oc annotate dashboard <DASHBOARD_NAME> test=trigger
+# 7. Watch deletion: oc get route odh-dashboard -n <NAMESPACE> -w
+#
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: odh-dashboard
+  namespace: <NAMESPACE>  # e.g., opendatahub or redhat-ods-applications
+  labels:
+    # REQUIRED: This label allows GC to discover the Route
+    platform.opendatahub.io/part-of: dashboard
+  annotations:
+    # Original route annotations from stable-2.x
+    kubernetes.io/tls-acme: 'true'
+    haproxy.router.openshift.io/hsts_header: max-age=31536000;includeSubDomains;preload
+    # REQUIRED: Operator tracking annotations
+    # These create a version mismatch, triggering GC deletion
+    platform.opendatahub.io/version: "2.20.0"  # Old version - will mismatch with main
+    platform.opendatahub.io/type: "OpenDataHub"  # or "RHOAI" depending on your deployment
+    platform.opendatahub.io/instance.generation: "1"
+    platform.opendatahub.io/instance.uid: "<DASHBOARD_UID>"
+  ownerReferences:
+  # CRITICAL: Without this, GC will NOT delete (onlyOwned=true blocks deletion)
+  - apiVersion: components.platform.opendatahub.io/v1alpha1
+    kind: Dashboard
+    name: <DASHBOARD_NAME>
+    uid: <DASHBOARD_UID>
+    controller: true
+    blockOwnerDeletion: true
+spec:
+  port:
+    targetPort: dashboard-ui
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: reencrypt
+  to:
+    kind: Service
+    name: odh-dashboard
+    weight: 100

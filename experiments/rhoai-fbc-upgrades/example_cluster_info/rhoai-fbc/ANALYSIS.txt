@@ -1,0 +1,50 @@
+FBC CATALOG ANALYSIS
+====================
+
+File: catalog.yaml (1.5MB, 80 YAML documents)
+
+STRUCTURE:
+----------
+- 1 olm.package (rhods-operator)
+- 18 olm.channel (different upgrade channels)
+- 62 olm.bundle (individual operator versions)
+
+CHANNELS:
+---------
+
+UPGRADE PATH (2.25.2 → 3.3.0):
+-------------------------------
+Found in "stable" channel:
+
+- name: rhods-operator.3.3.0
+  replaces: rhods-operator.2.25.2
+  skipRange: '>=2.25.0 <3.3.0'
+
+This is the KEY entry that enabled your upgrade!
+
+CHANNELS WITH 3.3.0:
+--------------------
+  - fast
+  - rhods-operator.3.3.0
+
+VERSION 2.25.2 DETAILS:
+-----------------------
+Appears in channels:
+  - alpha
+  - eus-2.25
+  - stable
+
+VERSION 3.3.0 DETAILS:
+----------------------
+Appears in channels:
+  - fast-3.x (replaces 3.2.0)
+  - stable (replaces 2.25.2) ← THIS ONE ENABLED YOUR UPGRADE
+
+SKIPRANGE EXPLANATION:
+----------------------
+skipRange: '>=2.25.0 <3.3.0'
+
+This tells OLM: "If you're on ANY version between 2.25.0 and 3.3.0,
+you can skip directly to 3.3.0 without installing intermediate versions."
+
+This is why the upgrade jumped from 2.25.2 directly to 3.3.0.

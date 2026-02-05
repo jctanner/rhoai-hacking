@@ -1,0 +1,264 @@
+================================================================================
+RHOAI FBC INVENTORY
+Collection Date: February 4, 2026
+================================================================================
+
+PURPOSE
+-------
+Complete archive of FBC catalog and bundle data needed to recreate the
+RHOAI operator catalog from source or build custom catalogs.
+
+COLLECTION STATUS: ✓ COMPLETE
+----------------------------------
+
+You now have all the data needed to:
+1. Build an FBC from scratch
+2. Create custom catalogs with modified upgrade paths
+3. Build bundle images from manifests
+4. Understand the operator's CRD structure
+5. Compare versions and track changes
+
+FILE INVENTORY
+--------------
+
+Core FBC Files:
+  ✓ catalog.yaml                   1.5 MB    Complete FBC (80 docs, 62 bundles)
+  ✓ bundle-3.3.0-entry.yaml       39 KB     Bundle entry for v3.3.0
+  ✓ bundle-2.25.2-entry.yaml      42 KB     Bundle entry for v2.25.2
+
+ClusterServiceVersions:
+  ✓ csv-3.3.0.yaml                151 KB    CSV for current version
+  ✓ csv-2.25.2.yaml               108 B     CSV for previous version (not in cluster)
+
+CRDs:
+  ✓ crds-all.yaml                 28 MB     All CRDs from cluster
+  ✓ bundles/3.3.0/manifests/*.yaml 952 KB   37 individual CRD files
+
+Bundle v3.3.0 (COMPLETE):
+  ✓ bundles/3.3.0/manifests/       38 files  CSV + 37 CRDs
+  ✓ bundles/3.3.0/metadata/         1 file   annotations.yaml
+
+Documentation:
+  ✓ README.md                      5.0 KB    Quick reference and usage
+  ✓ BUNDLE_STRUCTURE.md            6.3 KB    How to build FBC from source
+  ✓ ANALYSIS.txt                   1.1 KB    Upgrade path analysis
+  ✓ INVENTORY.txt                  (this file)
+
+Total Size: ~30 MB
+
+BUNDLE v3.3.0 CONTENTS
+----------------------
+
+Manifests (38 files):
+  1. rhods-operator.clusterserviceversion.yaml - Main operator CSV
+
+  CRDs (37 files):
+    - acceleratorprofiles.dashboard.opendatahub.io.yaml
+    - accounts.nim.opendatahub.io.yaml
+    - auths.services.platform.opendatahub.io.yaml
+    - codeflares.components.platform.opendatahub.io.yaml
+    - dashboards.components.platform.opendatahub.io.yaml
+    - datascienceclusters.datasciencecluster.opendatahub.io.yaml
+    - datasciencepipelinesapplications.datasciencepipelinesapplications.opendatahub.io.yaml
+    - datasciencepipelines.components.platform.opendatahub.io.yaml
+    - dscinitializations.dscinitialization.opendatahub.io.yaml
+    - feastoperators.components.platform.opendatahub.io.yaml
+    - featuretrackers.features.opendatahub.io.yaml
+    - gatewayconfigs.services.platform.opendatahub.io.yaml
+    - guardrailsorchestrators.trustyai.opendatahub.io.yaml
+    - hardwareprofiles.dashboard.opendatahub.io.yaml
+    - hardwareprofiles.infrastructure.opendatahub.io.yaml
+    - kserves.components.platform.opendatahub.io.yaml
+    - kueues.components.platform.opendatahub.io.yaml
+    - llamastackoperators.components.platform.opendatahub.io.yaml
+    - lmevaljobs.trustyai.opendatahub.io.yaml
+    - mlflowoperators.components.platform.opendatahub.io.yaml
+    - modelcontrollers.components.platform.opendatahub.io.yaml
+    - modelmeshservings.components.platform.opendatahub.io.yaml
+    - modelregistries.components.platform.opendatahub.io.yaml
+    - modelregistries.modelregistry.opendatahub.io.yaml
+    - modelsasservices.components.platform.opendatahub.io.yaml
+    - monitorings.services.platform.opendatahub.io.yaml
+    - nemoguardrails.trustyai.opendatahub.io.yaml
+    - odhapplications.dashboard.opendatahub.io.yaml
+    - odhdashboardconfigs.opendatahub.io.yaml
+    - odhdocuments.dashboard.opendatahub.io.yaml
+    - rays.components.platform.opendatahub.io.yaml
+    - servicemeshes.services.platform.opendatahub.io.yaml
+    - trainers.components.platform.opendatahub.io.yaml
+    - trainingoperators.components.platform.opendatahub.io.yaml
+    - trustyais.components.platform.opendatahub.io.yaml
+    - trustyaiservices.trustyai.opendatahub.io.yaml
+    - workbenches.components.platform.opendatahub.io.yaml
+
+Metadata:
+  - annotations.yaml - Bundle metadata with channel/package info
+
+CATALOG STRUCTURE
+-----------------
+
+Package:
+  Name: rhods-operator
+  Default Channel: stable
+
+Channels (18):
+  - stable (production)
+  - fast, fast-3.x (early access)
+  - alpha (development)
+  - eus-2.25 (extended update support)
+  - Various version-specific channels
+
+Bundles (62):
+  Version Range: 1.20.1-8 → 3.3.0
+  Total Versions: 62 operator releases
+
+UPGRADE PATH REFERENCE
+-----------------------
+
+2.25.2 → 3.3.0:
+  Channel: stable
+  Mechanism: replaces + skipRange
+
+  Entry:
+    name: rhods-operator.3.3.0
+    replaces: rhods-operator.2.25.2
+    skipRange: '>=2.25.0 <3.3.0'
+
+  Meaning: Direct upgrade from any 2.25.x to 3.3.0
+
+IMAGES REFERENCED
+-----------------
+
+Catalog Image (running on cluster):
+  quay.io/rhoai/rhoai-fbc-fragment:rhoai-3.3@sha256:c7b340b57e76bd2d86a483673244221879076a4f243be74e8d622716275fd363
+
+Bundle Image v3.3.0:
+  registry.redhat.io/rhoai/odh-operator-bundle@sha256:6a04d95b8069f3a9e0f3868e565c1b3beac16ab3fce3263cdba1c2bb3340c2f7
+
+Bundle Image v2.25.2:
+  registry.redhat.io/rhoai/odh-operator-bundle@sha256:328d16d24da1d2cb17928bc7a575f892b4e1c3455d118714483c57060292644e
+
+Operator Image v3.3.0:
+  registry.redhat.io/rhoai/odh-rhel9-operator@sha256:e19cf86e83c4c45844b4257dccadeb97a686f99eed9527a0b317257643a56f9e
+
+Note: Bundle images are not directly pullable. Manifests extracted from cluster instead.
+
+WHAT YOU CAN DO NOW
+-------------------
+
+1. BUILD CUSTOM FBC:
+   - Edit catalog.yaml upgrade paths
+   - Remove unwanted versions
+   - Add skipRanges for custom upgrade semantics
+   - See BUNDLE_STRUCTURE.md for build instructions
+
+2. CREATE DEV CATALOG:
+   - Use bundles/3.3.0/ as template
+   - Modify CSV with custom image references
+   - Build bundle and catalog images
+   - Deploy to cluster with custom CatalogSource
+
+3. OFFLINE/DISCONNECTED INSTALL:
+   - Mirror all referenced images
+   - Build catalog pointing to mirrored registry
+   - Create ImageContentSourcePolicy
+
+4. VERSION COMPARISON:
+   - Compare CSV files across versions
+   - Track CRD schema evolution
+   - Understand feature additions/removals
+
+5. OPERATOR DEVELOPMENT:
+   - Use as reference for proper bundle structure
+   - Understand required CRDs
+   - See upgrade path patterns
+
+TOOLS NEEDED FOR BUILDING
+--------------------------
+
+Essential:
+  ✓ opm      - Operator Package Manager (build/validate FBC)
+  ✓ podman   - Container image build/push
+  ✓ yq       - YAML query/manipulation
+  ✓ jq       - JSON query/manipulation
+
+Optional:
+  - operator-sdk  - Bundle validation
+  - docker        - Alternative to podman
+  - skopeo        - Image inspection/copy
+
+QUICK START EXAMPLES
+--------------------
+
+View all bundles in stable channel:
+  $ yq eval 'select(.schema == "olm.channel" and .name == "stable")' catalog.yaml
+
+List CRDs in bundle:
+  $ ls -1 bundles/3.3.0/manifests/*.yaml | grep -v clusterserviceversion
+
+Validate bundle structure:
+  $ ls bundles/3.3.0/manifests/rhods-operator.clusterserviceversion.yaml
+  $ ls bundles/3.3.0/metadata/annotations.yaml
+
+Extract specific bundle entry:
+  $ yq eval 'select(.schema == "olm.bundle" and .name == "rhods-operator.3.3.0")' catalog.yaml
+
+EXTRACTION METHODOLOGY
+----------------------
+
+1. FBC Catalog:
+   Copied from running catalog pod using oc cp
+
+2. CSV Files:
+   Retrieved from cluster using oc get csv
+
+3. CRDs:
+   Extracted all opendatahub.io and platform.opendatahub.io CRDs
+   from running cluster using oc get crds
+
+4. Bundle Metadata:
+   Created using standard OLM bundle annotation format
+
+5. Bundle Structure:
+   Organized according to OLM bundle specification:
+     - /manifests/  - CSV and CRDs
+     - /metadata/   - Bundle annotations
+
+All data is production-sourced from the dbasung cluster running
+RHOAI operator v3.3.0 after successful upgrade from v2.25.2.
+
+COMPLETENESS CHECK
+------------------
+
+Required for FBC Rebuild: ✓ YES
+  [✓] Package definition
+  [✓] Channel definitions
+  [✓] Bundle entries with images
+  [✓] Upgrade graph (replaces/skipRange)
+
+Required for Bundle Rebuild: ✓ YES
+  [✓] ClusterServiceVersion (CSV)
+  [✓] All CRDs
+  [✓] Bundle metadata (annotations.yaml)
+  [✓] Proper directory structure
+
+Missing (Not Critical):
+  [~] Direct access to bundle images (worked around via cluster extraction)
+  [~] Bundle image build history (not needed for rebuild)
+
+CONCLUSION
+----------
+
+This directory contains COMPLETE data to:
+  ✓ Understand the RHOAI operator FBC structure
+  ✓ Build custom FBC from scratch or by modification
+  ✓ Recreate bundle images from manifests
+  ✓ Create custom catalogs with modified upgrade paths
+  ✓ Support offline/disconnected installations
+
+See BUNDLE_STRUCTURE.md for detailed build instructions.
+See README.md for quick reference and common operations.
+
+================================================================================
+END OF INVENTORY
+================================================================================
