@@ -238,7 +238,22 @@ def render_template(template_path, output_path, values, route_host_override=None
     if 'REDIRECT_URL' in values and 'rh-ai' in values['REDIRECT_URL']:
         print(f"  Detected rh-ai URL - adding data-science-gateway-legacy redirect")
 
+        # Extract the apps domain from the redirect URL to construct the legacy hostname
+        parsed = urllib.parse.urlparse(values['REDIRECT_URL'])
+        if parsed.hostname:
+            # Extract domain (e.g., "rh-ai.apps.cluster.com" -> "apps.cluster.com")
+            parts = parsed.hostname.split('.', 1)
+            if len(parts) > 1:
+                apps_domain = parts[1]
+                legacy_host = f"data-science-gateway.{apps_domain}"
+            else:
+                legacy_host = None
+        else:
+            legacy_host = None
+
         # Append additional route for data-science-gateway-legacy
+        # Route name is -legacy to avoid conflicts, but spec.host is the original URL
+        host_line = f"  host: {legacy_host}\n" if legacy_host else ""
         dsg_route = f"""---
 apiVersion: route.openshift.io/v1
 kind: Route
@@ -251,7 +266,7 @@ metadata:
   labels:
     app: nginx-redirect
 spec:
-  port:
+{host_line}  port:
     targetPort: http
   tls:
     insecureEdgeTerminationPolicy: Redirect
