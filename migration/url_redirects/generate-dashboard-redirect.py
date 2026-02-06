@@ -2,6 +2,7 @@
 """
 Generate nginx-redirect.yaml from template by auto-discovering values from the cluster.
 """
+import argparse
 import json
 import re
 import sys
@@ -141,7 +142,7 @@ def discover_redirect_url(cli):
     return None
 
 
-def auto_discover_values(cli, variables):
+def auto_discover_values(cli, variables, redirect_url_override=None):
     """
     Auto-discover values for template variables using cluster commands.
     Returns a dictionary of variable -> value mappings.
@@ -183,15 +184,21 @@ def auto_discover_values(cli, variables):
         discovered = None
 
         if var == "REDIRECT_URL":
-            discovered = discover_redirect_url(cli)
+            if redirect_url_override:
+                discovered = redirect_url_override
+                print(f"  {var}: {discovered} (override)")
+            else:
+                discovered = discover_redirect_url(cli)
+                if discovered:
+                    print(f"  {var}: {discovered} (auto-discovered)")
 
         if discovered:
-            print(f"  {var}: {discovered} (auto-discovered)")
             values[var] = discovered
         elif var not in values:
             print(f"\nError: Unable to auto-discover {var}", file=sys.stderr)
             print(f"Could not find the consolelink or data-science-gateway route.", file=sys.stderr)
             print(f"Please ensure RHOAI/ODH is properly configured.", file=sys.stderr)
+            print(f"Or provide --redirect-url to override.", file=sys.stderr)
             print(f"\nYou can check with:", file=sys.stderr)
             print(f"  {cli} get consolelink", file=sys.stderr)
             print(f"  {cli} get route data-science-gateway -A", file=sys.stderr)
@@ -201,7 +208,7 @@ def auto_discover_values(cli, variables):
     return values
 
 
-def render_template(template_path, output_path, values):
+def render_template(template_path, output_path, values, route_host_override=None):
     """
     Render the template with provided values and write to output file.
     """
@@ -213,6 +220,17 @@ def render_template(template_path, output_path, values):
     except KeyError as e:
         print(f"Error: Missing value for variable {e}", file=sys.stderr)
         sys.exit(1)
+
+    # Add custom route host if provided (only to the primary route, not future-proofing routes)
+    if route_host_override:
+        print(f"  Custom route host: {route_host_override}")
+        # Inject host field into the primary route spec only
+        # Find the first occurrence of "spec:\n  port:" and inject host before port
+        rendered = rendered.replace(
+            "spec:\n  port:",
+            f"spec:\n  host: {route_host_override}\n  port:",
+            1  # Only replace first occurrence
+        )
 
     # Future-proofing: If redirect URL is rh-ai, also create data-science-gateway-legacy redirect
     # This handles the 3.4 migration where rh-ai replaces data-science-gateway
@@ -251,6 +269,29 @@ spec:
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description='Generate dashboard redirect YAML from template by auto-discovering cluster values.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  ./generate-dashboard-redirect.py
+  ./generate-dashboard-redirect.py --redirect-url https://rh-ai.apps.cluster.example.com
+  ./generate-dashboard-redirect.py --route-host custom-dashboard.apps.cluster.example.com
+  ./generate-dashboard-redirect.py --redirect-url https://rh-ai.apps.example.com --route-host old-dashboard.apps.example.com
+"""
+    )
+    parser.add_argument(
+        '--redirect-url',
+        metavar='URL',
+        help='Override the auto-discovered redirect destination URL'
+    )
+    parser.add_argument(
+        '--route-host',
+        metavar='HOSTNAME',
+        help='Set a custom hostname for the redirect route (for legacy custom URLs)'
+    )
+    args = parser.parse_args()
+
     script_dir = Path(__file__).parent
     template_file = script_dir / "dashboard-redirect.yaml.template"
     output_file = script_dir / "dashboard-redirect.yaml"
@@ -273,10 +314,10 @@ def main():
         sys.exit(0)
 
     # Auto-discover values from cluster
-    values = auto_discover_values(cli, variables)
+    values = auto_discover_values(cli, variables, redirect_url_override=args.redirect_url)
 
     # Render template
-    render_template(template_file, output_file, values)
+    render_template(template_file, output_file, values, route_host_override=args.route_host)
 
     # Instruct user to apply manually
     print()

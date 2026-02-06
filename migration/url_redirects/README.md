@@ -21,12 +21,31 @@ This tool creates a redirect route that preserves the old URL and redirects traf
 
 ## Usage
 
+Basic usage (auto-discover everything):
+
 ```bash
 cd url_redirects
 ./generate-dashboard-redirect.py
 ```
 
 The script will auto-discover platform type, namespace, route name, and redirect URL from the cluster.
+
+### Override options
+
+For edge cases where auto-discovery doesn't work or you have custom URLs:
+
+```bash
+# Override redirect destination
+./generate-dashboard-redirect.py --redirect-url https://rh-ai.apps.cluster.example.com
+
+# Set custom route hostname (for legacy custom URLs no longer in cluster)
+./generate-dashboard-redirect.py --route-host custom-dashboard.apps.cluster.example.com
+
+# Override both
+./generate-dashboard-redirect.py \
+  --redirect-url https://rh-ai.apps.example.com \
+  --route-host old-dashboard.apps.example.com
+```
 
 After generation, apply the manifest:
 
@@ -71,6 +90,26 @@ The script checks in order:
 2. Subscription CRs - looks for `rhods-operator` or `opendatahub-operator` package
 3. Consolelink - extracts redirect URL from "Red Hat OpenShift AI" or "Open Data Hub" entry
 4. Route - falls back to `data-science-gateway` route if consolelink is missing
+
+## Edge cases
+
+### Custom legacy URLs
+
+If a customer had a custom hostname for the old dashboard route (set via `spec.host`) and that route has been garbage collected, the script cannot auto-discover it. Use `--route-host` to specify the custom hostname:
+
+```bash
+./generate-dashboard-redirect.py --route-host custom-name.apps.cluster.example.com
+```
+
+This sets the route's `spec.host` field to preserve the exact legacy URL.
+
+### Manual redirect override
+
+If auto-discovery fails or you want to redirect to a different URL than what's configured in the cluster, use `--redirect-url`:
+
+```bash
+./generate-dashboard-redirect.py --redirect-url https://new-location.example.com
+```
 
 ## Template variables
 
