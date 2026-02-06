@@ -43,6 +43,15 @@ oc apply -f dashboard-redirect.yaml
 
 All resources are deployed in the platform's application namespace (`redhat-ods-applications` for RHOAI, `opendatahub` for ODH).
 
+### RHOAI 3.4+ Future-Proofing
+
+If the detected redirect URL contains `rh-ai` (the new 3.4+ URL scheme), the script automatically creates an additional route named `data-science-gateway-legacy`. This ensures both the old dashboard route and the 3.3 gateway route redirect to the new 3.4 URL:
+
+- `rhods-dashboard` → `rh-ai.$APPSDOMAIN`
+- `data-science-gateway-legacy` → `rh-ai.$APPSDOMAIN`
+
+Note: The actual `data-science-gateway` route still exists in 3.4 (serving the rh-ai URL), so our redirect uses the `-legacy` suffix to avoid conflicts.
+
 ## How the redirect works
 
 The nginx config returns HTTP 301 redirects:

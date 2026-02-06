@@ -214,6 +214,38 @@ def render_template(template_path, output_path, values):
         print(f"Error: Missing value for variable {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Future-proofing: If redirect URL is rh-ai, also create data-science-gateway-legacy redirect
+    # This handles the 3.4 migration where rh-ai replaces data-science-gateway
+    # The actual data-science-gateway route will still exist in 3.4, so we name ours -legacy
+    if 'REDIRECT_URL' in values and 'rh-ai' in values['REDIRECT_URL']:
+        print(f"  Detected rh-ai URL - adding data-science-gateway-legacy redirect")
+
+        # Append additional route for data-science-gateway-legacy
+        dsg_route = f"""---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: data-science-gateway-legacy
+  namespace: {values['NAMESPACE']}
+  annotations:
+    haproxy.router.openshift.io/hsts_header: max-age=31536000;includeSubDomains;preload
+    kubernetes.io/tls-acme: "true"
+  labels:
+    app: nginx-redirect
+spec:
+  port:
+    targetPort: http
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: edge
+  to:
+    kind: Service
+    name: nginx-redirect
+    weight: 100
+  wildcardPolicy: None
+"""
+        rendered = rendered + dsg_route
+
     output_path.write_text(rendered)
     print(f"Generated: {output_path.name}")
 
