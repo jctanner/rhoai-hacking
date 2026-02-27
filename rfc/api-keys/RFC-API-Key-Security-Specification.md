@@ -15,6 +15,8 @@ API keys serve as a foundational authentication mechanism for unattended and pro
 
 The document employs RFC 2119 terminology to distinguish between absolute requirements (MUST), strong recommendations (SHOULD), and optional features (MAY), providing clear guidance for implementation while acknowledging the varying security requirements across different deployment contexts.
 
+**Note:** All 42 source references cited throughout this document are available as linked markdown files in Section 18.2. Click any [Source-XX] citation to view the complete source material in the [references](references/) directory.
+
 ## Table of Contents
 
 1. [Introduction](#1-introduction)
@@ -2245,22 +2247,50 @@ Rescorla, E., "The Transport Layer Security (TLS) Protocol Version 1.3", RFC 844
 
 ### 18.2. Informative References
 
-**[Source-01]**: "10 API Key Management Best Practices", Serverion, February 2025.
-**[Source-02]**: "OWASP API Security Top 10 - 2019", OWASP Foundation, March 2022.
-**[Source-05]**: "API Key Design Pattern", Microservice API Patterns.
-**[Source-08]**: "API Keys ≠ Security: Why API Keys Are Not Enough", Nordic APIs.
-**[Source-12]**: "Behind GitHub's new authentication token formats", GitHub Blog, April 2021.
-**[Source-13]**: "Best Practices for API Key Safety", OpenAI Help Center.
-**[Source-19]**: "Google API Keys Weren't Secrets. But then Gemini Changed the Rules", Truffle Security.
-**[Source-20]**: "Hardcoded API Keys: The Rookie Mistake That Costs Millions", InstaTunnel via Medium.
-**[Source-22]**: "Mechanisms for Mutual Attested Microservice Communication".
-**[Source-24]**: "Quantum-safe API Security: How to prepare APIs for the post-quantum future", Curity.
-**[Source-27]**: "Securing APIs: Guide to API Keys & Scopes".
-**[Source-32]**: "Token entropy explained: what is token entropy?", Tesseral Guides.
-**[Source-34]**: "Understanding Entropy: Key To Secure Cryptography & Randomness", Netdata.
-**[Source-41]**: "What makes a good API key system?", Ted Spence, tedspence.com, July 2023.
+**[Source-01]**: [10 API Key Management Best Practices](references/10%20API%20Key%20Management%20Best%20Practices.md)
+**[Source-02]**: [OWASP API Security Top 10](references/8Mar2022-owasp-api-security-top-10.md)
+**[Source-03]**: [API Access Control in Kubernetes](references/API%20Access%20Control%20_%20Kubernetes.md)
+**[Source-04]**: [API Key Authentication Best Practices](references/API%20Key%20Authentication%20Best%20Practices%20_%20Zuplo%20Blog.md)
+**[Source-05]**: [API Key Design Pattern](references/API%20Key%20Design.md)
+**[Source-06]**: [API Key Entropy Documentation](references/API%20Key%20-%20Entropy%20Data%20Documentation.md)
+**[Source-07]**: [API Key Security Best Practices (Reddit)](references/API%20Key%20Security%20Best%20Practices%20_%20r_softwarearchitecture.md)
+**[Source-08]**: [Why API Keys Are Not Enough](references/API%20Keys%20%E2%89%A0%20Security_%20Why%20API%20Keys%20Are%20Not%20Enough%20_%20Nordic%20APIs%20_.md)
+**[Source-09]**: [API Keys in Swagger/OpenAPI](references/API%20Keys%20_%20Swagger%20Docs.md)
+**[Source-10]**: [API Keys: Weaknesses and Security Best Practices](references/API%20keys_%20Weaknesses%20and%20security%20best%20practices%20_%20TechTarget.md)
+**[Source-11]**: [General API Security Best Practices](references/api-security-best-practices.md)
+**[Source-12]**: [GitHub's New Authentication Token Formats](references/Behind%20GitHub%27s%20new%20authentication%20token%20formats%20-%20The%20GitHub%20Blog.md)
+**[Source-13]**: [OpenAI API Key Safety Best Practices](references/Best%20Practices%20for%20API%20Key%20Safety%20_%20OpenAI%20Help%20Center.md)
+**[Source-14]**: [Claude Code API Token Exfiltration Vulnerabilities](references/Caught%20in%20the%20Hook_%20RCE%20and%20API%20Token%20Exfiltration%20Through%20Claude%20Code%20Project%20Files%20_%20CVE-2025-59536%20_%20CVE-2026-21852%20-%20Check%20Point%20Research.md)
+**[Source-15]**: [Choosing Authentication Methods (Google Cloud)](references/Choosing%20an%20Authentication%20Method%20_%20Cloud%20Endpoints%20with%20OpenAPI%20_%20Google%20Cloud%20Documentation.md)
+**[Source-16]**: [Claude Code Security Flaws](references/Claude%20Code%20Flaws%20Allow%20Remote%20Code%20Execution%20and%20API%20Key%20Exfiltration.md)
+**[Source-17]**: [Designing Secure and Informative API Keys](references/Designing%20Secure%20and%20Informative%20API%20Keys%20_%20r_programming.md)
+**[Source-18]**: [High Entropy Secrets (GitGuardian)](references/Generic%20high%20entropy%20secret%20_%20GitGuardian%20documentation.md)
+**[Source-19]**: [Google API Keys Security Evolution](references/Google%20API%20Keys%20Weren%27t%20Secrets.%20But%20then%20Gemini%20Changed%20the%20Rules.%20%E2%97%86%20Truffle%20Security%20Co..md)
+**[Source-20]**: [Hardcoded API Keys Security Risks](references/Hardcoded%20API%20Keys_%20The%20Rookie%20Mistake%20That%20Costs%20Millions%20%F0%9F%92%8E%20_%20by%20InstaTunnel%20_%20Medium.md)
+**[Source-21]**: [Kubernetes Token Storage](references/linux%20-%20where%20are%20tokens%20created%20by%20kubectl%20create%20token%20stored%20%28from%20v1.24%20on%29_%20-%20Stack%20Overflow.md)
+**[Source-22]**: [Mutual Attested Microservice Communication](references/Mechanisms%20for%20Mutual%20Attested%20Microservice%20Communication.md)
+**[Source-23]**: [Protecting APIs from Modern Security Risks](references/Protecting%20APIs%20from%20Modern%20Security%20Risks%20-%20Salt%20Security_Whitepaper_Protecting%20APIs.md)
+**[Source-24]**: [Quantum-Safe API Security](references/Quantum-safe%20API%20Security%20-%20How%20to%20prepare%20APIs%20for%20the%20post-quantum%20future%20_%20Curity.md)
+**[Source-25]**: [API Security Research Paper](references/Research-Paper-API-Security_100824.md)
+**[Source-26]**: [Restricting API Access with Keys (Google Cloud)](references/Restricting%20API%20access%20with%20API%20keys%20_%20Cloud%20Endpoints%20with%20OpenAPI%20_%20Google%20Cloud%20Documentation.md)
+**[Source-27]**: [Guide to API Keys and Scopes](references/Securing%20APIs%20_%20Guide%20to%20API%20Keys%20%26%20Scopes.md)
+**[Source-28]**: [Phantom Token Approach](references/Securing%20APIs%20with%20The%20Phantom%20Token%20Approach%20_%20Curity.md)
+**[Source-29]**: [Securing Modern API Infrastructure](references/Securing%20the%20Next%20Generation%20of%20Digital%20Infrastructure%20-%20The%20Importance%20of%20Protecting%20Modern%20APIs%20-%20Dhaka%20Timsina.md)
+**[Source-30]**: [Securing Long-Lived Authentication Keys](references/Securing%20Your%20API%20With%20Long-Lived%20Authentication%20Keys%20_%20by%20James%20Hickey%20_%20ProcedureFlow%20Engineering%20_%20Medium.md)
+**[Source-31]**: [Best Approach for Generating API Keys (Stack Overflow)](references/security%20-%20What%27s%20the%20best%20approach%20for%20generating%20a%20new%20API%20key_%20-%20Stack%20Overflow.md)
+**[Source-32]**: [Token Entropy Explained](references/Token%20entropy%20explained_%20what%20is%20token%20entropy_%20_%20Tesseral%20Guides.md)
+**[Source-33]**: [Understanding API Keys (Supabase)](references/Understanding%20API%20keys%20_%20Supabase%20Docs.md)
+**[Source-34]**: [Understanding Entropy in Cryptography](references/Understanding%20Entropy_%20Key%20To%20Secure%20Cryptography%20%26%20Randomness%20_%20Netdata.md)
+**[Source-35]**: [Kubernetes Bound Service Account Tokens](references/Using%20Kubernetes%27s%20new%20Bound%20Service%20Account%20Tokens%20for%20secure%20workload%20identity%20_%20Linkerd.md)
+**[Source-36]**: [API Key Definition (Fortinet)](references/What%20Is%20an%20API%20Key_%20_%20API%20Key%20Definition%20_%20Fortinet.md)
+**[Source-37]**: [What is an API Key (Astrix Security)](references/What%20is%20an%20API%20Key_%20_%20Astrix%20Security.md)
+**[Source-38]**: [API Keys: Benefits and Best Practices (Postman)](references/What%20Is%20an%20API%20Key_%20Benefits%2C%20Best%20Practices%20%26%20Use%20Cases%20_%20Postman%20Blog.md)
+**[Source-39]**: [What Is an API Key (IBM)](references/What%20Is%20an%20API%20Key_%20_%20IBM.md)
+**[Source-40]**: [Complete 2025 API Key Guide](references/What%20is%20an%20API%20Key_%20Why%20Do%20We%20Need%20Them_%20Complete%202025%20Guide%20-%20API7.ai.md)
+**[Source-41]**: [What Makes a Good API Key System](references/What%20makes%20a%20good%20API%20key%20system_%20_%20by%20Ted%20Spence%20_%20tedspence.com.md)
+**[Source-42]**: [Why and When to Use API Keys (Google Cloud)](references/Why%20and%20when%20to%20use%20API%20keys%20_%20Cloud%20Endpoints%20with%20OpenAPI%20_%20Google%20Cloud%20Documentation.md)
 
-*(Complete reference list with all 42 sources available in full specification)*
+*All 42 source documents are available as linked markdown files in the [references](references/) directory.*
 
 ---
 
