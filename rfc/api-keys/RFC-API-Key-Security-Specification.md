@@ -144,15 +144,15 @@ The document employs RFC 2119 terminology to distinguish between absolute requir
 
 Application Programming Interfaces (APIs) have become the backbone of modern software architecture, enabling service-to-service communication, third-party integrations, and programmatic access to platform capabilities. As APIs proliferate across enterprise and consumer applications, the security of API authentication mechanisms has emerged as a critical concern.
 
-"An API provider offers services to subscribed participants only. For various reasons, such as establishing a RATE LIMIT or PRICING PLAN, one or more clients have signed up and want to use the services. These clients have to be identified." [Source-05]
+"An API provider offers services to subscribed participants only. For various reasons, such as establishing a RATE LIMIT or PRICING PLAN, one or more clients have signed up and want to use the services. These clients have to be identified." [[Source-05]](#source-5)
 
-API keys represent one of the foundational authentication patterns for APIs, particularly suited for "unattended use" scenarios where "an unattended computer can't launch a web browser to redirect to an authentication provider" [Source-41]. Unlike interactive authentication flows designed for human users (OAuth 2.0, SAML), API keys provide long-lived credentials that enable automated systems, scripts, and background processes to authenticate to APIs without human intervention.
+API keys represent one of the foundational authentication patterns for APIs, particularly suited for "unattended use" scenarios where "an unattended computer can't launch a web browser to redirect to an authentication provider" [[Source-41]](#source-41). Unlike interactive authentication flows designed for human users (OAuth 2.0, SAML), API keys provide long-lived credentials that enable automated systems, scripts, and background processes to authenticate to APIs without human intervention.
 
-However, the simplicity and convenience of API keys come with significant security challenges. The OWASP API Security Top 10 identifies broken authentication and authorization as primary API security risks [Source-02]. Real-world incidents demonstrate the severe consequences of inadequate API key management:
+However, the simplicity and convenience of API keys come with significant security challenges. The OWASP API Security Top 10 identifies broken authentication and authorization as primary API security risks [[Source-02]](#source-2). Real-world incidents demonstrate the severe consequences of inadequate API key management:
 
-- The 2021 Twitch data breach exposed API keys stored in source code repositories [Source-01]
-- Hardcoded API keys have resulted in "millions" in financial losses [Source-20]
-- Google's Gemini API launch required security policy changes after widespread key exposure [Source-19]
+- The 2021 Twitch data breach exposed API keys stored in source code repositories [[Source-01]](#source-1)
+- Hardcoded API keys have resulted in "millions" in financial losses [[Source-20]](#source-20)
+- Google's Gemini API launch required security policy changes after widespread key exposure [[Source-19]](#source-19)
 
 These incidents underscore the critical need for comprehensive, standardized guidance on API key design, implementation, and management.
 
@@ -310,10 +310,10 @@ Long-lived keys remain valid indefinitely, increasing exposure window.
 API key management implementations MUST adhere to the following security principles:
 
 **Defense in Depth**
-"These practices, when combined, create a strong defense for your API infrastructure" [Source-01]. Multiple layered security controls ensure that failure of any single control does not result in complete compromise.
+"These practices, when combined, create a strong defense for your API infrastructure" [[Source-01]](#source-1). Multiple layered security controls ensure that failure of any single control does not result in complete compromise.
 
 **Principle of Least Privilege**
-"Follow the principle of least privilege with role-based access control (RBAC)" [Source-01]. API keys SHOULD have the minimum permissions necessary to perform their intended function.
+"Follow the principle of least privilege with role-based access control (RBAC)" [[Source-01]](#source-1). API keys SHOULD have the minimum permissions necessary to perform their intended function.
 
 **Fail Securely**
 Authentication and authorization failures MUST default to denying access rather than permitting it.
@@ -335,7 +335,7 @@ Systems SHOULD support multiple hashing and encryption algorithms to enable migr
 
 An API key is a unique identifier and secret token used to authenticate a client making requests to an API. As defined in the API Key Design pattern:
 
-"As an API provider, assign each client a unique token — the API KEY — that the client can present to the API endpoint for identification purposes." [Source-05]
+"As an API provider, assign each client a unique token — the API KEY — that the client can present to the API endpoint for identification purposes." [[Source-05]](#source-5)
 
 API keys serve multiple functions:
 - **Authentication**: Verifying the identity of the calling application or service
@@ -349,7 +349,7 @@ API keys serve multiple functions:
 API keys are appropriate for the following scenarios:
 
 **UC1: Unattended/Automated Access**
-"API keys are for unattended use" [Source-41]. Background jobs, scheduled scripts, CI/CD pipelines, and server-to-server integrations that cannot participate in interactive authentication flows.
+"API keys are for unattended use" [[Source-41]](#source-41). Background jobs, scheduled scripts, CI/CD pipelines, and server-to-server integrations that cannot participate in interactive authentication flows.
 
 **UC2: Programmatic Access**
 Command-line tools, SDKs, and developer libraries that require consistent, long-lived credentials.
@@ -378,17 +378,17 @@ API keys exist within an ecosystem of authentication mechanisms, each with disti
 
 **OAuth 2.0 vs. API Keys**
 
-"If you're building a web application, you should be using OAuth or SAML. These technologies are designed for interactive applications" [Source-41]. OAuth 2.0 provides superior security for scenarios involving user consent and delegation but introduces complexity:
+"If you're building a web application, you should be using OAuth or SAML. These technologies are designed for interactive applications" [[Source-41]](#source-41). OAuth 2.0 provides superior security for scenarios involving user consent and delegation but introduces complexity:
 
-- OAuth refresh tokens require "extra work for the client and server developers" [Source-41]
-- "Some developers don't implement refresh tokens correctly" leading to authentication failures [Source-41]
-- "Some OAuth systems don't make it easy to generate multiple tokens" limiting concurrent access [Source-41]
+- OAuth refresh tokens require "extra work for the client and server developers" [[Source-41]](#source-41)
+- "Some developers don't implement refresh tokens correctly" leading to authentication failures [[Source-41]](#source-41)
+- "Some OAuth systems don't make it easy to generate multiple tokens" limiting concurrent access [[Source-41]](#source-41)
 
 API keys offer simplicity for unattended scenarios at the cost of requiring careful lifecycle management.
 
 **mTLS vs. API Keys**
 
-Mutual TLS provides cryptographically stronger authentication through certificate-based identity verification. However, certificate management complexity and infrastructure requirements make mTLS better suited for service mesh environments than general API access [Source-22].
+Mutual TLS provides cryptographically stronger authentication through certificate-based identity verification. However, certificate management complexity and infrastructure requirements make mTLS better suited for service mesh environments than general API access [[Source-22]](#source-22).
 
 ### 4.4. When to Use API Keys
 
@@ -411,7 +411,7 @@ API keys MUST NOT be used when:
 4. **High-Value Operations**: Critical actions requiring step-up authentication or MFA
 5. **Regulatory Restrictions**: Compliance frameworks that prohibit long-lived credentials
 
-"API Keys ≠ Security: Why API Keys Are Not Enough" [Source-08] - API keys should be viewed as one component of a defense-in-depth strategy, not as a complete security solution.
+"API Keys ≠ Security: Why API Keys Are Not Enough" [[Source-08]](#source-8) - API keys should be viewed as one component of a defense-in-depth strategy, not as a complete security solution.
 
 ---
 
@@ -419,17 +419,17 @@ API keys MUST NOT be used when:
 
 ### 5.1. Entropy Requirements
 
-Entropy, defined as "randomness" in security contexts [Source-32], is the primary defense against brute-force attacks. The entropy of an API key determines the computational effort required to guess it through exhaustive search.
+Entropy, defined as "randomness" in security contexts [[Source-32]](#source-32), is the primary defense against brute-force attacks. The entropy of an API key determines the computational effort required to guess it through exhaustive search.
 
 **Minimum Entropy Requirements:**
 
-- API keys MUST have a minimum of **128 bits of entropy** [Source-06]
-- Production systems SHOULD use **256 bits of entropy** for enhanced security [Source-34]
-- Temporary or development keys MAY use 64 bits but MUST NOT be used in production [Source-41]
+- API keys MUST have a minimum of **128 bits of entropy** [[Source-06]](#source-6)
+- Production systems SHOULD use **256 bits of entropy** for enhanced security [[Source-34]](#source-34)
+- Temporary or development keys MAY use 64 bits but MUST NOT be used in production [[Source-41]](#source-41)
 
 **Entropy Calculation:**
 
-"Entropy in security basically just means randomness. If we say something is 'high entropy,' we just mean that it's really, really random. We mean that it's hard to guess." [Source-32]
+"Entropy in security basically just means randomness. If we say something is 'high entropy,' we just mean that it's really, really random. We mean that it's hard to guess." [[Source-32]](#source-32)
 
 For a token using Base62 encoding (A-Z, a-z, 0-9 = 62 characters):
 ```
@@ -441,7 +441,7 @@ For 256 bits of entropy: minimum 43 characters
 
 **Attack Resistance:**
 
-"If you choose 64 bits of entropy for your client secret, a brute force attack with the attacker randomly guessing API keys would require 2⁶³ API calls on average before it would be expected to have a 50% chance of succeeding. This is unlikely to happen — if a single API call took one millisecond, this kind of brute force attack would take 292 million years." [Source-41]
+"If you choose 64 bits of entropy for your client secret, a brute force attack with the attacker randomly guessing API keys would require 2⁶³ API calls on average before it would be expected to have a 50% chance of succeeding. This is unlikely to happen — if a single API call took one millisecond, this kind of brute force attack would take 292 million years." [[Source-41]](#source-41)
 
 However, 64 bits is insufficient for database compromise scenarios (see Section 5.7).
 
@@ -464,7 +464,7 @@ API keys MUST be generated using Cryptographically Secure Pseudo-Random Number G
 - MUST NOT use timestamps, sequential counters, or other predictable sources
 - MUST NOT use insufficient seed material
 
-"Understanding Entropy: Key To Secure Cryptography & Randomness" [Source-34] - The quality of the entropy source directly determines the security of generated keys.
+"Understanding Entropy: Key To Secure Cryptography & Randomness" [[Source-34]](#source-34) - The quality of the entropy source directly determines the security of generated keys.
 
 ### 5.3. Token Format Design
 
@@ -487,9 +487,9 @@ xxxx = 6-character checksum
 
 **Design Principles:**
 
-1. **Identifiability**: "Keys should have prefixes, so you can identify them" [Source-41]
-2. **Error Detection**: "Keys should have checksums, so you can see if you failed to copy the entire key" [Source-41]
-3. **Copy-Paste Friendly**: "Keys shouldn't include characters that prevent copying and pasting like hyphens, so a developer can double click on it and copy it correctly" [Source-41]
+1. **Identifiability**: "Keys should have prefixes, so you can identify them" [[Source-41]](#source-41)
+2. **Error Detection**: "Keys should have checksums, so you can see if you failed to copy the entire key" [[Source-41]](#source-41)
+3. **Copy-Paste Friendly**: "Keys shouldn't include characters that prevent copying and pasting like hyphens, so a developer can double click on it and copy it correctly" [[Source-41]](#source-41)
 
 ### 5.4. Prefixes and Identifiability
 
@@ -511,7 +511,7 @@ Prefixes provide multiple security and operational benefits:
 - Prefixes MUST be followed by a non-alphanumeric separator (underscore recommended)
 - Different key types SHOULD have distinct prefixes
 
-**GitHub Example:** [Source-12]
+**GitHub Example:** [[Source-12]](#source-12)
 - `ghp_` - Personal access token
 - `gho_` - OAuth access token
 - `ghu_` - User-to-server token
@@ -575,7 +575,7 @@ The algorithm for storing and validating API keys determines security against da
 5. Store (H, T, metadata) in database (discard S)
 ```
 
-"This is very similar to how people used to store usernames and passwords. The big difference is that we don't allow customers to select their passwords here — if we actually allowed customers to choose their own API key, they won't be guaranteed to choose one with enough entropy!" [Source-41]
+"This is very similar to how people used to store usernames and passwords. The big difference is that we don't allow customers to select their passwords here — if we actually allowed customers to choose their own API key, they won't be guaranteed to choose one with enough entropy!" [[Source-41]](#source-41)
 
 **Hash Function Comparison:**
 
@@ -586,19 +586,19 @@ The algorithm for storing and validating API keys determines security against da
 | BCrypt | 43,000 | 2 billion CPU days | YES |
 | Argon2 | ~10,000 | Even more resistant | YES |
 
-[Source-41]
+[[Source-41]](#source-41)
 
-"BCrypt is punishingly slow compared to SHA256 and SHA512... a password stored in BCrypt would take over two billion CPU days using the netmux 2018 machine in question." [Source-41]
+"BCrypt is punishingly slow compared to SHA256 and SHA512... a password stored in BCrypt would take over two billion CPU days using the netmux 2018 machine in question." [[Source-41]](#source-41)
 
 **Caching Considerations:**
 
 Since BCrypt/Argon2 are computationally expensive, implementations SHOULD cache authentication successes:
 
-"Validate an API key when it is first used by a particular IP address... Allow that IP address to continue using that API key for a short period of time, say, two minutes. During this time, we presume that as long as that IP address continues to use the same API key, it will remain valid." [Source-41]
+"Validate an API key when it is first used by a particular IP address... Allow that IP address to continue using that API key for a short period of time, say, two minutes. During this time, we presume that as long as that IP address continues to use the same API key, it will remain valid." [[Source-41]](#source-41)
 
 **Performance Benchmarks:**
 
-From real-world implementation [Source-41]:
+From real-world implementation [[Source-41]](#source-41):
 - SHA-256: 2.7μs generate, 1.2μs validate
 - BCrypt: 12.1ms generate, 12.2ms validate
 - First request: ~12ms overhead
@@ -628,7 +628,7 @@ API key storage must protect against multiple threat vectors simultaneously:
 
 ### 6.2. Hashing Requirements
 
-"MUST NOT store plaintext keys" [Source-01] - This is an absolute security requirement.
+"MUST NOT store plaintext keys" [[Source-01]](#source-1) - This is an absolute security requirement.
 
 **Mandatory Requirements:**
 
@@ -666,7 +666,7 @@ Database encryption provides defense-in-depth against storage medium compromise.
 
 **Encryption Requirements:**
 
-"Apply AES-256 for stored keys and TLS 1.3+ for transmission" [Source-01]
+"Apply AES-256 for stored keys and TLS 1.3+ for transmission" [[Source-01]](#source-1)
 
 - Database encryption SHOULD use AES-256-GCM or AES-256-CBC
 - Encryption keys MUST be stored separately from encrypted data
@@ -675,7 +675,7 @@ Database encryption provides defense-in-depth against storage medium compromise.
 
 **Implementation Example:**
 
-"Delphix's 2024 Data Control Tower enhances security by using AES/GCM encryption with keys derived from hostnames and URLs, removing the need to store encryption keys on the filesystem" [Source-01]
+"Delphix's 2024 Data Control Tower enhances security by using AES/GCM encryption with keys derived from hostnames and URLs, removing the need to store encryption keys on the filesystem" [[Source-01]](#source-1)
 
 ### 6.4. Secrets Management Systems
 
@@ -690,7 +690,7 @@ Dedicated secrets management platforms provide centralized security controls.
 | Azure Key Vault | Microsoft ecosystems | HSM support, compliance features, AD integration |
 | Google Secret Manager | Google Cloud | Native GCP integration, automatic replication |
 
-[Source-01]
+[[Source-01]](#source-1)
 
 **Capabilities Required:**
 
@@ -703,7 +703,7 @@ Dedicated secrets management platforms provide centralized security controls.
 
 ### 6.5. Hardware Security Modules
 
-"Use hardware security modules (HSMs) with envelope encryption" [Source-01]
+"Use hardware security modules (HSMs) with envelope encryption" [[Source-01]](#source-1)
 
 HSMs provide tamper-resistant cryptographic operations for highest-security scenarios.
 
@@ -751,12 +751,12 @@ Beyond encryption and hashing, database configurations must prevent unauthorized
 
 ### 6.7. Client-Side Storage
 
-"Best Practices for API Key Safety" [Source-13] emphasizes client-side security as equally critical as server-side protections.
+"Best Practices for API Key Safety" [[Source-13]](#source-13) emphasizes client-side security as equally critical as server-side protections.
 
 **Absolute Prohibitions:**
 
 1. **MUST NOT hardcode in source code**
-   "The Rookie Mistake That Costs Millions" [Source-20] - Hardcoded keys in repositories are the #1 cause of credential exposure
+   "The Rookie Mistake That Costs Millions" [[Source-20]](#source-20) - Hardcoded keys in repositories are the #1 cause of credential exposure
 
 2. **MUST NOT commit to version control**
    - Add to `.gitignore` immediately
@@ -791,13 +791,13 @@ Beyond encryption and hashing, database configurations must prevent unauthorized
 
 **Backend Proxy Pattern:**
 
-For web/mobile applications: [Source-01]
+For web/mobile applications: [[Source-01]](#source-1)
 
 ```
 Client → Backend Proxy (holds API key) → External API
 ```
 
-"A backend proxy ensures that API keys stay hidden from the client" [Source-01]
+"A backend proxy ensures that API keys stay hidden from the client" [[Source-01]](#source-1)
 
 ---
 
@@ -805,7 +805,7 @@ Client → Backend Proxy (holds API key) → External API
 
 ### 7.1. Transport Layer Security
 
-"MUST use TLS 1.3+ for transmission" [Source-01] - All API key transmission MUST occur over encrypted channels.
+"MUST use TLS 1.3+ for transmission" [[Source-01]](#source-1) - All API key transmission MUST occur over encrypted channels.
 
 **TLS Requirements:**
 
@@ -840,9 +840,9 @@ Host: api.example.com
 Authorization: Bearer sk_live_xxxxxxxxxxxxxxxxxxxxx
 ```
 
-This follows RFC 6750 (OAuth 2.0 Bearer Token Usage) [Source-05]:
+This follows RFC 6750 (OAuth 2.0 Bearer Token Usage) [[Source-05]](#source-5):
 
-"The client creates a new conversion process by informing the provider of the desired in- and output format... For billing purposes, the client identifies itself by passing the API KEY gqmbwwB74tToo4YOPEsev5 in the Authorization header of the request, according to the HTTP/1.1 Authentication RFC 7235 specification. HTTP supports various types of authentication, here the RFC 6750 Bearer type is used" [Source-05]
+"The client creates a new conversion process by informing the provider of the desired in- and output format... For billing purposes, the client identifies itself by passing the API KEY gqmbwwB74tToo4YOPEsev5 in the Authorization header of the request, according to the HTTP/1.1 Authentication RFC 7235 specification. HTTP supports various types of authentication, here the RFC 6750 Bearer type is used" [[Source-05]](#source-5)
 
 **Alternative: Custom Header**
 
@@ -917,7 +917,7 @@ API keys SHOULD NOT be transmitted in query parameters except for legacy compati
 
 ### 8.1. Principle of Least Privilege
 
-"Follow the principle of least privilege with role-based access control (RBAC)" [Source-01]
+"Follow the principle of least privilege with role-based access control (RBAC)" [[Source-01]](#source-1)
 
 Every API key SHOULD have only the minimum permissions required to perform its intended function.
 
@@ -941,7 +941,7 @@ admin        → Full CRUD access
 temporary    → Limited-time access with expiration
 ```
 
-[Source-01]
+[[Source-01]](#source-1)
 
 **Role Assignment:**
 
@@ -951,7 +951,7 @@ temporary    → Limited-time access with expiration
 
 ### 8.3. Scope-Based Permissions
 
-"Securing APIs: Guide to API Keys & Scopes" [Source-27] - Scopes provide fine-grained permission control.
+"Securing APIs: Guide to API Keys & Scopes" [[Source-27]](#source-27) - Scopes provide fine-grained permission control.
 
 **Scope Definition:**
 
@@ -971,7 +971,7 @@ temporary    → Limited-time access with expiration
 
 **Stripe Example:**
 
-"Stripe uses a publishable key and a secret key. The secret key takes the role of an API KEY and is transmitted in the Authorization header of each request" [Source-05] with different keys having different scope permissions.
+"Stripe uses a publishable key and a secret key. The secret key takes the role of an API KEY and is transmitted in the Authorization header of each request" [[Source-05]](#source-5) with different keys having different scope permissions.
 
 ### 8.4. Resource-Level Restrictions
 
@@ -984,11 +984,11 @@ Beyond operation-level scopes, restrict access to specific resources.
 - **Method restrictions**: Allow only certain HTTP methods (GET, POST, PUT, DELETE)
 - **Environment segregation**: Separate keys for development, staging, production
 
-[Source-01]
+[[Source-01]](#source-1)
 
 ### 8.5. IP Whitelisting and Network Restrictions
 
-"IP whitelisting: Limit access to specific IP addresses or ranges" [Source-01]
+"IP whitelisting: Limit access to specific IP addresses or ranges" [[Source-01]](#source-1)
 
 **Use Cases:**
 
@@ -1036,7 +1036,7 @@ In multi-tenant systems, API keys must enforce tenant isolation.
 
 ### 9.1. Rotation Policies
 
-"Rotate keys every 30-90 days depending on risk level" [Source-01]
+"Rotate keys every 30-90 days depending on risk level" [[Source-01]](#source-1)
 
 Regular rotation limits the exposure window if a key is compromised.
 
@@ -1048,7 +1048,7 @@ Regular rotation limits the exposure window if a key is compromised.
 | Moderate Risk | 90 days | 48 hours |
 | Low Risk | 180 days | 72 hours |
 
-[Source-01]
+[[Source-01]](#source-1)
 
 **Automated Rotation:**
 
@@ -1057,11 +1057,11 @@ Regular rotation limits the exposure window if a key is compromised.
 - Notification to key owners before rotation
 - Grace period for transition
 
-"AWS Secrets Manager supports automated rotations with a built-in 24-hour overlap period" [Source-01]
+"AWS Secrets Manager supports automated rotations with a built-in 24-hour overlap period" [[Source-01]](#source-1)
 
 ### 9.2. Grace Periods and Overlapping Keys
 
-"To avoid disruptions, use a grace period where old and new keys overlap temporarily. This ensures service continuity while systems update their credentials." [Source-01]
+"To avoid disruptions, use a grace period where old and new keys overlap temporarily. This ensures service continuity while systems update their credentials." [[Source-01]](#source-1)
 
 **Implementation:**
 
@@ -1080,7 +1080,7 @@ Regular rotation limits the exposure window if a key is compromised.
 
 ### 9.3. Multi-Key Models
 
-"A robust key management system should support multiple active keys at once" [Source-41]
+"A robust key management system should support multiple active keys at once" [[Source-41]](#source-41)
 
 **Benefits:**
 
@@ -1098,7 +1098,7 @@ Regular rotation limits the exposure window if a key is compromised.
 
 ### 9.4. Expiration Policies
 
-"Time-based access: Use expiration dates for temporary access" [Source-01]
+"Time-based access: Use expiration dates for temporary access" [[Source-01]](#source-1)
 
 **Expiration Use Cases:**
 
@@ -1145,11 +1145,11 @@ Emergency revocation requires rapid response capabilities.
 - Immediate deactivation: "Quickly deactivate keys without delays"
 - Automated notifications: "Notify stakeholders promptly"
 
-[Source-01]
+[[Source-01]](#source-1)
 
 **Real-World Example:**
 
-"Twilio's 2022 security incident highlighted the importance of quick action. They were able to contain a breach by revoking tokens immediately" [Source-01]
+"Twilio's 2022 security incident highlighted the importance of quick action. They were able to contain a breach by revoking tokens immediately" [[Source-01]](#source-1)
 
 **Implementation Requirements:**
 
@@ -1165,7 +1165,7 @@ Emergency revocation requires rapid response capabilities.
 
 ### 10.1. Usage Monitoring
 
-"Monitor metrics like request volume, error rates, and geographic data" [Source-01]
+"Monitor metrics like request volume, error rates, and geographic data" [[Source-01]](#source-1)
 
 **Key Metrics:**
 
@@ -1177,11 +1177,11 @@ Emergency revocation requires rapid response capabilities.
 | Response Times | Ensure SLA compliance | Latency >500ms |
 | Key Rotation Status | Track key freshness | Key age >90 days |
 
-[Source-01]
+[[Source-01]](#source-1)
 
 **Real-World Example:**
 
-"In 2024, a SaaS provider stopped credential stuffing attacks by spotting an 812% spike in requests from unfamiliar regions – within just 7 minutes" [Source-01]
+"In 2024, a SaaS provider stopped credential stuffing attacks by spotting an 812% spike in requests from unfamiliar regions – within just 7 minutes" [[Source-01]](#source-1)
 
 ### 10.2. Audit Logging Requirements
 
@@ -1232,7 +1232,7 @@ Automated anomaly detection identifies suspicious patterns indicative of comprom
 
 ### 10.4. SIEM Integration
 
-"Link your monitoring systems to existing security tools for automatic responses to threats" [Source-01]
+"Link your monitoring systems to existing security tools for automatic responses to threats" [[Source-01]](#source-1)
 
 Security Information and Event Management (SIEM) systems centralize security monitoring.
 
@@ -1253,7 +1253,7 @@ Security Information and Event Management (SIEM) systems centralize security mon
 
 ### 10.5. Alert Configuration
 
-"Set up automated alerts for suspicious behavior" [Source-01]
+"Set up automated alerts for suspicious behavior" [[Source-01]](#source-1)
 
 **Alert Types:**
 
@@ -1305,7 +1305,7 @@ Beyond security monitoring, track operational metrics.
 
 ### 11.1. Rate Limiting Strategies
 
-"Implement layered rate limits to prevent abuse" [Source-01]
+"Implement layered rate limits to prevent abuse" [[Source-01]](#source-1)
 
 Rate limiting protects API infrastructure from overload and abuse.
 
@@ -1317,7 +1317,7 @@ Rate limiting protects API infrastructure from overload and abuse.
 | Hourly | Medium-term | Regulating typical usage patterns |
 | Daily/Monthly | Long-term | Limiting overall resource consumption |
 
-[Source-01]
+[[Source-01]](#source-1)
 
 **Example Configuration:**
 
@@ -1345,7 +1345,7 @@ The token bucket algorithm is the most common rate limiting implementation.
 
 **Implementation with Redis:**
 
-"Tools like Redis for request tracking and the token bucket algorithm can help manage request flows effectively" [Source-01]
+"Tools like Redis for request tracking and the token bucket algorithm can help manage request flows effectively" [[Source-01]](#source-1)
 
 ### 11.3. Tiered Rate Limits
 
@@ -1392,9 +1392,9 @@ X-RateLimit-Reset: 1612345678
 }
 ```
 
-[Source-01]
+[[Source-01]](#source-1)
 
-"This helps users understand the issue and plan accordingly" [Source-01]
+"This helps users understand the issue and plan accordingly" [[Source-01]](#source-1)
 
 ### 11.5. DDoS Protection
 
@@ -1415,7 +1415,7 @@ Rate limiting alone is insufficient for DDoS protection.
 - Raise limits for trusted users who consistently comply with policies
 - Temporarily increase limits for scheduled high-traffic events"
 
-[Source-01]
+[[Source-01]](#source-1)
 
 ---
 
@@ -1443,7 +1443,7 @@ Timing attacks against authentication validation or cryptographic operations.
 
 ### 12.2. OWASP API Security Top 10 Mapping
 
-Mapping API key security controls to OWASP API Security Top 10 [Source-02]:
+Mapping API key security controls to OWASP API Security Top 10 [[Source-02]](#source-2):
 
 **API1:2019 - Broken Object Level Authorization**
 - Enforce tenant isolation (Section 8.6)
@@ -1484,7 +1484,7 @@ Mapping API key security controls to OWASP API Security Top 10 [Source-02]:
 
 **CV1: Hardcoded Secrets**
 
-"Hardcoded API Keys: The Rookie Mistake That Costs Millions" [Source-20]
+"Hardcoded API Keys: The Rookie Mistake That Costs Millions" [[Source-20]](#source-20)
 
 The #1 cause of API key exposure. Developers hardcode keys in source code, commit to Git, and secrets end up in public repositories.
 
@@ -1544,7 +1544,7 @@ Attackers use leaked credentials from other services to attempt API access.
 
 **Real-World Example:**
 
-"In 2024, a SaaS provider stopped credential stuffing attacks by spotting an 812% spike in requests from unfamiliar regions – within just 7 minutes" [Source-01]
+"In 2024, a SaaS provider stopped credential stuffing attacks by spotting an 812% spike in requests from unfamiliar regions – within just 7 minutes" [[Source-01]](#source-1)
 
 **AV2: API Key Enumeration**
 
@@ -1587,7 +1587,7 @@ Attackers trick legitimate users into revealing API keys.
 
 **Secret Scanning Pattern:**
 
-"Generic high entropy secret detection" [Source-18] - GitGuardian detects high-entropy strings that match API key patterns even without known prefixes.
+"Generic high entropy secret detection" [[Source-18]](#source-18) - GitGuardian detects high-entropy strings that match API key patterns even without known prefixes.
 
 **CI/CD Integration:**
 
@@ -1602,9 +1602,9 @@ Attackers trick legitimate users into revealing API keys.
 
 Prefixed tokens enable targeted secret scanning:
 
-"Keys should have prefixes, so you can identify them" [Source-41]
+"Keys should have prefixes, so you can identify them" [[Source-41]](#source-41)
 
-GitHub's implementation [Source-12] uses prefixes (ghp_, gho_, etc.) enabling:
+GitHub's implementation [[Source-12]](#source-12) uses prefixes (ghp_, gho_, etc.) enabling:
 - Service-specific detection patterns
 - Automated revocation when detected in public repositories
 - Prioritization of alerts by token type
@@ -1903,7 +1903,7 @@ Trust Service Criteria:
 
 ### 15.1. GitHub Token Format Implementation
 
-In 2021, GitHub redesigned its authentication token formats to enhance security and prevent secret exposure [Source-12].
+In 2021, GitHub redesigned its authentication token formats to enhance security and prevent secret exposure [[Source-12]](#source-12).
 
 **Key Design Decisions:**
 
@@ -1938,7 +1938,7 @@ Math.log((("a".."z").to_a + ("A".."Z").to_a + (0..9).to_a).length) / Math.log(2)
 
 ### 15.2. Stripe API Key Architecture
 
-Stripe uses a dual-key model separating publishable and secret keys [Source-05].
+Stripe uses a dual-key model separating publishable and secret keys [[Source-05]](#source-5).
 
 **Key Types:**
 
@@ -2006,7 +2006,7 @@ AWS Security Token Service (STS) issues temporary credentials with:
 
 **Case Study 1: Twitch Data Breach (2021)**
 
-"The 2021 Twitch data breach, where hackers gained access to API keys stored in source code repositories" [Source-01]
+"The 2021 Twitch data breach, where hackers gained access to API keys stored in source code repositories" [[Source-01]](#source-1)
 
 **What Happened:**
 - API keys hardcoded in source code
@@ -2022,7 +2022,7 @@ AWS Security Token Service (STS) issues temporary credentials with:
 
 **Case Study 2: Cloudflare Incident (Monitoring Success)**
 
-"Cloudflare once stopped an attack after identifying 10 million hourly requests from a single account – 1,000 times the normal activity" [Source-01]
+"Cloudflare once stopped an attack after identifying 10 million hourly requests from a single account – 1,000 times the normal activity" [[Source-01]](#source-1)
 
 **What Happened:**
 - Compromised API key used for attack
@@ -2038,7 +2038,7 @@ AWS Security Token Service (STS) issues temporary credentials with:
 
 **Case Study 3: Google Gemini API Launch (2024)**
 
-"Google API Keys Weren't Secrets. But then Gemini Changed the Rules" [Source-19]
+"Google API Keys Weren't Secrets. But then Gemini Changed the Rules" [[Source-19]](#source-19)
 
 **What Happened:**
 - Google historically allowed API keys in client-side code for Maps, YouTube, etc.
@@ -2054,7 +2054,7 @@ AWS Security Token Service (STS) issues temporary credentials with:
 
 **Case Study 4: Twilio Security Response (2022)**
 
-"Twilio's 2022 security incident highlighted the importance of quick action. They were able to contain a breach by revoking tokens immediately" [Source-01]
+"Twilio's 2022 security incident highlighted the importance of quick action. They were able to contain a breach by revoking tokens immediately" [[Source-01]](#source-1)
 
 **What Happened:**
 - Employee credentials compromised through phishing
@@ -2074,7 +2074,7 @@ AWS Security Token Service (STS) issues temporary credentials with:
 
 ### 16.1. Post-Quantum Cryptography
 
-"Quantum-safe API Security: How to prepare APIs for the post-quantum future" [Source-24]
+"Quantum-safe API Security: How to prepare APIs for the post-quantum future" [[Source-24]](#source-24)
 
 **Threat:**
 Quantum computers capable of breaking current cryptographic algorithms (RSA, ECC, current hashing functions).
@@ -2247,48 +2247,48 @@ Rescorla, E., "The Transport Layer Security (TLS) Protocol Version 1.3", RFC 844
 
 ### 18.2. Informative References
 
-**[Source-01]**: [10 API Key Management Best Practices](references/10%20API%20Key%20Management%20Best%20Practices.md)
-**[Source-02]**: [OWASP API Security Top 10](references/8Mar2022-owasp-api-security-top-10.md)
-**[Source-03]**: [API Access Control in Kubernetes](references/API%20Access%20Control%20_%20Kubernetes.md)
-**[Source-04]**: [API Key Authentication Best Practices](references/API%20Key%20Authentication%20Best%20Practices%20_%20Zuplo%20Blog.md)
-**[Source-05]**: [API Key Design Pattern](references/API%20Key%20Design.md)
-**[Source-06]**: [API Key Entropy Documentation](references/API%20Key%20-%20Entropy%20Data%20Documentation.md)
-**[Source-07]**: [API Key Security Best Practices (Reddit)](references/API%20Key%20Security%20Best%20Practices%20_%20r_softwarearchitecture.md)
-**[Source-08]**: [Why API Keys Are Not Enough](references/API%20Keys%20%E2%89%A0%20Security_%20Why%20API%20Keys%20Are%20Not%20Enough%20_%20Nordic%20APIs%20_.md)
-**[Source-09]**: [API Keys in Swagger/OpenAPI](references/API%20Keys%20_%20Swagger%20Docs.md)
-**[Source-10]**: [API Keys: Weaknesses and Security Best Practices](references/API%20keys_%20Weaknesses%20and%20security%20best%20practices%20_%20TechTarget.md)
-**[Source-11]**: [General API Security Best Practices](references/api-security-best-practices.md)
-**[Source-12]**: [GitHub's New Authentication Token Formats](references/Behind%20GitHub%27s%20new%20authentication%20token%20formats%20-%20The%20GitHub%20Blog.md)
-**[Source-13]**: [OpenAI API Key Safety Best Practices](references/Best%20Practices%20for%20API%20Key%20Safety%20_%20OpenAI%20Help%20Center.md)
-**[Source-14]**: [Claude Code API Token Exfiltration Vulnerabilities](references/Caught%20in%20the%20Hook_%20RCE%20and%20API%20Token%20Exfiltration%20Through%20Claude%20Code%20Project%20Files%20_%20CVE-2025-59536%20_%20CVE-2026-21852%20-%20Check%20Point%20Research.md)
-**[Source-15]**: [Choosing Authentication Methods (Google Cloud)](references/Choosing%20an%20Authentication%20Method%20_%20Cloud%20Endpoints%20with%20OpenAPI%20_%20Google%20Cloud%20Documentation.md)
-**[Source-16]**: [Claude Code Security Flaws](references/Claude%20Code%20Flaws%20Allow%20Remote%20Code%20Execution%20and%20API%20Key%20Exfiltration.md)
-**[Source-17]**: [Designing Secure and Informative API Keys](references/Designing%20Secure%20and%20Informative%20API%20Keys%20_%20r_programming.md)
-**[Source-18]**: [High Entropy Secrets (GitGuardian)](references/Generic%20high%20entropy%20secret%20_%20GitGuardian%20documentation.md)
-**[Source-19]**: [Google API Keys Security Evolution](references/Google%20API%20Keys%20Weren%27t%20Secrets.%20But%20then%20Gemini%20Changed%20the%20Rules.%20%E2%97%86%20Truffle%20Security%20Co..md)
-**[Source-20]**: [Hardcoded API Keys Security Risks](references/Hardcoded%20API%20Keys_%20The%20Rookie%20Mistake%20That%20Costs%20Millions%20%F0%9F%92%8E%20_%20by%20InstaTunnel%20_%20Medium.md)
-**[Source-21]**: [Kubernetes Token Storage](references/linux%20-%20where%20are%20tokens%20created%20by%20kubectl%20create%20token%20stored%20%28from%20v1.24%20on%29_%20-%20Stack%20Overflow.md)
-**[Source-22]**: [Mutual Attested Microservice Communication](references/Mechanisms%20for%20Mutual%20Attested%20Microservice%20Communication.md)
-**[Source-23]**: [Protecting APIs from Modern Security Risks](references/Protecting%20APIs%20from%20Modern%20Security%20Risks%20-%20Salt%20Security_Whitepaper_Protecting%20APIs.md)
-**[Source-24]**: [Quantum-Safe API Security](references/Quantum-safe%20API%20Security%20-%20How%20to%20prepare%20APIs%20for%20the%20post-quantum%20future%20_%20Curity.md)
-**[Source-25]**: [API Security Research Paper](references/Research-Paper-API-Security_100824.md)
-**[Source-26]**: [Restricting API Access with Keys (Google Cloud)](references/Restricting%20API%20access%20with%20API%20keys%20_%20Cloud%20Endpoints%20with%20OpenAPI%20_%20Google%20Cloud%20Documentation.md)
-**[Source-27]**: [Guide to API Keys and Scopes](references/Securing%20APIs%20_%20Guide%20to%20API%20Keys%20%26%20Scopes.md)
-**[Source-28]**: [Phantom Token Approach](references/Securing%20APIs%20with%20The%20Phantom%20Token%20Approach%20_%20Curity.md)
-**[Source-29]**: [Securing Modern API Infrastructure](references/Securing%20the%20Next%20Generation%20of%20Digital%20Infrastructure%20-%20The%20Importance%20of%20Protecting%20Modern%20APIs%20-%20Dhaka%20Timsina.md)
-**[Source-30]**: [Securing Long-Lived Authentication Keys](references/Securing%20Your%20API%20With%20Long-Lived%20Authentication%20Keys%20_%20by%20James%20Hickey%20_%20ProcedureFlow%20Engineering%20_%20Medium.md)
-**[Source-31]**: [Best Approach for Generating API Keys (Stack Overflow)](references/security%20-%20What%27s%20the%20best%20approach%20for%20generating%20a%20new%20API%20key_%20-%20Stack%20Overflow.md)
-**[Source-32]**: [Token Entropy Explained](references/Token%20entropy%20explained_%20what%20is%20token%20entropy_%20_%20Tesseral%20Guides.md)
-**[Source-33]**: [Understanding API Keys (Supabase)](references/Understanding%20API%20keys%20_%20Supabase%20Docs.md)
-**[Source-34]**: [Understanding Entropy in Cryptography](references/Understanding%20Entropy_%20Key%20To%20Secure%20Cryptography%20%26%20Randomness%20_%20Netdata.md)
-**[Source-35]**: [Kubernetes Bound Service Account Tokens](references/Using%20Kubernetes%27s%20new%20Bound%20Service%20Account%20Tokens%20for%20secure%20workload%20identity%20_%20Linkerd.md)
-**[Source-36]**: [API Key Definition (Fortinet)](references/What%20Is%20an%20API%20Key_%20_%20API%20Key%20Definition%20_%20Fortinet.md)
-**[Source-37]**: [What is an API Key (Astrix Security)](references/What%20is%20an%20API%20Key_%20_%20Astrix%20Security.md)
-**[Source-38]**: [API Keys: Benefits and Best Practices (Postman)](references/What%20Is%20an%20API%20Key_%20Benefits%2C%20Best%20Practices%20%26%20Use%20Cases%20_%20Postman%20Blog.md)
-**[Source-39]**: [What Is an API Key (IBM)](references/What%20Is%20an%20API%20Key_%20_%20IBM.md)
-**[Source-40]**: [Complete 2025 API Key Guide](references/What%20is%20an%20API%20Key_%20Why%20Do%20We%20Need%20Them_%20Complete%202025%20Guide%20-%20API7.ai.md)
-**[Source-41]**: [What Makes a Good API Key System](references/What%20makes%20a%20good%20API%20key%20system_%20_%20by%20Ted%20Spence%20_%20tedspence.com.md)
-**[Source-42]**: [Why and When to Use API Keys (Google Cloud)](references/Why%20and%20when%20to%20use%20API%20keys%20_%20Cloud%20Endpoints%20with%20OpenAPI%20_%20Google%20Cloud%20Documentation.md)
+- <a name="source-1"></a>**[Source-01]**: [10 API Key Management Best Practices](references/10%20API%20Key%20Management%20Best%20Practices.md)
+- <a name="source-2"></a>**[Source-02]**: [OWASP API Security Top 10](references/8Mar2022-owasp-api-security-top-10.md)
+- <a name="source-3"></a>**[Source-03]**: [API Access Control in Kubernetes](references/API%20Access%20Control%20_%20Kubernetes.md)
+- <a name="source-4"></a>**[Source-04]**: [API Key Authentication Best Practices](references/API%20Key%20Authentication%20Best%20Practices%20_%20Zuplo%20Blog.md)
+- <a name="source-5"></a>**[Source-05]**: [API Key Design Pattern](references/API%20Key%20Design.md)
+- <a name="source-6"></a>**[Source-06]**: [API Key Entropy Documentation](references/API%20Key%20-%20Entropy%20Data%20Documentation.md)
+- <a name="source-7"></a>**[Source-07]**: [API Key Security Best Practices (Reddit)](references/API%20Key%20Security%20Best%20Practices%20_%20r_softwarearchitecture.md)
+- <a name="source-8"></a>**[Source-08]**: [Why API Keys Are Not Enough](references/API%20Keys%20%E2%89%A0%20Security_%20Why%20API%20Keys%20Are%20Not%20Enough%20_%20Nordic%20APIs%20_.md)
+- <a name="source-9"></a>**[Source-09]**: [API Keys in Swagger/OpenAPI](references/API%20Keys%20_%20Swagger%20Docs.md)
+- <a name="source-10"></a>**[Source-10]**: [API Keys: Weaknesses and Security Best Practices](references/API%20keys_%20Weaknesses%20and%20security%20best%20practices%20_%20TechTarget.md)
+- <a name="source-11"></a>**[Source-11]**: [General API Security Best Practices](references/api-security-best-practices.md)
+- <a name="source-12"></a>**[Source-12]**: [GitHub's New Authentication Token Formats](references/Behind%20GitHub%27s%20new%20authentication%20token%20formats%20-%20The%20GitHub%20Blog.md)
+- <a name="source-13"></a>**[Source-13]**: [OpenAI API Key Safety Best Practices](references/Best%20Practices%20for%20API%20Key%20Safety%20_%20OpenAI%20Help%20Center.md)
+- <a name="source-14"></a>**[Source-14]**: [Claude Code API Token Exfiltration Vulnerabilities](references/Caught%20in%20the%20Hook_%20RCE%20and%20API%20Token%20Exfiltration%20Through%20Claude%20Code%20Project%20Files%20_%20CVE-2025-59536%20_%20CVE-2026-21852%20-%20Check%20Point%20Research.md)
+- <a name="source-15"></a>**[Source-15]**: [Choosing Authentication Methods (Google Cloud)](references/Choosing%20an%20Authentication%20Method%20_%20Cloud%20Endpoints%20with%20OpenAPI%20_%20Google%20Cloud%20Documentation.md)
+- <a name="source-16"></a>**[Source-16]**: [Claude Code Security Flaws](references/Claude%20Code%20Flaws%20Allow%20Remote%20Code%20Execution%20and%20API%20Key%20Exfiltration.md)
+- <a name="source-17"></a>**[Source-17]**: [Designing Secure and Informative API Keys](references/Designing%20Secure%20and%20Informative%20API%20Keys%20_%20r_programming.md)
+- <a name="source-18"></a>**[Source-18]**: [High Entropy Secrets (GitGuardian)](references/Generic%20high%20entropy%20secret%20_%20GitGuardian%20documentation.md)
+- <a name="source-19"></a>**[Source-19]**: [Google API Keys Security Evolution](references/Google%20API%20Keys%20Weren%27t%20Secrets.%20But%20then%20Gemini%20Changed%20the%20Rules.%20%E2%97%86%20Truffle%20Security%20Co..md)
+- <a name="source-20"></a>**[Source-20]**: [Hardcoded API Keys Security Risks](references/Hardcoded%20API%20Keys_%20The%20Rookie%20Mistake%20That%20Costs%20Millions%20%F0%9F%92%8E%20_%20by%20InstaTunnel%20_%20Medium.md)
+- <a name="source-21"></a>**[Source-21]**: [Kubernetes Token Storage](references/linux%20-%20where%20are%20tokens%20created%20by%20kubectl%20create%20token%20stored%20%28from%20v1.24%20on%29_%20-%20Stack%20Overflow.md)
+- <a name="source-22"></a>**[Source-22]**: [Mutual Attested Microservice Communication](references/Mechanisms%20for%20Mutual%20Attested%20Microservice%20Communication.md)
+- <a name="source-23"></a>**[Source-23]**: [Protecting APIs from Modern Security Risks](references/Protecting%20APIs%20from%20Modern%20Security%20Risks%20-%20Salt%20Security_Whitepaper_Protecting%20APIs.md)
+- <a name="source-24"></a>**[Source-24]**: [Quantum-Safe API Security](references/Quantum-safe%20API%20Security%20-%20How%20to%20prepare%20APIs%20for%20the%20post-quantum%20future%20_%20Curity.md)
+- <a name="source-25"></a>**[Source-25]**: [API Security Research Paper](references/Research-Paper-API-Security_100824.md)
+- <a name="source-26"></a>**[Source-26]**: [Restricting API Access with Keys (Google Cloud)](references/Restricting%20API%20access%20with%20API%20keys%20_%20Cloud%20Endpoints%20with%20OpenAPI%20_%20Google%20Cloud%20Documentation.md)
+- <a name="source-27"></a>**[Source-27]**: [Guide to API Keys and Scopes](references/Securing%20APIs%20_%20Guide%20to%20API%20Keys%20%26%20Scopes.md)
+- <a name="source-28"></a>**[Source-28]**: [Phantom Token Approach](references/Securing%20APIs%20with%20The%20Phantom%20Token%20Approach%20_%20Curity.md)
+- <a name="source-29"></a>**[Source-29]**: [Securing Modern API Infrastructure](references/Securing%20the%20Next%20Generation%20of%20Digital%20Infrastructure%20-%20The%20Importance%20of%20Protecting%20Modern%20APIs%20-%20Dhaka%20Timsina.md)
+- <a name="source-30"></a>**[Source-30]**: [Securing Long-Lived Authentication Keys](references/Securing%20Your%20API%20With%20Long-Lived%20Authentication%20Keys%20_%20by%20James%20Hickey%20_%20ProcedureFlow%20Engineering%20_%20Medium.md)
+- <a name="source-31"></a>**[Source-31]**: [Best Approach for Generating API Keys (Stack Overflow)](references/security%20-%20What%27s%20the%20best%20approach%20for%20generating%20a%20new%20API%20key_%20-%20Stack%20Overflow.md)
+- <a name="source-32"></a>**[Source-32]**: [Token Entropy Explained](references/Token%20entropy%20explained_%20what%20is%20token%20entropy_%20_%20Tesseral%20Guides.md)
+- <a name="source-33"></a>**[Source-33]**: [Understanding API Keys (Supabase)](references/Understanding%20API%20keys%20_%20Supabase%20Docs.md)
+- <a name="source-34"></a>**[Source-34]**: [Understanding Entropy in Cryptography](references/Understanding%20Entropy_%20Key%20To%20Secure%20Cryptography%20%26%20Randomness%20_%20Netdata.md)
+- <a name="source-35"></a>**[Source-35]**: [Kubernetes Bound Service Account Tokens](references/Using%20Kubernetes%27s%20new%20Bound%20Service%20Account%20Tokens%20for%20secure%20workload%20identity%20_%20Linkerd.md)
+- <a name="source-36"></a>**[Source-36]**: [API Key Definition (Fortinet)](references/What%20Is%20an%20API%20Key_%20_%20API%20Key%20Definition%20_%20Fortinet.md)
+- <a name="source-37"></a>**[Source-37]**: [What is an API Key (Astrix Security)](references/What%20is%20an%20API%20Key_%20_%20Astrix%20Security.md)
+- <a name="source-38"></a>**[Source-38]**: [API Keys: Benefits and Best Practices (Postman)](references/What%20Is%20an%20API%20Key_%20Benefits%2C%20Best%20Practices%20%26%20Use%20Cases%20_%20Postman%20Blog.md)
+- <a name="source-39"></a>**[Source-39]**: [What Is an API Key (IBM)](references/What%20Is%20an%20API%20Key_%20_%20IBM.md)
+- <a name="source-40"></a>**[Source-40]**: [Complete 2025 API Key Guide](references/What%20is%20an%20API%20Key_%20Why%20Do%20We%20Need%20Them_%20Complete%202025%20Guide%20-%20API7.ai.md)
+- <a name="source-41"></a>**[Source-41]**: [What Makes a Good API Key System](references/What%20makes%20a%20good%20API%20key%20system_%20_%20by%20Ted%20Spence%20_%20tedspence.com.md)
+- <a name="source-42"></a>**[Source-42]**: [Why and When to Use API Keys (Google Cloud)](references/Why%20and%20when%20to%20use%20API%20keys%20_%20Cloud%20Endpoints%20with%20OpenAPI%20_%20Google%20Cloud%20Documentation.md)
 
 *All 42 source documents are available as linked markdown files in the [references](references/) directory.*
 
