@@ -1,0 +1,479 @@
+# API Key Security RFC - Source Document Index
+# Maps all 42 source documents to standardized citation identifiers (Source-01 through Source-42)
+
+sources:
+  Source-01:
+    filename: "10 API Key Management Best Practices.md"
+    path: "references/10 API Key Management Best Practices.md"
+    title: "10 API Key Management Best Practices"
+    key_topics:
+      - Generation and entropy
+      - Storage and encryption
+      - Rotation and lifecycle
+      - Access control
+      - Monitoring and logging
+      - Transmission security
+    priority: high
+    description: "Comprehensive coverage of all major API key management themes"
+
+  Source-02:
+    filename: "8Mar2022-owasp-api-security-top-10.md"
+    path: "references/8Mar2022-owasp-api-security-top-10.md"
+    title: "OWASP API Security Top 10"
+    key_topics:
+      - Security vulnerabilities
+      - Threat model
+      - Access control
+      - Authentication failures
+      - Authorization issues
+    priority: critical
+    description: "Authoritative security framework for API security risks"
+
+  Source-03:
+    filename: "API Access Control _ Kubernetes.md"
+    path: "references/API Access Control _ Kubernetes.md"
+    title: "API Access Control in Kubernetes"
+    key_topics:
+      - Access control
+      - Service accounts
+      - Token management
+      - RBAC
+    priority: medium
+    description: "Kubernetes-specific API access control patterns"
+
+  Source-04:
+    filename: "API Key Authentication Best Practices _ Zuplo Blog.md"
+    path: "references/API Key Authentication Best Practices _ Zuplo Blog.md"
+    title: "API Key Authentication Best Practices"
+    key_topics:
+      - Authentication patterns
+      - Best practices
+      - Implementation guidance
+    priority: high
+    description: "Practical authentication best practices and patterns"
+
+  Source-05:
+    filename: "API Key Design.md"
+    path: "references/API Key Design.md"
+    title: "API Key Design Pattern"
+    key_topics:
+      - Design patterns
+      - Authentication fundamentals
+      - Use cases
+    priority: critical
+    description: "Foundational API key authentication design pattern"
+
+  Source-06:
+    filename: "API Key - Entropy Data Documentation.md"
+    path: "references/API Key - Entropy Data Documentation.md"
+    title: "API Key Entropy Documentation"
+    key_topics:
+      - Entropy requirements
+      - Cryptographic strength
+      - Generation algorithms
+    priority: high
+    description: "Technical documentation on entropy in API key generation"
+
+  Source-07:
+    filename: "API Key Security Best Practices _ r_softwarearchitecture.md"
+    path: "references/API Key Security Best Practices _ r_softwarearchitecture.md"
+    title: "API Key Security Best Practices (Reddit)"
+    key_topics:
+      - Security best practices
+      - Implementation patterns
+    priority: medium
+    description: "Community discussion on API key security practices"
+
+  Source-08:
+    filename: "API Keys ≠ Security_ Why API Keys Are Not Enough _ Nordic APIs _.md"
+    path: "references/API Keys ≠ Security_ Why API Keys Are Not Enough _ Nordic APIs _.md"
+    title: "Why API Keys Are Not Enough"
+    key_topics:
+      - Limitations of API keys
+      - Authentication comparison
+      - OAuth vs API keys
+    priority: high
+    description: "Critical analysis of API key limitations and when to use alternatives"
+
+  Source-09:
+    filename: "API Keys _ Swagger Docs.md"
+    path: "references/API Keys _ Swagger Docs.md"
+    title: "API Keys in Swagger/OpenAPI"
+    key_topics:
+      - OpenAPI specification
+      - Documentation
+      - API design
+    priority: low
+    description: "OpenAPI/Swagger specification for API key authentication"
+
+  Source-10:
+    filename: "API keys_ Weaknesses and security best practices _ TechTarget.md"
+    path: "references/API keys_ Weaknesses and security best practices _ TechTarget.md"
+    title: "API Keys: Weaknesses and Security Best Practices"
+    key_topics:
+      - Security weaknesses
+      - Vulnerabilities
+      - Best practices
+    priority: high
+    description: "Analysis of API key weaknesses and mitigation strategies"
+
+  Source-11:
+    filename: "api-security-best-practices.md"
+    path: "references/api-security-best-practices.md"
+    title: "General API Security Best Practices"
+    key_topics:
+      - API security
+      - Best practices
+      - Security controls
+    priority: medium
+    description: "General API security practices beyond just keys"
+
+  Source-12:
+    filename: "Behind GitHub's new authentication token formats - The GitHub Blog.md"
+    path: "references/Behind GitHub's new authentication token formats - The GitHub Blog.md"
+    title: "GitHub's New Authentication Token Formats"
+    key_topics:
+      - Token format design
+      - Prefixes
+      - Checksums
+      - Secret scanning
+    priority: critical
+    description: "Real-world implementation of identifiable token formats with prefixes and checksums"
+
+  Source-13:
+    filename: "Best Practices for API Key Safety _ OpenAI Help Center.md"
+    path: "references/Best Practices for API Key Safety _ OpenAI Help Center.md"
+    title: "OpenAI API Key Safety Best Practices"
+    key_topics:
+      - Client-side security
+      - Storage practices
+      - Usage monitoring
+    priority: high
+    description: "OpenAI's guidance on API key safety for consumers"
+
+  Source-14:
+    filename: "Caught in the Hook_ RCE and API Token Exfiltration Through Claude Code Project Files _ CVE-2025-59536 _ CVE-2026-21852 - Check Point Research.md"
+    path: "references/Caught in the Hook_ RCE and API Token Exfiltration Through Claude Code Project Files _ CVE-2025-59536 _ CVE-2026-21852 - Check Point Research.md"
+    title: "Claude Code API Token Exfiltration Vulnerabilities"
+    key_topics:
+      - Security incidents
+      - Token exfiltration
+      - Vulnerabilities
+    priority: medium
+    description: "Case study of API token security vulnerabilities"
+
+  Source-15:
+    filename: "Choosing an Authentication Method _ Cloud Endpoints with OpenAPI _ Google Cloud Documentation.md"
+    path: "references/Choosing an Authentication Method _ Cloud Endpoints with OpenAPI _ Google Cloud Documentation.md"
+    title: "Choosing Authentication Methods (Google Cloud)"
+    key_topics:
+      - Authentication comparison
+      - OAuth vs API keys
+      - Use case selection
+    priority: high
+    description: "Google Cloud guidance on selecting authentication methods"
+
+  Source-16:
+    filename: "Claude Code Flaws Allow Remote Code Execution and API Key Exfiltration.md"
+    path: "references/Claude Code Flaws Allow Remote Code Execution and API Key Exfiltration.md"
+    title: "Claude Code Security Flaws"
+    key_topics:
+      - Security incidents
+      - Key exfiltration
+      - Attack vectors
+    priority: low
+    description: "Security incident analysis"
+
+  Source-17:
+    filename: "Designing Secure and Informative API Keys _ r_programming.md"
+    path: "references/Designing Secure and Informative API Keys _ r_programming.md"
+    title: "Designing Secure and Informative API Keys"
+    key_topics:
+      - Token format design
+      - Prefixes
+      - Metadata encoding
+    priority: high
+    description: "Design patterns for informative API key formats"
+
+  Source-18:
+    filename: "Generic high entropy secret _ GitGuardian documentation.md"
+    path: "references/Generic high entropy secret _ GitGuardian documentation.md"
+    title: "High Entropy Secrets (GitGuardian)"
+    key_topics:
+      - Secret scanning
+      - Entropy detection
+      - Security monitoring
+    priority: medium
+    description: "GitGuardian's approach to detecting high-entropy secrets"
+
+  Source-19:
+    filename: "Google API Keys Weren't Secrets. But then Gemini Changed the Rules. ◆ Truffle Security Co..md"
+    path: "references/Google API Keys Weren't Secrets. But then Gemini Changed the Rules. ◆ Truffle Security Co..md"
+    title: "Google API Keys Security Evolution"
+    key_topics:
+      - Security incidents
+      - API key exposure
+      - Remediation
+    priority: medium
+    description: "Case study of Google API key security evolution"
+
+  Source-20:
+    filename: "Hardcoded API Keys_ The Rookie Mistake That Costs Millions 💎 _ by InstaTunnel _ Medium.md"
+    path: "references/Hardcoded API Keys_ The Rookie Mistake That Costs Millions 💎 _ by InstaTunnel _ Medium.md"
+    title: "Hardcoded API Keys Security Risks"
+    key_topics:
+      - Security incidents
+      - Hardcoded secrets
+      - Financial impact
+    priority: medium
+    description: "Real-world costs of hardcoded API key exposure"
+
+  Source-21:
+    filename: "linux - where are tokens created by kubectl create token stored (from v1.24 on)_ - Stack Overflow.md"
+    path: "references/linux - where are tokens created by kubectl create token stored (from v1.24 on)_ - Stack Overflow.md"
+    title: "Kubernetes Token Storage"
+    key_topics:
+      - Token storage
+      - Kubernetes
+      - Service accounts
+    priority: low
+    description: "Technical details on Kubernetes token storage"
+
+  Source-22:
+    filename: "Mechanisms for Mutual Attested Microservice Communication.md"
+    path: "references/Mechanisms for Mutual Attested Microservice Communication.md"
+    title: "Mutual Attested Microservice Communication"
+    key_topics:
+      - mTLS
+      - Service mesh
+      - Alternative authentication
+    priority: medium
+    description: "Advanced authentication mechanisms beyond API keys"
+
+  Source-23:
+    filename: "Protecting APIs from Modern Security Risks - Salt Security_Whitepaper_Protecting APIs.md"
+    path: "references/Protecting APIs from Modern Security Risks - Salt Security_Whitepaper_Protecting APIs.md"
+    title: "Protecting APIs from Modern Security Risks"
+    key_topics:
+      - Threat landscape
+      - Security controls
+      - Risk mitigation
+    priority: high
+    description: "Comprehensive API security threat analysis and controls"
+
+  Source-24:
+    filename: "Quantum-safe API Security - How to prepare APIs for the post-quantum future _ Curity.md"
+    path: "references/Quantum-safe API Security - How to prepare APIs for the post-quantum future _ Curity.md"
+    title: "Quantum-Safe API Security"
+    key_topics:
+      - Post-quantum cryptography
+      - Future-proofing
+      - Cryptographic algorithms
+    priority: low
+    description: "Preparing API security for quantum computing threats"
+
+  Source-25:
+    filename: "Research-Paper-API-Security_100824.md"
+    path: "references/Research-Paper-API-Security_100824.md"
+    title: "API Security Research Paper"
+    key_topics:
+      - Academic research
+      - Security analysis
+      - Threat modeling
+    priority: medium
+    description: "Academic research on API security"
+
+  Source-26:
+    filename: "Restricting API access with API keys _ Cloud Endpoints with OpenAPI _ Google Cloud Documentation.md"
+    path: "references/Restricting API access with API keys _ Cloud Endpoints with OpenAPI _ Google Cloud Documentation.md"
+    title: "Restricting API Access with Keys (Google Cloud)"
+    key_topics:
+      - Access control
+      - Rate limiting
+      - Quota management
+    priority: high
+    description: "Google Cloud implementation guidance for API key access control"
+
+  Source-27:
+    filename: "Securing APIs _ Guide to API Keys & Scopes.md"
+    path: "references/Securing APIs _ Guide to API Keys & Scopes.md"
+    title: "Guide to API Keys and Scopes"
+    key_topics:
+      - Scope-based permissions
+      - Access control
+      - Authorization
+    priority: high
+    description: "Comprehensive guide to scope-based API key permissions"
+
+  Source-28:
+    filename: "Securing APIs with The Phantom Token Approach _ Curity.md"
+    path: "references/Securing APIs with The Phantom Token Approach _ Curity.md"
+    title: "Phantom Token Approach"
+    key_topics:
+      - Token patterns
+      - OAuth integration
+      - Advanced architectures
+    priority: low
+    description: "Advanced token architecture pattern"
+
+  Source-29:
+    filename: "Securing the Next Generation of Digital Infrastructure - The Importance of Protecting Modern APIs - Dhaka Timsina.md"
+    path: "references/Securing the Next Generation of Digital Infrastructure - The Importance of Protecting Modern APIs - Dhaka Timsina.md"
+    title: "Securing Modern API Infrastructure"
+    key_topics:
+      - API security landscape
+      - Best practices
+      - Infrastructure security
+    priority: medium
+    description: "Overview of modern API infrastructure security"
+
+  Source-30:
+    filename: "Securing Your API With Long-Lived Authentication Keys _ by James Hickey _ ProcedureFlow Engineering _ Medium.md"
+    path: "references/Securing Your API With Long-Lived Authentication Keys _ by James Hickey _ ProcedureFlow Engineering _ Medium.md"
+    title: "Securing Long-Lived Authentication Keys"
+    key_topics:
+      - Key lifecycle
+      - Long-lived credentials
+      - Security practices
+    priority: high
+    description: "Best practices for managing long-lived API keys"
+
+  Source-31:
+    filename: "security - What's the best approach for generating a new API key_ - Stack Overflow.md"
+    path: "references/security - What's the best approach for generating a new API key_ - Stack Overflow.md"
+    title: "Best Approach for Generating API Keys (Stack Overflow)"
+    key_topics:
+      - Generation algorithms
+      - Randomness
+      - Implementation
+    priority: medium
+    description: "Community discussion on API key generation techniques"
+
+  Source-32:
+    filename: "Token entropy explained_ what is token entropy_ _ Tesseral Guides.md"
+    path: "references/Token entropy explained_ what is token entropy_ _ Tesseral Guides.md"
+    title: "Token Entropy Explained"
+    key_topics:
+      - Entropy
+      - Cryptographic strength
+      - Randomness
+    priority: high
+    description: "Detailed explanation of entropy in token generation"
+
+  Source-33:
+    filename: "Understanding API keys _ Supabase Docs.md"
+    path: "references/Understanding API keys _ Supabase Docs.md"
+    title: "Understanding API Keys (Supabase)"
+    key_topics:
+      - API key fundamentals
+      - Implementation
+      - Best practices
+    priority: medium
+    description: "Supabase's API key implementation and usage"
+
+  Source-34:
+    filename: "Understanding Entropy_ Key To Secure Cryptography & Randomness _ Netdata.md"
+    path: "references/Understanding Entropy_ Key To Secure Cryptography & Randomness _ Netdata.md"
+    title: "Understanding Entropy in Cryptography"
+    key_topics:
+      - Entropy
+      - CSPRNG
+      - Cryptographic randomness
+    priority: high
+    description: "Deep dive into entropy and cryptographic randomness"
+
+  Source-35:
+    filename: "Using Kubernetes's new Bound Service Account Tokens for secure workload identity _ Linkerd.md"
+    path: "references/Using Kubernetes's new Bound Service Account Tokens for secure workload identity _ Linkerd.md"
+    title: "Kubernetes Bound Service Account Tokens"
+    key_topics:
+      - Kubernetes
+      - Service accounts
+      - Token binding
+    priority: low
+    description: "Kubernetes token security improvements"
+
+  Source-36:
+    filename: "What Is an API Key_ _ API Key Definition _ Fortinet.md"
+    path: "references/What Is an API Key_ _ API Key Definition _ Fortinet.md"
+    title: "API Key Definition (Fortinet)"
+    key_topics:
+      - API key fundamentals
+      - Definitions
+      - Use cases
+    priority: medium
+    description: "Fortinet's overview of API key fundamentals"
+
+  Source-37:
+    filename: "What is an API Key_ _ Astrix Security.md"
+    path: "references/What is an API Key_ _ Astrix Security.md"
+    title: "What is an API Key (Astrix Security)"
+    key_topics:
+      - API key fundamentals
+      - Security perspective
+    priority: medium
+    description: "Security-focused overview of API keys"
+
+  Source-38:
+    filename: "What Is an API Key_ Benefits, Best Practices & Use Cases _ Postman Blog.md"
+    path: "references/What Is an API Key_ Benefits, Best Practices & Use Cases _ Postman Blog.md"
+    title: "API Keys: Benefits and Best Practices (Postman)"
+    key_topics:
+      - API key fundamentals
+      - Best practices
+      - Use cases
+    priority: high
+    description: "Postman's comprehensive guide to API keys"
+
+  Source-39:
+    filename: "What Is an API Key_ _ IBM.md"
+    path: "references/What Is an API Key_ _ IBM.md"
+    title: "What Is an API Key (IBM)"
+    key_topics:
+      - API key fundamentals
+      - Enterprise perspective
+    priority: medium
+    description: "IBM's enterprise perspective on API keys"
+
+  Source-40:
+    filename: "What is an API Key_ Why Do We Need Them_ Complete 2025 Guide - API7.ai.md"
+    path: "references/What is an API Key_ Why Do We Need Them_ Complete 2025 Guide - API7.ai.md"
+    title: "Complete 2025 API Key Guide"
+    key_topics:
+      - API key fundamentals
+      - Modern practices
+      - Implementation guide
+    priority: high
+    description: "Current comprehensive guide to API keys (2025)"
+
+  Source-41:
+    filename: "What makes a good API key system_ _ by Ted Spence _ tedspence.com.md"
+    path: "references/What makes a good API key system_ _ by Ted Spence _ tedspence.com.md"
+    title: "What Makes a Good API Key System"
+    key_topics:
+      - System design
+      - Implementation architecture
+      - Best practices
+    priority: critical
+    description: "Detailed technical implementation guide for API key systems"
+
+  Source-42:
+    filename: "Why and when to use API keys _ Cloud Endpoints with OpenAPI _ Google Cloud Documentation.md"
+    path: "references/Why and when to use API keys _ Cloud Endpoints with OpenAPI _ Google Cloud Documentation.md"
+    title: "Why and When to Use API Keys (Google Cloud)"
+    key_topics:
+      - Use case selection
+      - Authentication comparison
+      - Decision framework
+    priority: high
+    description: "Google Cloud guidance on when to use API keys vs alternatives"
+
+# Metadata
+index_version: "1.0"
+created_date: "2026-02-27"
+total_sources: 42
+priority_distribution:
+  critical: 4
+  high: 14
+  medium: 16
+  low: 8
