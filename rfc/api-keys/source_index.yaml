@@ -487,12 +487,32 @@ sources:
     commit: "dc124ccf1197c47e25ca62b49e30927f73ad582f"
     analysis_date: "2026-02-27"
 
+  Source-44:
+    filename: "hashicorp-vault-architecture.md"
+    path: "references/hashicorp-vault-architecture.md"
+    title: "HashiCorp Vault Architecture Analysis"
+    key_topics:
+      - Token generation and management
+      - Encryption at rest (AES-256-GCM)
+      - Seal/unseal mechanism
+      - Database schemas and storage
+      - Access control and ACL
+      - Audit logging
+      - Response wrapping
+      - Key rotation
+      - Service vs batch tokens
+      - Shamir secret sharing
+    priority: critical
+    description: "Comprehensive analysis of HashiCorp Vault's secret management architecture including token lifecycle, encryption, storage, and security mechanisms (2026-02-27)"
+    source_type: "technical_analysis"
+    analysis_date: "2026-02-27"
+
 # Metadata
 index_version: "1.0"
 created_date: "2026-02-27"
-total_sources: 43
+total_sources: 44
 priority_distribution:
-  critical: 5
+  critical: 6
   high: 14
   medium: 16
   low: 8

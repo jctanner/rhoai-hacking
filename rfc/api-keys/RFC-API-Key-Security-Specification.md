@@ -121,6 +121,7 @@ The document employs RFC 2119 terminology to distinguish between absolute requir
     - 15.3. [AWS API Security Model](#153-aws-api-security-model)
     - 15.4. [Security Incident Lessons](#154-security-incident-lessons)
     - 15.5. [Keycloak Stateless Token Architecture](#155-keycloak-stateless-token-architecture)
+    - 15.6. [HashiCorp Vault Secrets Management Architecture](#156-hashicorp-vault-secrets-management-architecture)
 
 16. [Future Considerations](#16-future-considerations)
     - 16.1. [Post-Quantum Cryptography](#161-post-quantum-cryptography)
@@ -428,7 +429,9 @@ Entropy, defined as "randomness" in security contexts [[Source-32]](#source-32),
 - API keys MUST have a minimum of **128 bits of entropy** [[Source-06]](#source-6)
 - Production systems SHOULD use **256 bits of entropy** for enhanced security [[Source-34]](#source-34)
 - Temporary or development keys MAY use 64 bits but MUST NOT be used in production [[Source-41]](#source-41)
-- Real-world implementations like Keycloak use 144 bits (18 bytes) for session identifiers [[Source-43]](#source-43)
+- Real-world implementations:
+  - Keycloak: 144 bits (18 bytes) for session identifiers [[Source-43]](#source-43)
+  - HashiCorp Vault: 143 bits (24-character base62 tokens) [[Source-44]](#source-44)
 
 **Entropy Calculation:**
 
@@ -701,6 +704,29 @@ Database encryption provides defense-in-depth against storage medium compromise.
 - Key rotation SHOULD occur annually or after security events
 - SHOULD use envelope encryption (data keys encrypted by master keys)
 
+**Production Implementation Example:**
+
+HashiCorp Vault implements AES-256-GCM encryption at rest with the following architecture [[Source-44]](#source-44):
+
+```
+Encrypted Format: [Version][Term(4B)][Nonce(12B)][Ciphertext][AuthTag(16B)]
+```
+
+**Components:**
+- **Version Byte**: Encryption scheme version
+- **Term**: Key term identifying which encryption key was used (enables rotation)
+- **Nonce**: 12-byte random value for GCM
+- **Ciphertext**: Encrypted data
+- **Auth Tag**: 16-byte GCM authentication tag for integrity
+
+**Keyring-Based Rotation:**
+
+Vault demonstrates seamless key rotation without rewrapping existing data [[Source-44]](#source-44):
+- **Active Term**: Current key for new encryptions (e.g., Term 5)
+- **Historical Keys**: Previous keys retained for decryption (Terms 1-4)
+- **Automatic Triggers**: 3.86 billion operations per key (AES-GCM security limit) or time-based intervals
+- **Zero Downtime**: Old data remains readable, new data uses new key immediately
+
 **Implementation Example:**
 
 "Delphix's 2024 Data Control Tower enhances security by using AES/GCM encryption with keys derived from hostnames and URLs, removing the need to store encryption keys on the filesystem" [[Source-01]](#source-1)
@@ -719,6 +745,17 @@ Dedicated secrets management platforms provide centralized security controls.
 | Google Secret Manager | Google Cloud | Native GCP integration, automatic replication |
 
 [[Source-01]](#source-1)
+
+**HashiCorp Vault Architecture:**
+
+Vault provides comprehensive secrets management with [[Source-44]](#source-44):
+- **Encryption at rest**: AES-256-GCM for all stored secrets
+- **Seal/unseal mechanism**: Defense-in-depth requiring master key reconstruction
+- **Multiple storage backends**: PostgreSQL, CockroachDB, S3, Consul, Raft (backend-agnostic encryption)
+- **Token types**: Service tokens (persistent, renewable) and batch tokens (ephemeral, stateless)
+- **Access control**: Path-based ACL with capability enforcement (create, read, update, delete, sudo)
+- **Audit logging**: Accessor indirection prevents token exposure in logs
+- **Key rotation**: Automatic rotation at 3.86 billion operations or time-based intervals
 
 **Capabilities Required:**
 
@@ -1001,6 +1038,52 @@ temporary    → Limited-time access with expiration
 
 "Stripe uses a publishable key and a secret key. The secret key takes the role of an API KEY and is transmitted in the Authorization header of each request" [[Source-05]](#source-5) with different keys having different scope permissions.
 
+**Alternative: Path-Based ACL:**
+
+HashiCorp Vault implements path-based access control with capability enforcement [[Source-44]](#source-44):
+
+```hcl
+# Path-based policy (Vault style)
+path "secret/data/api-keys/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+
+path "secret/metadata/*" {
+  capabilities = ["list"]
+}
+
+path "auth/token/create" {
+  capabilities = ["create", "update"]
+
+  # Parameter constraints
+  allowed_parameters = {
+    "policies" = ["api-consumer"]
+    "ttl" = ["1h", "24h"]
+  }
+}
+```
+
+**Capability Types:**
+- **create**: Create new data at path
+- **read**: Read existing data
+- **update**: Modify existing data
+- **delete**: Remove data
+- **list**: List keys at path
+- **sudo**: Privileged operations
+- **deny**: Explicit denial (overrides all permissions)
+
+**Comparison: Scope-Based vs Path-Based:**
+
+| Aspect | Scope-Based (e.g., `api:read`) | Path-Based (e.g., `secret/*`) |
+|--------|-------------------------------|------------------------------|
+| Granularity | Action-oriented | Resource-oriented |
+| Expression | `users:write`, `payments:read` | `secret/data/*`, `auth/token/create` |
+| Validation | Check if scope in key's scope list | Match path + check capability |
+| Flexibility | Coarse (service-level) | Fine (path-level) |
+| Use Case | APIs with clear action boundaries | Hierarchical resource systems |
+
+Both approaches provide fine-grained control; choice depends on API design patterns.
+
 ### 8.4. Resource-Level Restrictions
 
 Beyond operation-level scopes, restrict access to specific resources.
@@ -1174,6 +1257,29 @@ Revocation immediately invalidates an API key before its planned expiration.
 - MUST log revocation event with reason and actor
 - SHOULD prevent key reuse (blacklist revoked keys)
 
+**Revocation Trees (Cascading Revocation):**
+
+For systems with parent-child token relationships, implement cascading revocation [[Source-44]](#source-44):
+
+```
+Storage Pattern:
+id/<tokenid>           → Full token entry
+parent/<parentid>      → List of child token IDs
+accessor/<accessorid>  → Token lookup by accessor
+```
+
+**Revocation Process:**
+1. Revoke parent token
+2. Lookup all children via `parent/<parentid>` index
+3. Recursively revoke each child token
+4. Delete associated private storage
+5. Cleanup accessor mappings
+
+**Benefits:**
+- Single revocation operation affects entire token hierarchy
+- Useful for temporary access delegation
+- Limits blast radius of compromised parent tokens
+
 **Revocation with Stateless Tokens:**
 
 Systems using stateless validation (e.g., signed tokens, JWTs) can implement efficient revocation through revocation lists:
@@ -1256,6 +1362,39 @@ Comprehensive audit trails enable forensic analysis and compliance.
 - MUST NOT log full API key secrets
 - MUST NOT log sensitive request/response payloads without redaction
 - SHOULD redact PII per GDPR/privacy requirements
+
+**Accessor Indirection Pattern:**
+
+To prevent token exposure in audit logs, implement accessor-based logging [[Source-44]](#source-44):
+
+**Implementation:**
+1. **Generate accessor**: Create non-sensitive UUID when token is created
+2. **Store mapping**: Map accessor to token ID in database
+3. **Log accessor only**: Audit logs contain accessor, never actual token
+4. **Lookup capability**: Operators can lookup token by accessor without exposing token
+5. **HMAC sensitive fields**: Cryptographically hash sensitive request/response values before logging
+
+**Example Structure:**
+
+```go
+type AuditEntry struct {
+    Timestamp    time.Time
+    Accessor     string        // Non-sensitive UUID (NOT token ID)
+    DisplayName  string        // Human-readable identifier
+    Policies     []string      // Effective policies
+    EntityID     string        // Identity entity
+    Path         string        // Requested path
+    Operation    string        // create/read/update/delete
+    StatusCode   int           // HTTP status
+    Error        string        // Error message if any
+}
+```
+
+**Security Benefits:**
+- Audit logs can be shared with external parties without token exposure
+- Compromised log files don't reveal valid tokens
+- Correlation analysis possible without sensitive data
+- Operators can investigate incidents using accessors
 
 **Retention:**
 
@@ -2268,6 +2407,383 @@ Keycloak's production implementation validates several RFC recommendations:
 - Automated rotation mechanisms reduce long-term compromise risk
 - Comprehensive audit logging of token operations
 
+### 15.6. HashiCorp Vault Secrets Management Architecture
+
+HashiCorp Vault represents the industry standard for enterprise secrets management, providing a comprehensive architecture that addresses API key lifecycle, storage encryption, access control, and audit logging [[Source-44]](#source-44).
+
+**Architecture Overview:**
+
+Vault implements a **zero-trust storage model** where all data is encrypted before reaching storage backends, protected by a seal/unseal mechanism that requires master key reconstruction:
+
+- **Encryption at rest**: AES-256-GCM for all stored secrets
+- **Seal/unseal defense**: Even with storage access, sealed Vault prevents any data retrieval
+- **Backend-agnostic**: Pluggable storage (PostgreSQL, CockroachDB, S3, etc.) with consistent encryption
+- **Audit trail**: Accessor-based logging prevents token exposure in logs
+
+**Token Types and Lifecycle:**
+
+Vault distinguishes between two token architectures, each optimized for different use cases:
+
+**1. Service Tokens (Persistent, Stateful)**
+
+```
+Token Format: hvs.CAESIxxxxxxxxxxxxxxxx (24-char base62 = ~143 bits entropy)
+Storage Path: id/<tokenid> → Full TokenEntry (encrypted)
+```
+
+Service tokens are fully persisted in encrypted storage with:
+- TTL and renewal support
+- Parent-child relationships for revocation trees
+- Policy-based access control
+- Per-token private storage (cubbyhole)
+- NumUses limits for count-based expiration
+
+**2. Batch Tokens (Ephemeral, Stateless)**
+
+```
+Token Format: hvb.<base64-encoded-encrypted-protobuf>
+Storage: NOT persisted in backend
+```
+
+Batch tokens are encrypted inline and never stored in the database:
+- Single-use, no renewal capability
+- High-throughput, minimal overhead
+- Self-contained (includes encrypted metadata)
+- No parent-child relationships
+
+**Token Generation Process:**
+
+```go
+// Service token creation (from Vault source)
+tokenID := base62.Random(24)  // 143 bits entropy
+accessor := generateUUID()     // Non-sensitive reference
+
+tokenEntry := &TokenEntry{
+    ID:          tokenID,
+    Accessor:    accessor,
+    Policies:    ["api-read", "secrets-write"],
+    TTL:         time.Hour * 24,
+    NumUses:     0,  // Unlimited
+    EntityID:    userEntityID,
+    BoundCIDRs:  []string{"10.0.0.0/8"},
+}
+
+// Encrypt and store
+encryptedEntry := barrier.Encrypt(tokenEntry)
+storage.Put("id/" + tokenID, encryptedEntry)
+storage.Put("accessor/" + accessor, tokenID)
+```
+
+**Encryption at Rest Architecture:**
+
+Vault's barrier encryption provides defense-in-depth protection [[Source-44]](#source-44):
+
+**AES-256-GCM Encryption:**
+
+```
+Encrypted Format: [Version][Term][Nonce(12B)][Ciphertext][AuthTag(16B)]
+```
+
+**Components:**
+- **Version Byte**: Encryption scheme version (0x01 = AESGCMVersion1)
+- **Term (4 bytes)**: Key term number identifying which encryption key was used
+- **Nonce (12 bytes)**: Random value for GCM (prevents replay)
+- **Ciphertext**: Encrypted plaintext data
+- **Auth Tag (16 bytes)**: GCM authentication tag for integrity
+
+**Keyring-Based Rotation:**
+
+Vault implements seamless key rotation without rewrapping existing data [[Source-44]](#source-44):
+
+1. **Active Term**: Current key used for new encryptions (e.g., Term 5)
+2. **Historical Keys**: Previous keys retained for decryption (Terms 1-4)
+3. **Automatic Rotation Triggers**:
+   - **Operation count**: 3.86 billion encryptions per key (AES-GCM security limit)
+   - **Time-based**: Configurable rotation period
+   - **Manual**: Operator-initiated rotation
+
+**Rotation Benefits:**
+- No downtime during rotation
+- Old data remains readable (historical keys retained)
+- New data immediately uses new key
+- Seamless for clients (transparent rotation)
+
+**Seal/Unseal Mechanism:**
+
+The seal provides defense against offline attacks [[Source-44]](#source-44):
+
+**Sealed State:**
+- Master key NOT in memory
+- All `Encrypt()` and `Decrypt()` operations fail with `ErrBarrierSealed`
+- Storage access yields only ciphertext (no plaintext recovery possible)
+- Vault effectively disabled until unsealed
+
+**Unsealed State:**
+- Master key loaded in memory (only during unsealed operation)
+- Keyring decrypted and accessible
+- Full encrypt/decrypt operations enabled
+
+**Shamir Secret Sharing (Default Unseal):**
+
+```
+Configuration Example:
+SecretShares: 5        (Generate 5 key shares)
+SecretThreshold: 3     (Require any 3 shares to reconstruct master key)
+```
+
+**Unseal Process:**
+1. Operators provide 3 out of 5 key shares
+2. Shamir algorithm reconstructs master key
+3. Master key decrypts keyring
+4. Barrier unseals, operations enabled
+5. Key shares cleared from memory
+
+**Auto-Seal (HSM/Cloud KMS):**
+- AWS KMS, Azure Key Vault, GCP Cloud KMS
+- Master key encrypted under external KMS
+- Automatic unseal on restart
+- Audit trail in cloud provider logs
+- Hardware-backed key protection (FIPS 140-2/3 compliance)
+
+**Access Control and Authorization:**
+
+Vault implements **path-based ACL** with capability enforcement [[Source-44]](#source-44):
+
+**Capability System:**
+
+```hcl
+# Example Vault policy
+path "secret/data/api-keys/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+
+path "secret/metadata/*" {
+  capabilities = ["list"]
+}
+
+path "auth/token/create" {
+  capabilities = ["create", "update"]
+
+  # Parameter constraints
+  allowed_parameters = {
+    "policies" = ["api-consumer", "api-provider"]
+    "ttl" = ["1h", "24h"]
+  }
+}
+
+# Sudo-protected operation
+path "sys/seal" {
+  capabilities = ["sudo", "update"]
+}
+```
+
+**Capability Types:**
+- **create**: Create new data at path
+- **read**: Read existing data
+- **update**: Modify existing data
+- **delete**: Remove data
+- **list**: List keys at path
+- **sudo**: Privileged operations (seal, unseal, rotate)
+- **deny**: Explicit denial (overrides all other permissions)
+
+**Namespace Isolation:**
+
+Vault's BarrierView provides multi-tenancy [[Source-44]](#source-44):
+
+```go
+// Token auth backend gets isolated view
+tokenView := barrier.SubView("auth/token/")
+
+// Token store writes: tokenView.Put("id/hvs.abc", data)
+// Actually stored at: "auth/token/id/hvs.abc"
+
+// Token store CANNOT access: "auth/userpass/*" or "secret/*"
+```
+
+**Entity-Based Policy Inheritance:**
+
+Tokens linked to entities inherit policies across authentication methods:
+
+```
+effectivePolicies = token.Policies + entity.Policies + entity.GroupPolicies
+```
+
+**Audit Logging Architecture:**
+
+Vault prevents token exposure in logs through **accessor indirection** [[Source-44]](#source-44):
+
+**AuditEntry Structure:**
+
+```go
+type AuditEntry struct {
+    Type      string          // "request" or "response"
+    Auth      *AuditAuth      // Authentication info
+    Request   *AuditRequest   // Request details
+    Response  *AuditResponse  // Response details
+    Error     string          // Error if any
+}
+
+type AuditAuth struct {
+    Accessor     string            // Token accessor (UUID), NOT token ID
+    DisplayName  string            // Human-readable name
+    Policies     []string          // Effective policies
+    EntityID     string            // Identity entity
+}
+```
+
+**Security Properties:**
+- **Accessor instead of token ID**: Logs contain non-sensitive UUID, never actual token
+- **HMAC for sensitive fields**: Sensitive request/response values cryptographically hashed
+- **Immutable audit trail**: Append-only logs prevent tampering
+- **Multiple audit backends**: File, syslog, socket (simultaneous logging to multiple destinations)
+
+**Revocation Architecture:**
+
+Vault implements **revocation trees** for cascading revocation [[Source-44]](#source-44):
+
+**Parent-Child Token Relationships:**
+
+```
+Storage Paths:
+id/<tokenid>           → Full TokenEntry
+parent/<parentid>      → List of child token IDs
+accessor/<accessorid>  → Token lookup by accessor
+```
+
+**Revocation Process:**
+1. Revoke parent token
+2. Lookup all children via `parent/<parentid>` index
+3. Recursively revoke each child token
+4. Delete all cubbyhole storage
+5. Cleanup accessor mappings
+
+**Revocation Triggers:**
+- Security incident or suspected compromise
+- Token expiration (TTL)
+- NumUses limit reached
+- Parent token revocation (cascading)
+- Manual operator revocation
+
+**Response Wrapping:**
+
+Vault protects sensitive responses using single-use wrapping tokens [[Source-44]](#source-44):
+
+**Wrapping Process:**
+
+1. **Generate single-use wrapping token**:
+   - TTL: 5 minutes default
+   - NumUses: 1 (automatically revoked after unwrap)
+   - Policies: `["response-wrapping"]`
+
+2. **Store response in cubbyhole**:
+   - Cubbyhole is per-token private storage
+   - Inaccessible to other tokens
+   - Deleted when wrapping token revoked
+
+3. **Return wrapping token to client**:
+   - Client receives wrapping token, not actual secret
+   - Client calls unwrap endpoint
+   - Original response retrieved, wrapping token revoked
+
+**JWT-Based Wrapping (Optional):**
+
+```go
+// Sign response as JWT with ECDSA P-521
+claims := jwt.MapClaims{
+    "token":    wrapToken.ID,
+    "accessor": wrapToken.Accessor,
+    "response": base64.Encode(responseJSON),
+    "exp":      time.Now().Add(5 * time.Minute).Unix(),
+}
+jwtToken := jwt.Sign(ecdsaKey, claims)
+```
+
+**Security Benefits:**
+- Single-use enforcement prevents token reuse
+- TTL limits exposure window
+- JWT signatures provide integrity verification
+- Audit trail captures wrap/unwrap events
+
+**Storage Security Model Comparison:**
+
+| Approach | Vault Implementation | RFC Recommendation | Security Trade-off |
+|----------|---------------------|-------------------|-------------------|
+| **Storage Method** | AES-256-GCM encryption | BCrypt/Argon2 hash | Vault: Recoverable when unsealed; RFC: Never recoverable |
+| **Validation** | Decrypt + compare | Hash + compare | Vault: Faster; RFC: Slower but more secure against DB compromise |
+| **Seal Protection** | Sealed barrier prevents decryption | N/A | Defense-in-depth: storage compromise ≠ data exposure when sealed |
+| **Key Rotation** | Keyring rotation (no rewrap) | N/A | Seamless rotation without touching existing data |
+| **Use Case** | Operational flexibility (renewal, management) | Maximum security (unrecoverable tokens) | Different security philosophies |
+
+**Critical Insight:**
+
+Vault's encrypted storage model assumes the **barrier seal** provides equivalent protection to hash-only storage:
+- **When sealed**: Storage compromise reveals only ciphertext (equivalent to hash-only)
+- **When unsealed**: Tokens are recoverable (operational requirement for renewal, management)
+- **Philosophy**: Operational flexibility with defense-in-depth vs. RFC's absolute non-recoverability
+
+**Lessons for API Key RFC:**
+
+Vault's architecture demonstrates several critical patterns:
+
+1. **Encryption at Rest**: AES-256-GCM provides industry-standard encryption with authenticated encryption (AEAD)
+2. **Keyring Rotation**: Seamless key rotation without rewrapping all data validates rotation best practices
+3. **Accessor Indirection**: Never logging sensitive token IDs prevents audit log exposure
+4. **Defense-in-Depth**: Multiple security layers (seal → encryption → ACL → namespace → audit)
+5. **Token Type Diversity**: Service (stateful) vs Batch (stateless) tokens address different use cases
+6. **Revocation Trees**: Parent-child relationships enable cascading revocation
+7. **High Entropy**: 143-bit tokens exceed RFC's 128-bit minimum
+8. **Auto-Seal**: HSM/KMS integration for enterprise compliance (FIPS 140-2/3)
+
+**Architectural Differences from RFC:**
+
+1. **Storage Philosophy**:
+   - **Vault**: Encrypted storage (AES-GCM) for operational flexibility
+   - **RFC**: Hash-only storage (BCrypt/Argon2) for absolute security
+   - **Context**: Vault requires token retrieval for renewal; API keys often long-lived, no renewal needed
+
+2. **Access Control Model**:
+   - **Vault**: Path-based ACL with capabilities
+   - **RFC**: Scope-based permissions (e.g., `api:read`, `users:write`)
+   - **Granularity**: Both provide fine-grained control, different expression models
+
+3. **Validation Model**:
+   - **Vault**: Database lookup + decryption validation
+   - **RFC Options**: (a) Hash comparison, (b) Stateless signature verification (JWT-like)
+   - **Performance**: Vault's approach faster but requires unsealed barrier
+
+**When to Use Each Approach:**
+
+| Use Case | Vault-Style (Encrypted Storage) | RFC-Style (Hash-Only Storage) |
+|----------|--------------------------------|------------------------------|
+| **Renewable tokens** | ✅ Ideal (can retrieve for renewal) | ❌ Not possible (hash irreversible) |
+| **Long-lived API keys** | ⚠️ Acceptable with seal protection | ✅ Preferred (maximize security) |
+| **High-throughput APIs** | ✅ Batch tokens (stateless) | ✅ JWT-style stateless validation |
+| **Compliance requirements** | ✅ FIPS 140-2/3 with HSM | ✅ PCI DSS, SOC 2 compliant |
+| **Operational management** | ✅ Full token lifecycle | ⚠️ Limited (no retrieval) |
+
+**Recommendations for API Key Systems:**
+
+Based on Vault's production-proven architecture:
+
+- **Adopt accessor indirection**: Never log actual tokens, use non-sensitive UUIDs
+- **Implement keyring rotation**: Rotate encryption keys without rewrapping all data
+- **Use AES-256-GCM**: Industry-standard AEAD for encryption at rest
+- **Support token types**: Persistent (stateful) for management, ephemeral (stateless) for performance
+- **Path-based isolation**: Namespace isolation via path prefixes for multi-tenancy
+- **Comprehensive audit**: Immutable append-only logs with HMAC for sensitive fields
+- **Defense-in-depth**: Multiple security layers, not single point of failure
+- **Auto-rotation triggers**: Time-based and operation-count-based rotation
+
+**Alternative Implementation:**
+
+Systems requiring hash-only storage (per RFC) can still adopt Vault patterns:
+- Use accessor indirection for audit logging
+- Implement keyring rotation for encryption keys (database encryption at rest)
+- Apply path-based ACL or scope-based permissions
+- Support revocation trees for cascading revocation
+- Validate using BCrypt/Argon2 instead of decryption
+- Combine with stateless validation (JWT) for high-throughput scenarios
+
 ---
 
 ## 16. Future Considerations
@@ -2490,8 +3006,9 @@ Rescorla, E., "The Transport Layer Security (TLS) Protocol Version 1.3", RFC 844
 - <a name="source-41"></a>**[Source-41]**: [What Makes a Good API Key System](references/What%20makes%20a%20good%20API%20key%20system_%20_%20by%20Ted%20Spence%20_%20tedspence.com.md)
 - <a name="source-42"></a>**[Source-42]**: [Why and When to Use API Keys (Google Cloud)](references/Why%20and%20when%20to%20use%20API%20keys%20_%20Cloud%20Endpoints%20with%20OpenAPI%20_%20Google%20Cloud%20Documentation.md)
 - <a name="source-43"></a>**[Source-43]**: [Keycloak Token Generation and Storage Architecture](references/keycloak-architecture.md)
+- <a name="source-44"></a>**[Source-44]**: [HashiCorp Vault Architecture Analysis](references/hashicorp-vault-architecture.md)
 
-*All 43 source documents are available as linked markdown files in the [references](references/) directory.*
+*All 44 source documents are available as linked markdown files in the [references](references/) directory.*
 
 ---
 
