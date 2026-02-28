@@ -468,12 +468,31 @@ sources:
     priority: high
     description: "Google Cloud guidance on when to use API keys vs alternatives"
 
+  Source-43:
+    filename: "keycloak-architecture.md"
+    path: "references/keycloak-architecture.md"
+    title: "Keycloak Token Generation and Storage Architecture"
+    key_topics:
+      - Token generation
+      - JWT architecture
+      - Stateless validation
+      - Cryptographic algorithms
+      - Entropy and randomness
+      - Database storage patterns
+      - Token rotation
+      - Security features
+    priority: critical
+    description: "Analysis of Keycloak's production token generation and storage architecture (commit dc124ccf1, 2026-02-27)"
+    source_type: "technical_analysis"
+    commit: "dc124ccf1197c47e25ca62b49e30927f73ad582f"
+    analysis_date: "2026-02-27"
+
 # Metadata
 index_version: "1.0"
 created_date: "2026-02-27"
-total_sources: 42
+total_sources: 43
 priority_distribution:
-  critical: 4
+  critical: 5
   high: 14
   medium: 16
   low: 8
