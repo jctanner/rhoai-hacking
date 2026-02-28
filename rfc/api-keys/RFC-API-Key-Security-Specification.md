@@ -102,6 +102,7 @@ The document employs RFC 2119 terminology to distinguish between absolute requir
     - 12.4. [Attack Vectors and Mitigations](#124-attack-vectors-and-mitigations)
     - 12.5. [Hardcoded Secrets Prevention](#125-hardcoded-secrets-prevention)
     - 12.6. [Secret Scanning and Detection](#126-secret-scanning-and-detection)
+    - 12.7. [Cryptographic Agility](#127-cryptographic-agility)
 
 13. [Compliance and Standards](#13-compliance-and-standards)
     - 13.1. [Regulatory Frameworks](#131-regulatory-frameworks)
@@ -119,6 +120,7 @@ The document employs RFC 2119 terminology to distinguish between absolute requir
     - 15.2. [Stripe API Key Architecture](#152-stripe-api-key-architecture)
     - 15.3. [AWS API Security Model](#153-aws-api-security-model)
     - 15.4. [Security Incident Lessons](#154-security-incident-lessons)
+    - 15.5. [Keycloak Stateless Token Architecture](#155-keycloak-stateless-token-architecture)
 
 16. [Future Considerations](#16-future-considerations)
     - 16.1. [Post-Quantum Cryptography](#161-post-quantum-cryptography)
@@ -426,6 +428,7 @@ Entropy, defined as "randomness" in security contexts [[Source-32]](#source-32),
 - API keys MUST have a minimum of **128 bits of entropy** [[Source-06]](#source-6)
 - Production systems SHOULD use **256 bits of entropy** for enhanced security [[Source-34]](#source-34)
 - Temporary or development keys MAY use 64 bits but MUST NOT be used in production [[Source-41]](#source-41)
+- Real-world implementations like Keycloak use 144 bits (18 bytes) for session identifiers [[Source-43]](#source-43)
 
 **Entropy Calculation:**
 
@@ -455,7 +458,7 @@ API keys MUST be generated using Cryptographically Secure Pseudo-Random Number G
 - `CryptGenRandom` (Windows CryptoAPI)
 - `crypto.randomBytes()` (Node.js)
 - `secrets` module (Python 3.6+)
-- `SecureRandom` (Java)
+- `SecureRandom` (Java) - used in production by Keycloak for token generation [[Source-43]](#source-43)
 - `RNGCryptoServiceProvider` (.NET Framework)
 
 **Prohibited Sources:**
@@ -555,6 +558,7 @@ The character set impacts entropy, usability, and compatibility.
 - 64 characters (A-Z, a-z, 0-9, -, _)
 - Slightly higher entropy (6 bits per character)
 - Hyphen may interfere with double-click selection
+- Used by production systems like Keycloak for session IDs [[Source-43]](#source-43)
 
 **Avoid:**
 - Base64 standard (+ and / require URL encoding)
@@ -659,6 +663,30 @@ API key storage must protect against multiple threat vectors simultaneously:
 - MD5 (broken, MUST NOT use)
 - SHA-1 (broken, MUST NOT use)
 - Unsalted SHA-256/SHA-512 (vulnerable to rainbow tables)
+
+**Alternative: Stateless Validation Pattern**
+
+An alternative to storing hashed keys is the stateless validation pattern, where API keys contain embedded, cryptographically-signed data:
+
+"Unlike traditional API key systems that require database validation, stateless tokens like Keycloak's JWTs can be validated via signature verification alone" [[Source-43]](#source-43)
+
+**Stateless Validation Architecture:**
+- API key includes HMAC signature or RSA signature over key data
+- Validation performed by verifying signature with server's secret key
+- No database lookup required for authentication
+- Revocation requires maintaining revocation list (storing only revoked key IDs)
+
+**Tradeoffs:**
+- **Performance**: No database query for validation (significantly faster)
+- **Scalability**: Horizontal scaling without session coordination
+- **Revocation**: Cannot instantly invalidate keys without revocation list check
+- **Storage**: Minimal database storage (revocation list only) [[Source-43]](#source-43)
+
+**Use Cases:**
+- High-throughput APIs where database latency is unacceptable
+- Distributed systems requiring stateless authentication
+- Microservices architectures with service mesh integration
+- Short-lived tokens (minutes to hours) where expiration handles most invalidation
 
 ### 6.3. Encryption at Rest
 
@@ -1096,6 +1124,19 @@ Regular rotation limits the exposure window if a key is compromised.
 - Service A key + Service B key (different third-party integrations)
 - Primary key + backup key
 
+**Token Reuse Detection:**
+
+For systems implementing refresh token rotation, detecting and preventing token reuse is critical for security:
+
+"Keycloak implements refresh token single-use enforcement with reuse detection that triggers session revocation on replay attacks" [[Source-43]](#source-43)
+
+**Implementation Pattern:**
+1. Mark token as "used" in cache/database after first use
+2. On subsequent use of same token, detect replay attempt
+3. Revoke entire session (all associated tokens)
+4. Log security event for investigation
+5. Return error indicating suspected compromise
+
 ### 9.4. Expiration Policies
 
 "Time-based access: Use expiration dates for temporary access" [[Source-01]](#source-1)
@@ -1132,6 +1173,18 @@ Revocation immediately invalidates an API key before its planned expiration.
 - SHOULD notify key owner (unless security incident)
 - MUST log revocation event with reason and actor
 - SHOULD prevent key reuse (blacklist revoked keys)
+
+**Revocation with Stateless Tokens:**
+
+Systems using stateless validation (e.g., signed tokens, JWTs) can implement efficient revocation through revocation lists:
+
+"Keycloak stores only revoked token IDs in the database, not the tokens themselves, enabling instant revocation while maintaining stateless validation performance" [[Source-43]](#source-43)
+
+**Implementation:**
+- Maintain table/cache of revoked key IDs with expiration timestamps
+- Check key ID against revocation list during validation
+- Background cleanup removes expired revocation entries
+- Minimal storage overhead (ID + timestamp only)
 
 ### 9.6. Emergency Revocation
 
@@ -1623,6 +1676,50 @@ GitHub's implementation [[Source-12]](#source-12) uses prefixes (ghp_, gho_, etc
 4. Implement revocation workflows
 5. Monitor effectiveness metrics
 
+### 12.7. Cryptographic Agility
+
+API key systems SHOULD be designed to support multiple cryptographic algorithms simultaneously, enabling migration to stronger algorithms without breaking existing integrations.
+
+**Algorithm Agility Requirements:**
+
+"Keycloak supports multiple signing algorithms (RS256, ECDSA, EdDSA, HMAC) and experimental post-quantum algorithms (ML-DSA), providing migration paths and future-proofing" [[Source-43]](#source-43)
+
+**Implementation Pattern:**
+
+1. **Algorithm Identifier**: Include algorithm version/identifier in key metadata
+2. **Multiple Validation**: Support validating keys with different hash algorithms concurrently
+3. **Gradual Migration**: Deploy new algorithm support before deprecating old algorithm
+4. **Backward Compatibility**: Maintain validation for older keys during transition period
+5. **Forward Planning**: Monitor NIST and cryptographic community for emerging algorithms
+
+**Supported Algorithm Families:**
+
+| Algorithm Type | Current Standard | Post-Quantum Alternative | Migration Timeline |
+|----------------|------------------|-------------------------|-------------------|
+| Symmetric Hashing | SHA-256, SHA-512 | SHA-3 (Keccak) | Available now |
+| Password Hashing | BCrypt, Argon2 | Argon2 (quantum-resistant) | No change needed |
+| Signatures (stateless) | RSA-2048, ECDSA P-256 | ML-DSA, SLH-DSA | NIST standards finalized 2024 |
+| HMAC | HMAC-SHA256 | HMAC-SHA3 | Available now |
+
+**Post-Quantum Readiness:**
+
+As quantum computing advances threaten current cryptographic algorithms, API key systems must prepare for migration:
+
+- **Timeline**: NIST post-quantum cryptography standards finalized in 2024
+- **Threat horizon**: 10-30 years until quantum computers break RSA/ECC
+- **Migration window**: 5-10 years required for ecosystem transition
+
+**Recommendations:**
+- Design systems to support algorithm negotiation
+- Store algorithm identifier with each key record
+- Test post-quantum algorithms in non-production environments
+- Monitor NIST post-quantum cryptography standardization
+- Plan migration strategy for post-quantum algorithms (ML-DSA-65, CRYSTALS-Kyber)
+
+**Real-World Example:**
+
+Keycloak's experimental ML-DSA support demonstrates proactive cryptographic agility, allowing organizations to test post-quantum algorithms years before widespread adoption is required [[Source-43]](#source-43).
+
 ---
 
 ## 13. Compliance and Standards
@@ -2068,6 +2165,109 @@ AWS Security Token Service (STS) issues temporary credentials with:
 - Automated notification workflows speed response
 - Regular incident response drills prevent hesitation during real events
 
+### 15.5. Keycloak Stateless Token Architecture
+
+Keycloak, an open-source identity and access management solution, implements a production-grade stateless JWT architecture that offers valuable insights for API key system design [[Source-43]](#source-43).
+
+**Architecture Overview:**
+
+Keycloak uses stateless JWTs where tokens are cryptographically signed but NOT stored in the database. This approach provides:
+- Performance advantages: No database lookup required for validation
+- Horizontal scalability: Validation via signature verification only
+- Reduced database load: Only revocation checks hit the database
+
+**Token Generation Implementation:**
+
+**High-Entropy Secret Generation:**
+```
+SecureRandom.nextBytes(18)  // 144 bits of entropy
+Base64.urlEncode()          // URL-safe encoding
+```
+
+Keycloak's `SecretGenerator` class generates session IDs using Java's `SecureRandom` CSPRNG with 144-bit entropy (18 bytes), exceeding the RFC's 128-bit minimum recommendation [[Source-43]](#source-43). The implementation uses Base64 URL-safe encoding for transport compatibility.
+
+**Cryptographic Algorithm Agility:**
+
+Keycloak supports multiple signing algorithms, providing migration paths and future-proofing:
+- **RSA**: RS256 (default), RS384, RS512
+- **HMAC**: HS256, HS384, HS512
+- **ECDSA**: ES256, ES384, ES512
+- **EdDSA**: Ed25519, Ed448
+- **Post-Quantum**: ML-DSA-44, ML-DSA-65, ML-DSA-87 (experimental)
+
+This algorithm agility enables organizations to migrate to stronger algorithms without breaking existing integrations [[Source-43]](#source-43).
+
+**Database Storage Pattern:**
+
+The key architectural insight: **JWTs are never written to the database**. Instead, Keycloak stores only:
+
+1. **Revoked Token IDs** (`REVOKED_TOKEN` table)
+   - Stores only the `jti` (JWT ID claim) and expiration timestamp
+   - Enables instant revocation while maintaining stateless validation
+   - Expired entries cleaned up by background jobs
+
+2. **Offline User Sessions** (`OFFLINE_USER_SESSION` table)
+   - Persistent sessions for offline access scenarios
+   - Serialized session metadata, not the token itself
+   - Last refresh timestamp for session management
+
+**Validation Process:**
+
+Token validation follows a multi-stage approach:
+1. **Signature verification** using public key from realm configuration
+2. **Expiration check** against current timestamp
+3. **Revocation check** querying the `jti` against revocation table
+4. **Issuer and audience validation** against expected values
+5. **Session state validation** for refresh tokens (cache lookup)
+
+**Token Rotation and Security Features:**
+
+Keycloak implements refresh token rotation with single-use enforcement:
+- Each refresh token can only be used once
+- Reuse detection triggers session revocation (replay attack prevention)
+- New tokens issued with updated `iat` and `exp` claims
+- Session identifier reused (no new session created)
+
+**Token Binding:**
+- Certificate-bound tokens (RFC 8705) bind tokens to TLS client certificates
+- DPoP (Demonstrating Proof-of-Possession) for sender-constrained tokens
+- Prevents token theft and replay attacks
+
+**Performance Characteristics:**
+
+The stateless architecture provides significant performance benefits:
+- **No database query** for standard token validation
+- **Horizontal scalability** without session store coordination
+- **Reduced latency** through cryptographic-only validation
+- **Tradeoff**: Cannot invalidate individual tokens instantly (must wait for expiration or check revocation list)
+
+**Applicability to API Key Design:**
+
+Keycloak's implementation demonstrates several patterns relevant to API key systems:
+
+1. **Stateless Validation Pattern**: API keys with HMAC signatures can be validated without database lookup, similar to JWTs
+2. **Revocation List Efficiency**: Storing only revoked identifiers minimizes storage and query overhead
+3. **High Entropy Requirements**: 144-bit generation validates the RFC's 128-256 bit entropy recommendations
+4. **Algorithm Agility**: Supporting multiple hash/signature algorithms enables future migration
+5. **Token Binding Concepts**: Binding keys to IP addresses or client certificates reduces theft risk
+
+**Key Differences from Traditional API Keys:**
+
+- JWTs are self-contained with embedded claims; API keys typically require external authorization lookup
+- JWTs expire automatically via `exp` claim; API keys often long-lived unless explicit rotation
+- JWTs larger (1-2 KB); API keys typically 32-64 bytes
+- JWTs optimized for short-lived sessions (5-30 minutes); API keys for long-lived programmatic access
+
+**Lessons for API Key RFC:**
+
+Keycloak's production implementation validates several RFC recommendations:
+- CSPRNG usage (SecureRandom) for unpredictable key generation
+- Multiple algorithm support for cryptographic agility and migration paths
+- Minimal database storage pattern (revocation list only)
+- Short token lifetimes (5-minute access tokens) limit theft exposure
+- Automated rotation mechanisms reduce long-term compromise risk
+- Comprehensive audit logging of token operations
+
 ---
 
 ## 16. Future Considerations
@@ -2289,8 +2489,9 @@ Rescorla, E., "The Transport Layer Security (TLS) Protocol Version 1.3", RFC 844
 - <a name="source-40"></a>**[Source-40]**: [Complete 2025 API Key Guide](references/What%20is%20an%20API%20Key_%20Why%20Do%20We%20Need%20Them_%20Complete%202025%20Guide%20-%20API7.ai.md)
 - <a name="source-41"></a>**[Source-41]**: [What Makes a Good API Key System](references/What%20makes%20a%20good%20API%20key%20system_%20_%20by%20Ted%20Spence%20_%20tedspence.com.md)
 - <a name="source-42"></a>**[Source-42]**: [Why and When to Use API Keys (Google Cloud)](references/Why%20and%20when%20to%20use%20API%20keys%20_%20Cloud%20Endpoints%20with%20OpenAPI%20_%20Google%20Cloud%20Documentation.md)
+- <a name="source-43"></a>**[Source-43]**: [Keycloak Token Generation and Storage Architecture](references/keycloak-architecture.md)
 
-*All 42 source documents are available as linked markdown files in the [references](references/) directory.*
+*All 43 source documents are available as linked markdown files in the [references](references/) directory.*
 
 ---
 
