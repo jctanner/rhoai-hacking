@@ -123,7 +123,7 @@ Our analysis methodology consisted of:
 
 ---
 
-## 2. API Key Authentication Implementation
+## 2.6. API Key Authentication Implementation Details
 
 ### 2.1 Creating API Keys
 
@@ -431,6 +431,65 @@ This extensibility architecture enables Authorino to function as an **orchestrat
 4. **Maintain separation of concerns**: Business logic in domain services, auth orchestration in Authorino
 
 This design contrasts with traditional API gateways that provide only local authentication/authorization capabilities.
+
+### 2.5 Cryptographic Credential Storage via External Services
+
+**Important architectural implication**: While Authorino's built-in API key evaluator stores credentials in plaintext Kubernetes Secrets (see Section 4), the extensible architecture described above allows organizations to implement cryptographic credential storage by delegating authentication to external services.
+
+**Example integration patterns**:
+
+1. **OAuth2 Token Introspection** (Phase I - Authentication):
+   ```yaml
+   authentication:
+     oauth2-introspection:
+       oauth2:
+         tokenIntrospectionUrl: https://auth-server.example.com/oauth2/introspect
+         tokenTypeHint: access_token
+   ```
+   - External OAuth2 server can store credentials with BCrypt, Argon2, PBKDF2
+   - Authorino validates tokens by calling external endpoint (never sees plaintext credentials)
+
+2. **Custom Authentication Webhook** (Phase I - Authentication via external metadata):
+   ```yaml
+   authentication:
+     anonymous: {}  # Accept all requests
+   metadata:
+     credential-validator:
+       http:
+         url: https://credential-service.example.com/validate
+         method: POST
+         body:
+           value: |
+             {"api_key": "{request.headers.x-api-key}"}
+   authorization:
+     require-valid-credential:
+       patternMatching:
+         patterns:
+           - selector: metadata.credential-validator.valid
+             operator: eq
+             value: "true"
+   ```
+   - External service validates API key against Argon2-hashed database
+   - Returns `{"valid": true/false}` to Authorino
+   - Authorino makes allow/deny decision without ever storing credentials
+
+3. **Keycloak Integration** (Phase I - Authentication):
+   ```yaml
+   authentication:
+     keycloak:
+       keycloak:
+         url: https://keycloak.example.com/auth/realms/myrealm
+   ```
+   - Keycloak stores credentials with PBKDF2 (default) or BCrypt
+   - Authorino validates tokens against Keycloak, never sees passwords
+
+**Security implications**:
+- Authorino acts as an **orchestration layer** rather than a credential store
+- Cryptographic protection responsibility shifts to external service
+- Performance trade-off: External HTTP call adds latency (10-50ms typical)
+- Kubernetes Secret plaintext limitation becomes irrelevant (no credentials stored)
+
+This capability is **critical for regulatory compliance**: Organizations in regulated industries (PCI DSS, HIPAA, FedRAMP) can deploy Authorino while maintaining cryptographic credential protection by delegating to properly-secured external systems. The plaintext storage limitation discussed in later sections applies only to the built-in Kubernetes Secret-based API key evaluator, not to the platform's overall capabilities.
 
 ---
 
@@ -795,7 +854,7 @@ When running multiple Limitador instances with shared Redis:
 
 ---
 
-## 4. Source Code Analysis: Plaintext Storage & Validation
+## 4. Source Code Analysis: Built-in API Key Evaluator (Plaintext Storage & Validation)
 
 ### 3.1 API Key Storage Implementation
 
@@ -954,9 +1013,9 @@ func (a *APIKey) RevokeK8sSecretBasedIdentity(ctx context.Context, deleted k8s_t
 
 ---
 
-## 4. Security Model Analysis
+## 5. Security Model Analysis (Built-in API Key Evaluator)
 
-### 4.1 Storage Layers (All Plaintext)
+### 5.1 Storage Layers (All Plaintext)
 
 | Layer | Technology | Credential Format | Protection Mechanism |
 |-------|-----------|-------------------|----------------------|
@@ -977,7 +1036,7 @@ data:
 
 Base64 decoding: `echo "bmR5Qnpy..." | base64 -d` → `ndyBzreUzF4zqDQsqSPMHkRhriEOtcRx`
 
-### 4.2 Threat Model & Attack Scenarios
+### 5.2 Threat Model & Attack Scenarios
 
 **Complete Credential Exposure Scenarios**:
 
@@ -992,7 +1051,7 @@ Base64 decoding: `echo "bmR5Qnpy..." | base64 -d` → `ndyBzreUzF4zqDQsqSPMHkRhr
 | **Authorino Process Dump** | `gcore` or `/proc/<pid>/mem` | In-memory map with all keys | Process isolation, non-root container |
 | **Supply Chain** | Compromised Helm chart or operator | Malicious code with Secret access | Image signing, provenance verification |
 
-### 4.3 Available Protection Mechanisms
+### 5.3 Available Protection Mechanisms
 
 **Kubernetes-Level Protection**:
 1. **RBAC**: Restrict who can read Secrets
@@ -1062,7 +1121,7 @@ Base64 decoding: `echo "bmR5Qnpy..." | base64 -d` → `ndyBzreUzF4zqDQsqSPMHkRhr
    - Reduces risk of process memory dumps
    - Still vulnerable to container escape or privileged access
 
-### 4.4 What Authorino Does NOT Do
+### 5.4 What Authorino Does NOT Do
 
 **No Application-Layer Cryptographic Protection**:
 - ❌ No BCrypt, Argon2, PBKDF2, or scrypt hashing
@@ -1087,9 +1146,9 @@ Both platforms prioritize **performance over cryptographic security**.
 
 ---
 
-## 5. Security Standards Compliance Analysis
+## 6. Security Standards Compliance Analysis (Built-in API Key Evaluator)
 
-### 5.1 Industry Standard Evaluation
+### 6.1 Industry Standard Evaluation
 
 We evaluated Kuadrant/Authorino's API key storage implementation against established security standards and best practices:
 
@@ -1102,7 +1161,7 @@ We evaluated Kuadrant/Authorino's API key storage implementation against establi
 | **Principle of Least Privilege** | Credentials unreadable even by privileged users | Cluster administrators can read all Secrets | Not enforced: Admins have full credential access |
 | **Timing Attack Resistance** | Constant-time comparison for credentials | Standard Go `==` operator | Vulnerable: Non-constant-time string comparison |
 
-### 5.2 Architectural Security Model
+### 6.2 Architectural Security Model
 
 The Kuadrant/Authorino security architecture relies on **perimeter defense** rather than **defense-in-depth**:
 
@@ -1144,7 +1203,7 @@ The Kuadrant/Authorino security architecture relies on **perimeter defense** rat
     (brute-force required: infeasible for high-entropy keys)
 ```
 
-### 5.3 Performance Characteristics Analysis
+### 6.3 Performance Characteristics Analysis
 
 **Validation Latency**:
 
@@ -1170,9 +1229,9 @@ The Kuadrant/Authorino security architecture relies on **perimeter defense** rat
 
 ---
 
-## 6. Design Trade-offs and Use Case Analysis
+## 7. Design Trade-offs and Use Case Analysis
 
-### 6.1 Performance-Security Trade-off
+### 7.1 Performance-Security Trade-off
 
 The Kuadrant/Authorino architecture represents a deliberate trade-off between authentication performance and cryptographic credential security. This design choice is optimized for specific deployment contexts:
 
@@ -1188,7 +1247,7 @@ The Kuadrant/Authorino architecture represents a deliberate trade-off between au
 - Insider threat mitigation requirements
 - Defense-in-depth security posture mandates
 
-### 6.2 Environmental Suitability
+### 7.2 Environmental Suitability
 
 The Kuadrant/Authorino plaintext storage model is architecturally suited to environments characterized by:
 
@@ -1219,9 +1278,9 @@ Conversely, cryptographic credential storage is more appropriate for:
 
 ---
 
-## 7. Security Enhancement Strategies
+## 8. Security Enhancement Strategies
 
-### 7.1 Compensating Controls for Plaintext Storage
+### 11.1 Compensating Controls for Plaintext Storage
 
 Organizations deploying Kuadrant/Authorino can implement layered security controls to mitigate risks associated with plaintext credential storage:
 
@@ -1311,7 +1370,7 @@ Organizations deploying Kuadrant/Authorino can implement layered security contro
    - Monitor for privilege escalation attempts
    - Track failed authentication attempts (potential key guessing)
 
-### 7.2 Cryptographic Enhancement Architectures
+### 11.2 Cryptographic Enhancement Architectures
 
 For environments where regulatory or security requirements mandate cryptographic credential protection, several architectural modifications are possible:
 
@@ -1369,11 +1428,11 @@ Certificate-based authentication without API keys:
 
 ---
 
-## 8. Comparative Analysis with 3scale Platform
+## 9. Comparative Analysis with 3scale Platform
 
 The Kuadrant and 3scale platforms share a common architectural philosophy—prioritizing sub-millisecond authentication latency over application-layer cryptographic credential protection—but differ significantly in deployment model and integration approach.
 
-### 8.1 Architectural Similarities
+### 11.1 Architectural Similarities
 
 Both platforms exhibit the following characteristics:
 
@@ -1382,7 +1441,7 @@ Both platforms exhibit the following characteristics:
 3. **Performance Optimization**: Sub-millisecond validation latency achieved through in-memory caching
 4. **Perimeter Security Model**: Reliance on infrastructure-level controls rather than application-layer cryptography
 
-### 8.2 Architectural Differences
+### 11.2 Architectural Differences
 
 | Dimension | Kuadrant/Authorino | 3scale |
 |-----------|-------------------|--------|
@@ -1395,7 +1454,7 @@ Both platforms exhibit the following characteristics:
 | **Component Count** | 3-4 components (Authorino, Limitador, DNS Operator, Cert-Manager) | 10+ components (System, Backend, Zync, Redis, PostgreSQL, Sidekiq, etc.) |
 | **Multi-Cluster Support** | Native (Gateway API + DNS Operator) | External sync service (Zync) required |
 
-### 8.3 Authentication Feature Comparison
+### 11.3 Authentication Feature Comparison
 
 | Feature | Kuadrant/Authorino | 3scale Apisonator |
 |---------|-------------------|-------------------|
@@ -1407,7 +1466,7 @@ Both platforms exhibit the following characteristics:
 | **Plain/Anonymous Identity** | Supported | Not supported |
 | **HTTP Basic Auth** | Supported | Not supported |
 
-### 8.4 Authorization Feature Comparison
+### 11.4 Authorization Feature Comparison
 
 | Feature | Kuadrant/Authorino | 3scale Apisonator |
 |---------|-------------------|-------------------|
@@ -1417,7 +1476,7 @@ Both platforms exhibit the following characteristics:
 | **External Authorization** | SpiceDB, Keycloak Authz Services | Not supported |
 | **Policy Complexity** | Multi-evaluator pipeline | Single-phase authorization |
 
-### 8.5 Operational Characteristics
+### 11.5 Operational Characteristics
 
 | Dimension | Kuadrant/Authorino | 3scale |
 |-----------|-------------------|--------|
@@ -1430,17 +1489,18 @@ Both platforms exhibit the following characteristics:
 
 ---
 
-## 9. Conclusions
+## 10. Conclusions
 
-### 9.1 Summary of Findings
+### 11.1 Summary of Findings
 
 This analysis of the Kuadrant/Authorino platform's API key authentication system, based on direct source code examination and operational testing, yields the following key findings:
 
-**Credential Storage Implementation**:
+**Credential Storage Implementation (Built-in K8s Secret-based API Key Evaluator)**:
 - API keys are stored as plaintext strings in Kubernetes Secrets (`data.api_key` field)
 - No cryptographic hashing functions (BCrypt, Argon2, PBKDF2, scrypt) are applied
 - Credentials are cached in Authorino process memory as a Go map structure (`map[string]k8s.Secret`)
 - Validation uses direct string equality comparison (Go `==` operator), not constant-time comparison
+- **Important caveat**: These findings apply specifically to Authorino's built-in API key evaluator. Authorino's extensible architecture allows delegation to external authentication services (OAuth2 introspection, Keycloak, custom HTTP endpoints, external metadata fetchers) that may implement cryptographic credential storage. The plaintext limitation is an implementation choice for the built-in evaluator, not an architectural constraint of the platform.
 
 **Performance Characteristics**:
 - Authentication validation latency: <1 millisecond (median), <5ms (p99)
@@ -1454,22 +1514,24 @@ This analysis of the Kuadrant/Authorino platform's API key authentication system
 - Compliance posture: Non-compliant with OWASP ASVS 2.4.1, NIST SP 800-63B, PCI DSS 3.4
 - Defense in depth: Limited (single security layer at infrastructure level)
 
-**Architectural Trade-offs**:
+**Architectural Trade-offs (Built-in API Key Evaluator)**:
 - Optimizes for: Sub-millisecond latency, high throughput, operational simplicity
 - Sacrifices: Cryptographic credential protection, defense in depth, regulatory compliance
 - Suitable for: Internal corporate APIs, development/staging environments, trusted perimeters
-- Not suitable for: Regulated industries (PCI, HIPAA, FedRAMP), high-security environments, multi-tenant SaaS
+- Not suitable for: Regulated industries (PCI, HIPAA, FedRAMP) *when using built-in K8s Secret evaluator*
+- **Mitigation path**: Organizations requiring cryptographic storage can leverage Authorino's external service integration to delegate authentication to properly-secured credential stores (e.g., OAuth2 server with BCrypt, Keycloak with PBKDF2, custom webhook with Argon2)
 
-### 9.2 Comparison with Alternative Approaches
+### 11.2 Comparison with Alternative Approaches
 
-The Kuadrant/Authorino architecture exemplifies a specific point on the performance-security spectrum:
+The Kuadrant/Authorino **built-in API key evaluator** exemplifies a specific point on the performance-security spectrum:
 
-**Plaintext Storage (Kuadrant/Authorino, 3scale)**:
+**Plaintext Storage (Kuadrant/Authorino built-in evaluator, 3scale)**:
 - Validation latency: <1ms
 - Throughput: 10,000+ auth/sec
 - CPU cost: Minimal (string comparison only)
 - Security: Complete exposure upon perimeter breach
 - Suitable for: High-performance gateways with strong perimeter security
+- **Extension option**: Authorino can delegate to external cryptographic validators
 
 **Cryptographic Storage (BCrypt/Argon2)**:
 - Validation latency: 50-150ms
@@ -1485,7 +1547,7 @@ The Kuadrant/Authorino architecture exemplifies a specific point on the performa
 - Security: No long-lived credential storage required
 - Suitable for: Modern microservices, zero-trust architectures
 
-### 9.3 Research Implications
+### 11.3 Research Implications
 
 This study demonstrates that Kubernetes-native platforms can achieve high-performance authentication through infrastructure-level credential management (Secrets API, RBAC, etcd) without application-layer cryptography. However, this approach introduces a fundamental dependency on the security of the Kubernetes control plane itself.
 
@@ -1499,7 +1561,7 @@ Key observations for future research:
 
 4. **Performance vs. Security Trade-off Quantification**: Our measurements demonstrate a 50-100× performance advantage of plaintext validation (1ms) over cryptographic hashing (50-100ms). This represents a fundamental architectural decision point between performance-optimized and security-optimized designs.
 
-### 9.4 Future Work
+### 11.4 Future Work
 
 Several areas warrant further investigation:
 
@@ -1511,33 +1573,40 @@ Several areas warrant further investigation:
 
 4. **Formal Security Analysis**: Application of formal verification methods to quantify the security properties of Kubernetes RBAC-based credential protection under various threat models.
 
-### 9.5 Concluding Remarks
+### 11.5 Concluding Remarks
 
 The Kuadrant/Authorino platform represents a successful implementation of high-performance, Kubernetes-native API authentication and authorization. Beyond simple credential validation, Authorino's multi-phase pipeline architecture enables sophisticated authorization workflows through external service integration—supporting arbitrary HTTP callouts for metadata enrichment, integration with external policy decision points (OPA, SpiceDB, Keycloak), and post-authorization webhooks. This extensibility positions Authorino as an **authorization orchestration layer** rather than merely an authentication service.
 
-However, the platform's architectural choice to store API key credentials in plaintext—while enabling sub-millisecond validation latency and excellent operational characteristics (dynamic rotation, automatic propagation, declarative configuration)—is fundamentally at odds with cryptographic security best practices and regulatory compliance requirements.
+The platform's **built-in API key evaluator** stores credentials in plaintext within Kubernetes Secrets—an architectural choice that enables sub-millisecond validation latency and excellent operational characteristics (dynamic rotation, automatic propagation, declarative configuration) at the cost of cryptographic security. However, this plaintext limitation applies only to the built-in evaluator. Organizations requiring cryptographic credential protection can leverage Authorino's extensible architecture to delegate authentication to external services that implement proper hashing (OAuth2 servers with BCrypt, Keycloak with PBKDF2, custom webhooks with Argon2, etc.). The platform does not inherently prohibit cryptographic storage—it offers a high-performance built-in option while supporting integration with cryptographically-secured external validators.
 
 This trade-off is not inherently right or wrong—it represents a conscious architectural decision optimized for specific deployment contexts. Organizations must evaluate their own security requirements, regulatory obligations, and performance constraints when selecting an authentication architecture.
 
-The plaintext storage approach is demonstrably effective for:
+The **built-in plaintext API key evaluator** is demonstrably effective for:
 - Internal corporate APIs with mature Kubernetes security postures
 - Development and staging environments
 - Non-regulated industries where credential exposure risk is acceptable
 - Systems where sub-millisecond latency is a hard requirement
 
-Conversely, cryptographic credential storage remains essential for:
-- Regulated industries with mandatory cryptographic protection
-- Multi-tenant SaaS platforms where customer data isolation is paramount
-- High-value target systems where credential compromise has severe consequences
-- Organizations adopting zero-trust security architectures
+For environments requiring cryptographic credential storage:
+- **External service delegation**: Organizations can leverage Authorino's extensible architecture to delegate authentication to external services implementing BCrypt, Argon2, or PBKDF2
+- **Hybrid approach**: Use built-in evaluator for low-value credentials (rate limit tiers, analytics) while delegating high-value credentials (payment APIs, health data) to cryptographically-secured external validators
+- **OAuth2/Keycloak integration**: Use Authorino's OAuth2 token introspection or Keycloak authentication evaluators, which call external identity providers that properly hash credentials
+- **Custom authentication webhooks**: Implement external HTTP services that validate credentials against properly-hashed databases
 
-As API management platforms continue to evolve, the industry may benefit from authentication systems that offer configurable security levels—allowing operators to select plaintext storage for performance-critical paths while using cryptographic protection for sensitive credentials, all within a unified management framework.
+**Practical Deployment Strategies**:
+
+1. **High-performance, low-security**: Built-in K8s Secret evaluator with etcd encryption
+2. **Moderate-security, moderate-performance**: OAuth2 token introspection against external IdP
+3. **High-security, acceptable-performance**: Custom webhook to Argon2-backed credential store
+4. **Hybrid security**: Built-in evaluator for tier-1 APIs, external validator for tier-2 APIs
+
+Authorino's architecture already provides the **configurable security levels** that the industry needs—organizations can select plaintext storage for performance-critical paths while delegating sensitive credentials to cryptographic validators, all within a unified authorization orchestration framework. The platform is not inherently limited to plaintext storage; it offers plaintext as a high-performance option while supporting integration with cryptographically-secured external systems.
 
 ---
 
-## 10. References
+## 11. References
 
-### 10.1 Primary Sources
+### 11.1 Primary Sources
 
 **Source Code Repositories** (All accessed March 2026):
 
@@ -1561,7 +1630,7 @@ As API management platforms continue to evolve, the industry may benefit from au
    - Repository: https://github.com/kuadrant/docs.kuadrant.io
    - Website: https://docs.kuadrant.io
 
-### 10.2 Technical Specifications
+### 11.2 Technical Specifications
 
 1. **Envoy External Authorization**
    - Envoy Proxy Documentation: "External Authorization"
@@ -1577,7 +1646,7 @@ As API management platforms continue to evolve, the industry may benefit from au
    - RBAC Authorization: https://kubernetes.io/docs/reference/access-authn-authz/rbac/
    - Encrypting Secret Data at Rest: https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/
 
-### 10.3 Security Standards Referenced
+### 11.3 Security Standards Referenced
 
 1. **OWASP Application Security Verification Standard (ASVS) v4.0**
    - Section 2.4.1: "Verify that passwords and other credential data are stored using approved cryptographic functions"
@@ -1592,7 +1661,7 @@ As API management platforms continue to evolve, the industry may benefit from au
    - Requirement 3.4: "Render Primary Account Numbers (PAN) unreadable anywhere it is stored"
    - https://www.pcisecuritystandards.org/
 
-### 10.4 Comparative Technologies
+### 11.4 Comparative Technologies
 
 1. **3scale API Management Platform**
    - Apisonator (Backend Service): https://github.com/3scale/apisonator
@@ -1604,7 +1673,7 @@ As API management platforms continue to evolve, the industry may benefit from au
    - Keycloak: https://www.keycloak.org/
    - SpiceDB: https://authzed.com/spicedb
 
-### 10.5 Related Academic Work
+### 11.5 Related Academic Work
 
 1. Provos, N., & Mazières, D. (1999). "A Future-Adaptable Password Scheme." *Proceedings of the 1999 USENIX Annual Technical Conference*, 81-91.
    - Foundational work on BCrypt password hashing
