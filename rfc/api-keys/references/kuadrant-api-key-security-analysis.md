@@ -6,9 +6,9 @@
 
 ## Abstract
 
-This document provides a comprehensive technical analysis of the Kuadrant platform's API key authentication system, based on direct examination of the Authorino source code (Go implementation, ~25,000 lines) and operational architecture. We analyze the credential storage mechanisms, validation workflows, security properties, and architectural design decisions that prioritize sub-millisecond authentication latency over cryptographic credential protection. Our findings demonstrate that Kuadrant stores API credentials in plaintext within Kubernetes Secrets, relying on Kubernetes RBAC and optional etcd encryption-at-rest for security, rather than application-layer cryptographic hashing (BCrypt, Argon2, etc.). This approach enables high-performance authentication (10,000+ validations/sec per instance) at the cost of complete credential exposure in the event of Kubernetes Secret compromise.
+This document provides a comprehensive technical analysis of the Kuadrant platform's API key authentication system, based on direct examination of the Authorino source code (Go implementation, ~25,000 lines) and operational architecture. We analyze the credential storage mechanisms, validation workflows, external service integration capabilities, security properties, and architectural design decisions that prioritize sub-millisecond authentication latency over cryptographic credential protection. Our findings demonstrate that Kuadrant stores API credentials in plaintext within Kubernetes Secrets, relying on Kubernetes RBAC and optional etcd encryption-at-rest for security, rather than application-layer cryptographic hashing (BCrypt, Argon2, etc.). This approach enables high-performance authentication (10,000+ validations/sec per instance) at the cost of complete credential exposure in the event of Kubernetes Secret compromise. Additionally, we document Authorino's extensible multi-phase authorization pipeline, which supports integration with arbitrary external services for metadata enrichment, policy enforcement (OPA, SpiceDB, Keycloak), and audit callbacks, positioning it as an authorization orchestration layer rather than a simple authentication validator.
 
-**Keywords**: API Authentication, Kubernetes Security, Credential Storage, External Authorization, Envoy Proxy, Gateway API
+**Keywords**: API Authentication, Kubernetes Security, Credential Storage, External Authorization, Envoy Proxy, Gateway API, Authorization Orchestration, Policy Decision Points
 
 ---
 
@@ -231,6 +231,206 @@ spec:
    GET /api/resource HTTP/1.1
    (with optional injected headers from Authorino)
 ```
+
+### 2.4 Authorino Extensibility: External Service Integration
+
+While this paper focuses on API key authentication, it is important to note that Authorino's architecture supports **arbitrary external service integration** at multiple phases of the authorization pipeline through AuthConfig custom resources. This extensibility distinguishes Authorino from simple authentication validators.
+
+#### 2.4.1 Five-Phase Authorization Pipeline
+
+Every authorization request passes through up to five distinct phases:
+
+| Phase | Name | Purpose | External Integration Capability |
+|-------|------|---------|--------------------------------|
+| **Phase i** | Authentication | Identity verification | OAuth2 introspection, Kubernetes TokenReview, OIDC discovery |
+| **Phase ii** | Metadata | External data fetching | **HTTP GET/POST to arbitrary services**, OIDC UserInfo, UMA registries |
+| **Phase iii** | Authorization | Policy enforcement | **OPA Rego policies** (local or remote), Kubernetes SubjectAccessReview, **Keycloak Authz Services**, **SpiceDB** |
+| **Phase iv** | Response | Dynamic response injection | Festival Wristband token generation, JSON injection |
+| **Phase v** | Callbacks | Post-authorization notifications | **HTTP POST to arbitrary webhooks** |
+
+#### 2.4.2 External Metadata Fetching (Phase ii)
+
+Authorino can call arbitrary HTTP services to fetch additional context data before authorization decisions:
+
+**HTTP External Metadata Example**:
+```yaml
+apiVersion: authorino.kuadrant.io/v1beta3
+kind: AuthConfig
+spec:
+  hosts:
+  - my-api.example.com
+  authentication:
+    "api-keys":
+      apiKey: {...}
+  metadata:
+    "user-profile":
+      http:
+        url: "https://user-service.internal/api/users/{auth.identity.metadata.labels.user_id}"
+        method: GET
+        headers:
+          "X-API-Key":
+            value: internal-service-key
+        sharedSecretRef:  # Optional authentication to external service
+          name: user-service-credentials
+          namespace: authorino-system
+```
+
+**Capabilities**:
+- **GET or POST** requests to any HTTP endpoint
+- **Dynamic URL construction** using CEL expressions with access to Authorization JSON
+- **Authentication** with external services via shared secrets or OAuth2 client credentials
+- **Header injection** with static or dynamic values
+- **Response data** added to Authorization JSON for use in authorization policies
+
+**Use Cases**:
+- Enriching identity with user profile data from external systems
+- Fetching resource ownership information from business services
+- Querying feature flags or entitlement systems
+- Retrieving contextual business data for fine-grained authorization
+
+#### 2.4.3 External Authorization Services (Phase iii)
+
+Authorino supports multiple external policy decision point (PDP) integrations:
+
+**1. Open Policy Agent (OPA)**
+
+Authorino can evaluate Rego policies either inline or by calling external OPA servers:
+
+```yaml
+authorization:
+  "opa-policy":
+    opa:
+      externalPolicy:
+        url: "https://opa-server.internal/v1/data/policies/my_api/allow"
+        ttl: 60  # Cache OPA response for 60 seconds
+      allValues: true  # Send entire Authorization JSON to OPA
+```
+
+**OPA Integration Pattern**:
+```
+┌──────────────┐      POST /v1/data/policies/...     ┌────────────┐
+│  Authorino   │────────────────────────────────────▶│  OPA       │
+│              │   {"input": {...Auth JSON...}}      │  Server    │
+│              │◀────────────────────────────────────│            │
+└──────────────┘      {"result": true/false}         └────────────┘
+```
+
+**2. Kubernetes SubjectAccessReview**
+
+Integration with Kubernetes RBAC for authorization decisions based on K8s roles and bindings:
+
+```yaml
+authorization:
+  "k8s-rbac":
+    kubernetesSubjectAccessReview:
+      user:
+        expression: auth.identity.username
+      resourceAttributes:
+        namespace: my-namespace
+        group: apps
+        resource: deployments
+        verb: get
+```
+
+**3. Keycloak Authorization Services**
+
+Integration with Keycloak for centralized authorization policies:
+
+```yaml
+authorization:
+  "keycloak-authz":
+    authzed:  # Keycloak Authorization Services client
+      endpoint: "https://keycloak.internal/realms/my-realm"
+      insecure: false
+```
+
+**4. SpiceDB / Authzed**
+
+Integration with Google Zanzibar-inspired authorization systems:
+
+```yaml
+authorization:
+  "spicedb":
+    spicedb:
+      endpoint: "grpc://spicedb.internal:50051"
+      permission: read
+      resource:
+        kind: document
+        name:
+          expression: request.path.@extract:"/documents/{id}"
+```
+
+#### 2.4.4 Callback Integration (Phase v)
+
+Authorino can trigger HTTP callbacks to external services after authorization decisions:
+
+```yaml
+callbacks:
+  "audit-log":
+    http:
+      url: "https://audit-service.internal/api/events"
+      method: POST
+      body:
+        expression: |
+          {
+            "user": auth.identity.username,
+            "resource": request.path,
+            "action": request.method,
+            "timestamp": request.time,
+            "decision": auth.authorization.opa-policy.allowed
+          }
+```
+
+**Use Cases**:
+- Audit logging to external SIEM systems
+- Analytics event streaming
+- Notification systems
+- Billing/usage tracking webhooks
+
+#### 2.4.5 Authorization JSON: The Working Memory
+
+All phases read from and write to a shared data structure called the **Authorization JSON**, which accumulates context throughout the pipeline:
+
+```json
+{
+  "context": {
+    "request": {
+      "http": {
+        "method": "GET",
+        "path": "/api/resource/123",
+        "headers": {...},
+        "host": "my-api.example.com"
+      }
+    }
+  },
+  "auth": {
+    "identity": {
+      // Resolved in Phase i (e.g., API key Secret, JWT payload)
+      "metadata": {"labels": {"user_id": "user-123"}}
+    },
+    "metadata": {
+      // Added in Phase ii (external service responses)
+      "user-profile": {"name": "Alice", "role": "admin"},
+      "feature-flags": {"beta-features": true}
+    },
+    "authorization": {
+      // Added in Phase iii (policy decision results)
+      "opa-policy": {"allowed": true, "violations": []}
+    }
+  }
+}
+```
+
+#### 2.4.6 Architectural Significance
+
+This extensibility architecture enables Authorino to function as an **orchestration layer** for distributed authentication and authorization decisions, rather than a monolithic auth service. Organizations can:
+
+1. **Decouple policy logic**: Authorization policies managed in external OPA/SpiceDB rather than hardcoded
+2. **Integrate existing systems**: Leverage existing identity providers, user directories, and entitlement systems
+3. **Compose complex authorization**: Combine multiple external checks (e.g., API key + user profile + resource ownership + OPA policy)
+4. **Maintain separation of concerns**: Business logic in domain services, auth orchestration in Authorino
+
+This design contrasts with traditional API gateways that provide only local authentication/authorization capabilities.
 
 ---
 
@@ -952,7 +1152,9 @@ Several areas warrant further investigation:
 
 ### 9.5 Concluding Remarks
 
-The Kuadrant/Authorino platform represents a successful implementation of high-performance, Kubernetes-native API authentication. Its architectural choice to store credentials in plaintext enables sub-millisecond validation latency and excellent operational characteristics (dynamic rotation, automatic propagation, declarative configuration). However, this design is fundamentally at odds with cryptographic security best practices and regulatory compliance requirements.
+The Kuadrant/Authorino platform represents a successful implementation of high-performance, Kubernetes-native API authentication and authorization. Beyond simple credential validation, Authorino's multi-phase pipeline architecture enables sophisticated authorization workflows through external service integration—supporting arbitrary HTTP callouts for metadata enrichment, integration with external policy decision points (OPA, SpiceDB, Keycloak), and post-authorization webhooks. This extensibility positions Authorino as an **authorization orchestration layer** rather than merely an authentication service.
+
+However, the platform's architectural choice to store API key credentials in plaintext—while enabling sub-millisecond validation latency and excellent operational characteristics (dynamic rotation, automatic propagation, declarative configuration)—is fundamentally at odds with cryptographic security best practices and regulatory compliance requirements.
 
 This trade-off is not inherently right or wrong—it represents a conscious architectural decision optimized for specific deployment contexts. Organizations must evaluate their own security requirements, regulatory obligations, and performance constraints when selecting an authentication architecture.
 
