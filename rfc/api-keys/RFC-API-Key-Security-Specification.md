@@ -15,7 +15,7 @@ API keys serve as a foundational authentication mechanism for unattended and pro
 
 The document employs RFC 2119 terminology to distinguish between absolute requirements (MUST), strong recommendations (SHOULD), and optional features (MAY), providing clear guidance for implementation while acknowledging the varying security requirements across different deployment contexts.
 
-**Note:** All 42 source references cited throughout this document are available as linked markdown files in Section 18.2. Click any [Source-XX] citation to view the complete source material in the [references](references/) directory.
+**Note:** All 44 source references cited throughout this document are available as linked markdown files in Section 18.2. Click any [Source-XX] citation to view the complete source material in the [references](references/) directory. This includes 42 external sources plus 2 technical architecture analyses (Keycloak and HashiCorp Vault) conducted specifically for this specification.
 
 ## Table of Contents
 
