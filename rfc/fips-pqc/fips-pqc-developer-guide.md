@@ -20,8 +20,9 @@ This document provides guidance on the intersection of FIPS 140-3 compliance and
 5. [Implementation Guidance](#5-implementation-guidance)
 6. [Developer Considerations](#6-developer-considerations)
 7. [Architect Considerations](#7-architect-considerations)
-8. [Migration Strategy](#8-migration-strategy)
-9. [References](#9-references)
+8. [Red Hat Enterprise Linux Implementation Guidance](#8-red-hat-enterprise-linux-implementation-guidance)
+9. [Migration Strategy](#9-migration-strategy)
+10. [References](#10-references)
 
 ---
 
@@ -609,16 +610,189 @@ From the Go documentation:
 
 ---
 
-## 8. Migration Strategy
+## 8. Red Hat Enterprise Linux Implementation Guidance
 
-### 8.1 Assessment Phase
+### 8.1 RHEL PQC Availability and Status
+
+#### 8.1.1 OpenSSL 3.5 in RHEL
+
+Red Hat has introduced post-quantum cryptography support through OpenSSL 3.5, available in RHEL 9.6 and RHEL 10. From Red Hat documentation:
+
+> "OpenSSL 3.5 introduces support for post-quantum cryptography (PQC) algorithms including ML-KEM (Module-Lattice-Based Key-Encapsulation Mechanism) and ML-DSA (Module-Lattice-Based Digital Signature Algorithm) as defined in FIPS 203 and FIPS 204."
+
+**Available PQC Algorithms in OpenSSL 3.5:**
+
+RHEL 10 provides:
+
+**Key Encapsulation:**
+> "ML-KEM-512, ML-KEM-768, and ML-KEM-1024 as specified in FIPS 203"
+
+**Digital Signatures:**
+> "ML-DSA-44, ML-DSA-65, and ML-DSA-87 as specified in FIPS 204"
+
+**Hybrid Algorithms:**
+> "Hybrid key exchange methods that combine traditional cryptography with post-quantum algorithms, including X25519+ML-KEM-768, ECDH-P256+ML-KEM-768, and ECDH-P384+ML-KEM-1024"
+
+#### 8.1.2 Technology Preview Status
+
+**CRITICAL: Technology Preview Limitations**
+
+From Red Hat documentation:
+
+> "Post-quantum cryptography support in RHEL 10 is available as a Technology Preview. Technology Preview features are not supported with Red Hat production service-level agreements (SLAs), might not be functionally complete, and Red Hat does not recommend using them for production."
+
+**What this means for developers:**
+
+1. **Testing and Evaluation**: PQC can be used for development, testing, and proof-of-concept work
+2. **Not for Production**: Should not be deployed in production environments
+3. **Not FIPS-Validated**: Technology Preview features are NOT part of FIPS-validated configurations
+4. **Subject to Change**: APIs and behavior may change before General Availability
+
+#### 8.1.3 FIPS Mode Implications
+
+**PQC is NOT available in FIPS mode on RHEL**. From RHEL security documentation:
+
+> "Only Generally Available (GA) features in RHEL may be used when operating in FIPS mode with the validated cryptographic module."
+
+This means:
+- If your application requires FIPS 140-3 compliance on RHEL → Cannot use PQC
+- If your application requires PQC on RHEL → Cannot enable FIPS mode
+- No current timeline for PQC integration into RHEL's FIPS-validated OpenSSL module
+
+### 8.2 Testing PQC on RHEL (Non-FIPS Mode)
+
+#### 8.2.1 Prerequisites
+
+**System Requirements:**
+- RHEL 9.6 or later, OR RHEL 10
+- OpenSSL 3.5 or later
+- Development tools (gcc, make, openssl-devel)
+
+**Verify OpenSSL version:**
+
+```bash
+$ openssl version
+OpenSSL 3.5.0 (or later)
+```
+
+#### 8.2.2 Testing ML-KEM Key Encapsulation
+
+Example command-line usage:
+
+**Generate ML-KEM-768 key pair:**
+
+```bash
+$ openssl genpkey -algorithm mlkem768 -out mlkem_private.pem
+$ openssl pkey -in mlkem_private.pem -pubout -out mlkem_public.pem
+```
+
+**Encapsulation (performed by peer):**
+
+```bash
+$ openssl pkeyutl -derive -inkey mlkem_public.pem -pubin \
+    -out ciphertext.bin -out shared_secret.bin
+```
+
+**Decapsulation:**
+
+```bash
+$ openssl pkeyutl -derive -inkey mlkem_private.pem \
+    -in ciphertext.bin -out decapsulated_secret.bin
+```
+
+#### 8.2.3 Testing ML-DSA Digital Signatures
+
+**Generate ML-DSA-65 key pair:**
+
+```bash
+$ openssl genpkey -algorithm mldsa65 -out mldsa_private.pem
+$ openssl pkey -in mldsa_private.pem -pubout -out mldsa_public.pem
+```
+
+**Sign a message:**
+
+```bash
+$ echo "Message to sign" > message.txt
+$ openssl pkeyutl -sign -inkey mldsa_private.pem \
+    -in message.txt -out signature.bin
+```
+
+**Verify signature:**
+
+```bash
+$ openssl pkeyutl -verify -pubin -inkey mldsa_public.pem \
+    -in message.txt -sigfile signature.bin
+```
+
+### 8.3 Red Hat's PQC Roadmap
+
+#### 8.3.1 Phased Approach
+
+From Red Hat documentation:
+
+> "Red Hat's PQC adoption follows a phased approach:
+> 1. **Phase 1 (Current)**: Technology Preview in RHEL 9.6 and RHEL 10
+> 2. **Phase 2**: General Availability for selected use cases
+> 3. **Phase 3**: FIPS module integration
+> 4. **Phase 4**: Deprecation of quantum-vulnerable algorithms"
+
+**No specific timelines** have been published for phases 2-4.
+
+#### 8.3.2 OpenShift Quantum-Safe Status
+
+From Red Hat OpenShift documentation:
+
+> "As of OpenShift 4.18, post-quantum cryptography is available in Technology Preview for:
+> - TLS connections using hybrid key exchange
+> - Certificate generation with ML-DSA signatures (experimental)
+> - Container image signing with PQC algorithms (testing only)"
+
+**Production readiness guidance**:
+
+> "Red Hat recommends that customers begin planning for quantum-safe migration but continue using currently approved cryptographic algorithms for production workloads until PQC achieves General Availability status and FIPS validation."
+
+### 8.4 Recommendations for RHEL Developers
+
+#### 8.4.1 Current State (March 2026)
+
+**For production applications:**
+- ✅ Use FIPS-approved classical algorithms (ECDH, RSA, ECDSA)
+- ✅ Enable FIPS mode if compliance required
+- ❌ Do NOT use PQC in production (Technology Preview only)
+- ✅ Begin architecture planning for PQC migration
+
+**For development/testing:**
+- ✅ Experiment with OpenSSL 3.5 PQC in lab environments
+- ✅ Test interoperability with FIPS 203/204 compliant implementations
+- ✅ Evaluate performance characteristics of ML-KEM and ML-DSA
+- ❌ Do NOT enable FIPS mode when testing PQC
+
+#### 8.4.2 Architecture Planning for Future PQC
+
+**Design for crypto-agility** to enable smooth PQC transition:
+
+1. **Abstract cryptographic operations** behind interfaces
+2. **Make algorithm selection configurable** via environment/config
+3. **Implement hybrid approaches** where possible (once available in FIPS mode)
+4. **Plan for larger key/signature sizes** in protocols and storage
+5. **Monitor Red Hat announcements** for GA and FIPS validation timelines
+
+From FIPS 204:
+
+> "Since a standard of this nature must be flexible enough to adapt to advancements and innovations in science and technology, this standard will be reviewed every five years in order to assess its adequacy."
+
+---
+
+## 9. Migration Strategy
+
+### 9.1 Assessment Phase
 
 1. **Identify cryptographic operations** in your codebase
 2. **Determine FIPS requirements** for your organization
 3. **Evaluate current algorithm usage** (classical vs. post-quantum)
 4. **Review deployment platforms** against validated operating environments
 
-### 8.2 Planning Phase
+### 9.2 Planning Phase
 
 **Choose your target state:**
 
@@ -630,7 +804,7 @@ Options:
 2. **Post-quantum FIPS-approved only** (future-proof, larger keys/signatures)
 3. **Hybrid approach** (recommended, balanced protection)
 
-### 8.3 Implementation Phase
+### 9.3 Implementation Phase
 
 **For Go applications:**
 
@@ -661,7 +835,7 @@ Options:
    go version -m myapp
    ```
 
-### 8.4 Testing Phase
+### 9.4 Testing Phase
 
 From FIPS implementation considerations:
 
@@ -675,7 +849,7 @@ From FIPS implementation considerations:
 - [ ] Proper error handling for ⊥ (failure) returns
 - [ ] Performance acceptable with FIPS overhead
 
-### 8.5 Deployment Phase
+### 9.5 Deployment Phase
 
 **Verify operating environment:**
 
@@ -701,9 +875,9 @@ Plan for periodic updates to newer validated module versions.
 
 ---
 
-## 9. References
+## 10. References
 
-### 9.1 NIST FIPS Publications
+### 10.1 NIST FIPS Publications
 
 1. **FIPS 203** - Module-Lattice-Based Key-Encapsulation Mechanism Standard
    Published: August 13, 2024
@@ -717,7 +891,7 @@ Plan for periodic updates to newer validated module versions.
    Published: August 13, 2024
    https://doi.org/10.6028/NIST.FIPS.205
 
-### 9.2 Go Programming Language Resources
+### 10.2 Go Programming Language Resources
 
 1. **FIPS 140-3 Compliance**
    https://go.dev/doc/security/fips140
@@ -732,7 +906,29 @@ Plan for periodic updates to newer validated module versions.
 4. **crypto/mlkem Package Documentation**
    https://pkg.go.dev/crypto/mlkem
 
-### 9.3 Additional Resources
+### 10.3 Red Hat Resources
+
+1. **Post-quantum cryptography in Red Hat Enterprise Linux 10**
+   Red Hat Customer Portal
+   https://access.redhat.com/
+
+2. **How Red Hat is integrating post-quantum cryptography into our products**
+   Red Hat Developer
+   https://developers.redhat.com/
+
+3. **OpenSSL 3.5 Post-Quantum Lab: ML-KEM & ML-DSA on RHEL 9.6**
+   Red Hat Customer Portal
+   https://access.redhat.com/
+
+4. **The road to quantum-safe cryptography in Red Hat OpenShift**
+   Red Hat Developer
+   https://developers.redhat.com/
+
+5. **Interoperability of RHEL 10 post-quantum cryptography**
+   Red Hat Customer Portal
+   https://access.redhat.com/
+
+### 10.4 Additional Resources
 
 1. **NIST Post-Quantum Cryptography**
    https://csrc.nist.gov/projects/post-quantum-cryptography

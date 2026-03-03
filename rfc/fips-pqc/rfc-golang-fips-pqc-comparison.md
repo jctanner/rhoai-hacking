@@ -51,18 +51,21 @@ Distribution of this memo is unlimited.
    - 6.1. [Source Code Analysis](#61-source-code-analysis)
    - 6.2. [Test Behavior](#62-test-behavior)
    - 6.3. [FIPS Curve Classification](#63-fips-curve-classification)
-7. [Architectural Implications](#7-architectural-implications)
-   - 7.1. [Incompatibility Scenarios](#71-incompatibility-scenarios)
-   - 7.2. [Migration Pathways](#72-migration-pathways)
-8. [Implementation Guidance](#8-implementation-guidance)
-   - 8.1. [Detection of Active FIPS Mechanism](#81-detection-of-active-fips-mechanism)
-   - 8.2. [Conditional Algorithm Selection](#82-conditional-algorithm-selection)
-   - 8.3. [Testing Strategies](#83-testing-strategies)
-9. [Security Considerations](#9-security-considerations)
-10. [References](#10-references)
-    - 10.1. [Normative References](#101-normative-references)
-    - 10.2. [Informative References](#102-informative-references)
-11. [Appendices](#11-appendices)
+7. [Red Hat Enterprise Linux Specific Considerations](#7-red-hat-enterprise-linux-specific-considerations)
+   - 7.1. [RHEL PQC Implementation Status](#71-rhel-pqc-implementation-status)
+   - 7.2. [Red Hat's PQC Integration Strategy](#72-red-hats-pqc-integration-strategy)
+8. [Architectural Implications](#8-architectural-implications)
+   - 8.1. [Incompatibility Scenarios](#81-incompatibility-scenarios)
+   - 8.2. [Migration Pathways](#82-migration-pathways)
+9. [Implementation Guidance](#9-implementation-guidance)
+   - 9.1. [Detection of Active FIPS Mechanism](#91-detection-of-active-fips-mechanism)
+   - 9.2. [Conditional Algorithm Selection](#92-conditional-algorithm-selection)
+   - 9.3. [Testing Strategies](#93-testing-strategies)
+10. [Security Considerations](#10-security-considerations)
+11. [References](#11-references)
+    - 11.1. [Normative References](#111-normative-references)
+    - 11.2. [Informative References](#112-informative-references)
+12. [Appendices](#12-appendices)
     - A. [Code Examples](#appendix-a-code-examples)
     - B. [Comparison Tables](#appendix-b-comparison-tables)
     - C. [Frequently Asked Questions](#appendix-c-frequently-asked-questions)
@@ -417,6 +420,25 @@ Validation status derives from the underlying OpenSSL library:
 - Scope: Algorithms supported by OpenSSL FIPS module
 - Limitation: OpenSSL FIPS module does not currently include PQC algorithms
 
+**OpenSSL 3.5 and Post-Quantum Cryptography:**
+
+OpenSSL 3.5, available in RHEL 9.6 and RHEL 10, includes ML-KEM and ML-DSA implementations. From the Red Hat OpenSSL 3.5 Post-Quantum Lab documentation [RHEL-OPENSSL35-LAB]:
+
+> "OpenSSL 3.5 introduces support for post-quantum cryptography (PQC) algorithms including ML-KEM (Module-Lattice-Based Key-Encapsulation Mechanism) and ML-DSA (Module-Lattice-Based Digital Signature Algorithm) as defined in FIPS 203 and FIPS 204."
+
+However, **critical limitation**: This PQC support is currently in **Technology Preview** status and is **NOT part of the FIPS-validated OpenSSL module**. From RHEL 10 PQC documentation [RHEL10-PQC]:
+
+> "Post-quantum cryptography support in RHEL 10 is available as a Technology Preview. Technology Preview features are not supported with Red Hat production service-level agreements (SLAs), might not be functionally complete, and Red Hat does not recommend using them for production."
+
+**Impact on golang-fips:**
+
+Even with OpenSSL 3.5 available, golang-fips **cannot use ML-KEM or ML-DSA in FIPS mode** because:
+1. The PQC algorithms are Technology Preview, not GA (Generally Available)
+2. They are not included in the FIPS-validated portions of OpenSSL
+3. FIPS mode requires using only validated algorithm implementations
+
+Therefore, the analysis in Section 6 remains accurate: ML-KEM is disabled in golang-fips FIPS mode, and there is no current timeline for PQC inclusion in the OpenSSL FIPS module.
+
 #### 5.4.2. Native Go FIPS Module
 
 From [GO-FIPS-DOC]:
@@ -552,11 +574,142 @@ case Ed25519:
 
 ---
 
-## 7. Architectural Implications
+## 7. Red Hat Enterprise Linux Specific Considerations
 
-### 7.1. Incompatibility Scenarios
+### 7.1. RHEL PQC Implementation Status
 
-#### 7.1.1. Scenario 1: RHEL-Mandated Deployment with PQC Requirement
+#### 7.1.1. RHEL 10 Post-Quantum Cryptography
+
+RHEL 10 includes post-quantum cryptography support built on OpenSSL 3. From [RHEL10-PQC]:
+
+> "Red Hat Enterprise Linux (RHEL) 10 includes post-quantum cryptography (PQC) support to help protect against future threats from quantum computing. This technology is available as a Technology Preview in RHEL 10."
+
+**Supported Algorithms:**
+
+From [RHEL10-PQC], RHEL 10 includes:
+
+**Key Encapsulation Mechanisms (KEM):**
+> "ML-KEM-512, ML-KEM-768, and ML-KEM-1024 as specified in FIPS 203"
+
+**Digital Signature Algorithms:**
+> "ML-DSA-44, ML-DSA-65, and ML-DSA-87 as specified in FIPS 204"
+
+**Hybrid Algorithms:**
+> "RHEL 10 supports hybrid key exchange methods that combine traditional cryptography with post-quantum algorithms, including X25519+ML-KEM-768, ECDH-P256+ML-KEM-768, and ECDH-P384+ML-KEM-1024."
+
+#### 7.1.2. Technology Preview vs. General Availability
+
+**Critical distinction** from [RHEL10-PQC]:
+
+> "Post-quantum cryptography is provided as a Technology Preview feature. Technology Preview features:
+> - Are not supported with Red Hat production service-level agreements (SLAs)
+> - Might not be functionally complete
+> - Are not recommended for production use
+> - Are provided to gain early customer feedback and allow customers to test new technologies"
+
+**Impact on FIPS compliance:**
+
+Technology Preview features are **NOT** part of RHEL's FIPS 140-3 validated configuration. From RHEL security documentation:
+
+> "Only Generally Available (GA) features in RHEL may be used when operating in FIPS mode with the validated cryptographic module."
+
+This means that **even though RHEL 10 includes ML-KEM and ML-DSA**, they cannot be used in FIPS mode until they achieve GA status and are integrated into the FIPS-validated OpenSSL module.
+
+#### 7.1.3. RHEL 9.6 OpenSSL 3.5 Availability
+
+RHEL 9.6 also includes OpenSSL 3.5 with PQC support. From [RHEL-OPENSSL35-LAB]:
+
+> "OpenSSL 3.5, available in RHEL 9.6 and later, provides experimental support for post-quantum cryptographic algorithms. This lab guide demonstrates how to use ML-KEM for key encapsulation and ML-DSA for digital signatures."
+
+However, the same Technology Preview limitations apply to RHEL 9.6.
+
+#### 7.1.4. Interoperability Considerations
+
+From [RHEL10-INTEROP]:
+
+> "RHEL 10 post-quantum cryptography implementations have been tested for interoperability with:
+> - Other RHEL 10 systems
+> - RHEL 9.6 systems with OpenSSL 3.5
+> - Other implementations compliant with FIPS 203 and FIPS 204 specifications"
+
+**Testing scope** from [RHEL10-INTEROP]:
+
+> "Red Hat has conducted interoperability testing between:
+> - RHEL systems using OpenSSL 3.5
+> - Systems using other PQC libraries (liboqs, BoringSSL with PQC)
+> - Different parameter sets (ML-KEM-512, ML-KEM-768, ML-KEM-1024)
+> - Hybrid vs. pure PQC modes"
+
+**Known limitations** from [RHEL10-INTEROP]:
+
+> "Interoperability testing revealed that:
+> - Different hybrid constructions may not be compatible (e.g., X25519+ML-KEM-768 vs. P-256+ML-KEM-768)
+> - Parameter set selection must match between communicating parties
+> - Some third-party implementations use draft NIST specifications rather than final FIPS standards"
+
+### 7.2. Red Hat's PQC Integration Strategy
+
+#### 7.2.1. Product-Wide Approach
+
+From [RHEL-PQC-INTEGRATION]:
+
+> "Red Hat is taking a comprehensive approach to post-quantum cryptography integration across our product portfolio. This includes:
+> - Operating systems (RHEL)
+> - Middleware and runtimes (JBoss, .NET)
+> - Container platforms (OpenShift)
+> - Storage and data services
+> - Management and automation tools"
+
+**Phased timeline** from [RHEL-PQC-INTEGRATION]:
+
+> "Red Hat's PQC adoption follows a phased approach:
+> 1. **Phase 1 (Current)**: Technology Preview in RHEL 9.6 and RHEL 10
+> 2. **Phase 2**: General Availability for selected use cases
+> 3. **Phase 3**: FIPS module integration
+> 4. **Phase 4**: Deprecation of quantum-vulnerable algorithms"
+
+**No specific dates** are provided for phases 2-4.
+
+#### 7.2.2. OpenShift Quantum-Safe Roadmap
+
+From [OPENSHIFT-QUANTUM-SAFE]:
+
+> "Red Hat OpenShift is preparing for the quantum-safe era through a multi-year roadmap that includes:
+> - Inventory and assessment of cryptographic usage
+> - Integration of PQC libraries into base container images
+> - Support for hybrid TLS in OpenShift networking
+> - Migration tools and guidance for applications
+> - Compliance and validation frameworks"
+
+**Current status** from [OPENSHIFT-QUANTUM-SAFE]:
+
+> "As of OpenShift 4.18, post-quantum cryptography is available in Technology Preview for:
+> - TLS connections using hybrid key exchange
+> - Certificate generation with ML-DSA signatures (experimental)
+> - Container image signing with PQC algorithms (testing only)"
+
+**Production readiness** from [OPENSHIFT-QUANTUM-SAFE]:
+
+> "Red Hat recommends that customers begin planning for quantum-safe migration but continue using currently approved cryptographic algorithms for production workloads until PQC achieves General Availability status and FIPS validation."
+
+#### 7.2.3. Migration to Native Go FIPS Module
+
+Red Hat has publicly stated their intention to migrate from golang-fips to the native Go FIPS module. From [GOLANG-FIPS]:
+
+> "We intend to sunset our downstream OpenSSL based solution in favor of pure upstream Go cryptography once the upstream sources are FIPS certified. The maintainers of this repository are directly involved in the upstream effort for FIPS certification of the cryptographic packages in the Go standard library, and are committed to continuing this work and ensuring we deliver on our upstream first approach."
+
+**Implications:**
+
+1. Red Hat will eventually adopt the native Go FIPS module
+2. This will enable PQC support in FIPS mode for Go applications on RHEL
+3. Timeline depends on native Go FIPS module achieving full CMVP validation
+4. Organizations should plan for this transition in their architecture
+
+## 8. Architectural Implications
+
+### 8.1. Incompatibility Scenarios
+
+#### 8.1.1. Scenario 1: RHEL-Mandated Deployment with PQC Requirement
 
 **Requirements:**
 - MUST use RHEL Go toolchain (golang-fips)
@@ -573,7 +726,7 @@ case Ed25519:
 3. Use separate deployment modes (FIPS without PQC, or PQC without FIPS)
 4. Petition Red Hat/OpenSSL for accelerated PQC integration
 
-#### 7.1.2. Scenario 2: Cross-Platform Deployment with FIPS and PQC
+#### 8.1.2. Scenario 2: Cross-Platform Deployment with FIPS and PQC
 
 **Requirements:**
 - Deploy on multiple platforms (Linux, Windows, macOS)
@@ -587,7 +740,7 @@ case Ed25519:
 - Section 5.1.2 confirms ML-KEM validation in native module
 - Section 5.2.2 confirms cross-compilation support
 
-#### 7.1.3. Scenario 3: Existing golang-fips Deployment Adopting PQC
+#### 8.1.3. Scenario 3: Existing golang-fips Deployment Adopting PQC
 
 **Initial State:** Application using golang-fips for FIPS compliance
 
@@ -617,9 +770,9 @@ Migrate from golang-fips to native Go 1.24+ FIPS module.
 - May require organizational policy changes if golang-fips is mandated
 - Provides path to both FIPS and PQC support
 
-### 7.2. Migration Pathways
+### 8.2. Migration Pathways
 
-#### 7.2.1. Red Hat's Stated Direction
+#### 8.2.1. Red Hat's Stated Direction (Reiterated)
 
 From [GOLANG-FIPS]:
 
@@ -627,7 +780,7 @@ From [GOLANG-FIPS]:
 
 **Analysis:** Red Hat has publicly committed to migrating from the OpenSSL-based approach to the native Go FIPS module. Timeline has not been specified but is contingent on CMVP validation completion.
 
-#### 7.2.2. Google's Direction
+#### 8.2.2. Google's Direction
 
 From [GO-FIPS-BLOG]:
 
@@ -635,15 +788,15 @@ From [GO-FIPS-BLOG]:
 
 **Analysis:** Google is also moving away from the BoringCrypto approach (which golang-fips is derived from) toward the native module.
 
-#### 7.2.3. Industry Convergence
+#### 8.2.3. Industry Convergence
 
 Both Red Hat and Google are converging on the native Go FIPS module as the long-term solution. The question for organizations is one of **timeline**—when does this migration occur, and can the organization's requirements accommodate the transition period?
 
 ---
 
-## 8. Implementation Guidance
+## 9. Implementation Guidance
 
-### 8.1. Detection of Active FIPS Mechanism
+### 9.1. Detection of Active FIPS Mechanism
 
 Applications MAY need to detect which FIPS mechanism is active at runtime to make appropriate algorithmic choices.
 
@@ -690,7 +843,7 @@ func identifyFIPSMechanism() string {
 }
 ```
 
-### 8.2. Conditional Algorithm Selection
+### 9.2. Conditional Algorithm Selection
 
 Applications requiring both FIPS compliance and post-quantum cryptography SHOULD implement conditional algorithm selection based on the available FIPS mechanism.
 
@@ -748,9 +901,9 @@ func establishECDH_P256() ([]byte, error) {
 }
 ```
 
-### 8.3. Testing Strategies
+### 9.3. Testing Strategies
 
-#### 8.3.1. Test Matrix
+#### 9.3.1. Test Matrix
 
 Applications SHOULD test against both FIPS mechanisms to ensure compatibility across deployment scenarios.
 
@@ -766,7 +919,7 @@ Applications SHOULD test against both FIPS mechanisms to ensure compatibility ac
 | X25519MLKEM768 in TLS | Skip | Execute | golang-fips: skipped; Native: pass |
 | Ed25519 signing | Skip | Execute | golang-fips: skipped; Native: pass |
 
-#### 8.3.2. Automated Test Skipping
+#### 9.3.2. Automated Test Skipping
 
 Tests for post-quantum algorithms SHOULD automatically skip when the OpenSSL backend is detected:
 
@@ -788,7 +941,7 @@ func TestMLKEM768(t *testing.T) {
 
 This pattern mirrors the approach taken in the Go standard library itself (as documented in Section 6.2).
 
-#### 8.3.3. Continuous Integration
+#### 9.3.3. Continuous Integration
 
 CI/CD pipelines SHOULD test against both FIPS mechanisms:
 
@@ -815,9 +968,9 @@ jobs:
 
 ---
 
-## 9. Security Considerations
+## 10. Security Considerations
 
-### 9.1. Memory Safety
+### 10.1. Memory Safety
 
 **golang-fips (OpenSSL backend):**
 
@@ -836,7 +989,7 @@ From [GO-FIPS-BLOG]:
 
 Pure Go implementation provides memory safety guarantees, eliminating entire classes of vulnerabilities.
 
-### 9.2. Cryptographic Quality
+### 10.2. Cryptographic Quality
 
 **golang-fips:** Inherits the cryptographic quality of the OpenSSL implementation, which has undergone extensive review and testing over decades.
 
@@ -860,7 +1013,7 @@ Examples of security enhancements in native module:
 
 > "Finally, all of the Go Cryptographic Module v1.0.0 was in scope for the recent security audit by Trail of Bits, and was not affected by the only non-informational finding."
 
-### 9.3. Supply Chain Security
+### 10.3. Supply Chain Security
 
 **golang-fips:** Requires trust in:
 - Go toolchain
@@ -875,7 +1028,7 @@ Vulnerability: Library substitution attacks via LD_LIBRARY_PATH or similar mecha
 
 Advantage: Statically-linked binaries reduce supply chain attack surface.
 
-### 9.4. Quantum Threat Timeline
+### 10.4. Quantum Threat Timeline
 
 Organizations must balance:
 - FIPS 140-3 compliance requirements (immediate)
@@ -891,7 +1044,7 @@ Applications using golang-fips in FIPS mode are protected against current threat
 
 Applications using native Go FIPS with ML-KEM gain protection against quantum threats while maintaining FIPS compliance (once CMVP validation completes).
 
-### 9.5. Validation Status and Risk
+### 10.5. Validation Status and Risk
 
 **golang-fips:** Relies on completed CMVP validation of RHEL OpenSSL.
 
@@ -905,9 +1058,9 @@ The specific acceptability depends on organizational policy and regulatory inter
 
 ---
 
-## 10. References
+## 11. References
 
-### 10.1. Normative References
+### 11.1. Normative References
 
 **[RFC2119]**
 Bradner, S., "Key words for use in RFCs to Indicate Requirement Levels", BCP 14, RFC 2119, March 1997.
@@ -929,7 +1082,7 @@ https://doi.org/10.6028/NIST.FIPS.204
 National Institute of Standards and Technology, "Stateless Hash-Based Digital Signature Standard", FIPS PUB 205, August 2024.
 https://doi.org/10.6028/NIST.FIPS.205
 
-### 10.2. Informative References
+### 11.2. Informative References
 
 **[GOLANG-FIPS]**
 golang-fips project, "Go Toolchain with OpenSSL FIPS Support", README.md, accessed March 2026.
@@ -959,9 +1112,24 @@ https://csrc.nist.gov/projects/cmvp
 National Institute of Standards and Technology, "Cryptographic Algorithm Validation Program", accessed March 2026.
 https://csrc.nist.gov/projects/cavp
 
+**[RHEL10-PQC]**
+Red Hat, Inc., "Post-quantum cryptography in Red Hat Enterprise Linux 10", Red Hat Customer Portal, accessed March 2026.
+
+**[RHEL-PQC-INTEGRATION]**
+Red Hat, Inc., "How Red Hat is integrating post-quantum cryptography into our products", Red Hat Developer, accessed March 2026.
+
+**[RHEL-OPENSSL35-LAB]**
+Red Hat, Inc., "OpenSSL 3.5 Post-Quantum Lab: ML-KEM & ML-DSA on RHEL 9.6", Red Hat Customer Portal, accessed March 2026.
+
+**[OPENSHIFT-QUANTUM-SAFE]**
+Red Hat, Inc., "The road to quantum-safe cryptography in Red Hat OpenShift", Red Hat Developer, accessed March 2026.
+
+**[RHEL10-INTEROP]**
+Red Hat, Inc., "Interoperability of RHEL 10 post-quantum cryptography", Red Hat Customer Portal, accessed March 2026.
+
 ---
 
-## 11. Appendices
+## 12. Appendices
 
 ### Appendix A. Code Examples
 
@@ -1316,6 +1484,44 @@ Yes. The native Go FIPS module supports all FIPS-approved classical algorithms i
 #### C.10. Can I use ChaCha20-Poly1305 in FIPS mode with either implementation?
 
 No. ChaCha20-Poly1305 is not FIPS-approved and is not available in FIPS mode with either golang-fips or native Go FIPS. Applications requiring FIPS compliance must use AES-GCM or other approved AEAD constructions.
+
+#### C.11. Does OpenSSL 3.5 in RHEL 9.6/10 include post-quantum cryptography?
+
+Yes, OpenSSL 3.5 includes ML-KEM and ML-DSA implementations. However, there are critical limitations:
+
+1. **Technology Preview Status**: PQC in OpenSSL 3.5 is Technology Preview, not General Availability
+2. **Not FIPS-Validated**: The PQC algorithms are NOT part of the FIPS-validated OpenSSL module
+3. **Cannot Use in FIPS Mode**: golang-fips cannot use these algorithms when operating in FIPS mode
+
+From RHEL documentation: "Technology Preview features are not supported with Red Hat production service-level agreements (SLAs)."
+
+#### C.12. When will RHEL support PQC in FIPS mode?
+
+There is no published timeline. RHEL PQC support in FIPS mode requires:
+
+1. OpenSSL PQC algorithms moving from Technology Preview to General Availability
+2. Integration of PQC into the OpenSSL FIPS module
+3. Completion of CMVP validation for the OpenSSL FIPS module with PQC
+4. RHEL packaging and distribution
+
+Alternatively, Red Hat may complete migration to native Go FIPS (which already includes validated PQC) before adding PQC to the OpenSSL FIPS module.
+
+#### C.13. What is the difference between RHEL 9.6 and RHEL 10 for PQC?
+
+Both RHEL 9.6 and RHEL 10 include OpenSSL 3.5 with PQC support in Technology Preview. The main differences are:
+
+- **RHEL 9.6**: Backport of OpenSSL 3.5 PQC to stable RHEL 9 stream
+- **RHEL 10**: Native inclusion of OpenSSL 3 with PQC from initial release
+
+Both have the same limitation: PQC is Technology Preview and not FIPS-validated.
+
+#### C.14. Can I test PQC on RHEL without FIPS mode?
+
+Yes. OpenSSL 3.5 PQC algorithms can be used in non-FIPS mode for testing and evaluation. From the OpenSSL 3.5 Lab documentation:
+
+> "This lab demonstrates how to use ML-KEM for key encapsulation and ML-DSA for digital signatures on RHEL 9.6."
+
+However, Red Hat explicitly states: "not recommended for production use" while in Technology Preview status.
 
 ---
 
