@@ -3,4 +3,5 @@
   files = [
     "experiments/multimode-gateway/configs/gateway.yaml"
     "experiments/ocp-envoy-extz-auth/src/envoy-proxy-authenticated/deployment.yaml"
+    "rfc/api-keys/references/security%20-%20What's%20the%20best%20approach%20for%20generating%20a%20new%20API%20key_%20-%20Stack%20Overflow.md"
   ]
