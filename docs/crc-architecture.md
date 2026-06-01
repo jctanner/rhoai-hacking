@@ -222,6 +222,122 @@ oc get co
 ls /opt/crc/
 ```
 
+### Using crictl Inside the VM
+
+CRC runs CRI-O as its container runtime. `crictl` is available on the VM for low-level container and image inspection — useful for debugging pods that won't start, inspecting pulled images, or clearing image cache.
+
+All `crictl` commands require root. SSH in and `sudo -i` first, or prefix every command with `sudo`.
+
+```bash
+# SSH into the VM and become root
+ssh -i ~/.crc/machines/crc/id_ecdsa -o StrictHostKeyChecking=no core@$(crc ip)
+sudo -i
+```
+
+**Listing and inspecting pods:**
+
+```bash
+# List all pods (similar to `docker ps` but at the pod sandbox level)
+crictl pods
+
+# List pods filtered by namespace
+crictl pods --namespace openshift-apiserver
+
+# List pods filtered by state
+crictl pods --state ready
+crictl pods --state notready
+
+# Inspect a specific pod sandbox (detailed JSON)
+crictl inspectp <POD-ID>
+```
+
+**Listing and inspecting containers:**
+
+```bash
+# List all containers
+crictl ps
+
+# Include stopped/exited containers
+crictl ps -a
+
+# Filter by pod ID
+crictl ps --pod <POD-ID>
+
+# Filter by state
+crictl ps --state running
+crictl ps --state exited
+
+# Inspect a container (config, mounts, state, PID, etc.)
+crictl inspect <CONTAINER-ID>
+```
+
+**Container logs and exec:**
+
+```bash
+# View container logs
+crictl logs <CONTAINER-ID>
+
+# Follow logs
+crictl logs -f <CONTAINER-ID>
+
+# Tail last N lines
+crictl logs --tail 50 <CONTAINER-ID>
+
+# Exec into a running container
+crictl exec -it <CONTAINER-ID> /bin/sh
+```
+
+**Image management:**
+
+```bash
+# List all images on the node
+crictl images
+
+# List images with digests
+crictl images --digests
+
+# Pull an image (requires pull secret at /var/lib/kubelet/config.json)
+crictl pull <IMAGE>
+
+# Inspect image metadata
+crictl inspecti <IMAGE-ID-OR-NAME>
+
+# Remove a specific image
+crictl rmi <IMAGE-ID>
+
+# Prune unused images (this is what snc does during image cleanup)
+crictl rmi --prune
+```
+
+**Runtime and node stats:**
+
+```bash
+# Container resource usage (CPU, memory)
+crictl stats
+
+# Stats for a specific container
+crictl stats <CONTAINER-ID>
+
+# CRI-O runtime info
+crictl info
+```
+
+**Debugging a crashlooping pod — typical workflow:**
+
+```bash
+# Find the pod
+crictl pods --name <pod-name-prefix>
+
+# List its containers (including exited ones)
+crictl ps -a --pod <POD-ID>
+
+# Check logs of the crashed container
+crictl logs <CONTAINER-ID>
+
+# Inspect the container for exit code, OOM kill, etc.
+crictl inspect <CONTAINER-ID> | jq '.status.exitCode, .status.reason'
+```
+
 ### Kubernetes/OpenShift Access (Without SSH)
 
 ```bash
