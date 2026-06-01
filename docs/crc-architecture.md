@@ -338,6 +338,87 @@ crictl logs <CONTAINER-ID>
 crictl inspect <CONTAINER-ID> | jq '.status.exitCode, .status.reason'
 ```
 
+---
+
+## Baseline Resource Consumption (OpenShift 4.21.14, idle)
+
+Measured on a clean single-node CRC instance with no user workloads deployed.
+
+### VM-Level Memory
+
+| Category | Size |
+|----------|------|
+| Total allocated | 47.0 GB |
+| Used (real) | 7.7 GB |
+| Buff/cache | 13.3 GB |
+| Free | 26.6 GB |
+| Available | 39.3 GB |
+| Swap | 0 (disabled) |
+
+### Pod Summary
+
+- **66 Running**, **2 Completed** (revision pruners)
+- All pods are OpenShift control plane — no user workloads
+
+### Resource Requests vs Actual Usage
+
+| | Requested | Limits | Actual |
+|---|---|---|---|
+| CPU | 2,582m (2.58 cores) | 310m (0.31 cores) | ~57% of VM CPUs |
+| Memory | 9,813 Mi (9.58 Gi) | 380 Mi (0.37 Gi) | ~7.7 GB |
+
+Almost no containers have CPU or memory limits set. Only the revision-pruner jobs (completed) have both. Everything else can burst freely — by design for a single-node dev cluster.
+
+### Top Consumers by Memory (actual)
+
+| Container | CPU % | Memory |
+|-----------|-------|--------|
+| kube-apiserver | 13.0% | 1,507 MB |
+| etcd | 9.0% | 334 MB |
+| openshift-apiserver | 8.5% | 319 MB |
+| packageserver | 0.5% | 254 MB |
+| ovnkube-controller | 0.4% | 253 MB |
+| kube-controller-manager | 1.4% | 233 MB |
+| authentication-operator | 1.2% | 222 MB |
+| network-operator | 0.4% | 210 MB |
+| cluster-version-operator | 5.2% | 200 MB |
+| openshift-apiserver-operator | 0.4% | 197 MB |
+| machine-config-daemon | 0.0% | 194 MB |
+| ovnkube-cluster-manager | 0.2% | 190 MB |
+
+The big three (kube-apiserver, etcd, openshift-apiserver) account for ~30% CPU and ~2.1 GB RAM. 11 kube-rbac-proxy sidecars collectively consume ~200 MB.
+
+### Namespaces and Pod Counts
+
+| Namespace | Pods | Key Components |
+|-----------|------|----------------|
+| openshift-etcd | 1 | etcd (5 containers) |
+| openshift-kube-apiserver | 1 | kube-apiserver (5 containers) |
+| openshift-kube-controller-manager | 2 | controller-manager + revision-pruner |
+| openshift-kube-scheduler | 2 | scheduler + revision-pruner |
+| openshift-apiserver | 1 | OpenShift API server |
+| openshift-authentication | 1 | OAuth server |
+| openshift-console | 2 | Web console + downloads |
+| openshift-ingress | 2 | Router (HAProxy) + routes controller |
+| openshift-image-registry | 3 | Registry + operator + node-ca |
+| openshift-ovn-kubernetes | 2 | OVN control plane + node (8 containers) |
+| openshift-dns | 2 | CoreDNS + node-resolver |
+| openshift-multus | 4 | CNI plugins, admission controller, metrics |
+| openshift-machine-config-operator | 5 | MCO, MCD, MCS, controller, crio proxy |
+| openshift-marketplace | 5 | OLM catalog sources (certified, community, redhat, redhat-marketplace) |
+| openshift-operator-lifecycle-manager | 4 | OLM + catalog operator + package server |
+| openshift-network-* | 5 | Network operator, console plugin, diagnostics, node identity |
+| hostpath-provisioner | 1 | CSI hostpath plugin (storage for single-node) |
+| Various *-operator namespaces | ~15 | One operator pod each |
+
+### Notes
+
+- The Metrics API is not available by default (monitoring stack is disabled in CRC)
+- Container stats are collected via `crictl stats` on the VM; working set values double-count shared pages so the sum (~9.5 GB) exceeds actual VM usage (~7.7 GB)
+- `crc status` reports RAM usage consistent with the `free -m` output from inside the VM
+
+---
+
 ### Kubernetes/OpenShift Access (Without SSH)
 
 ```bash
