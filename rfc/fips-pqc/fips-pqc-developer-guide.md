@@ -23,6 +23,7 @@ This document provides guidance on the intersection of FIPS 140-3 compliance and
 8. [Red Hat Enterprise Linux Implementation Guidance](#8-red-hat-enterprise-linux-implementation-guidance)
 9. [Migration Strategy](#9-migration-strategy)
 10. [References](#10-references)
+11. [Updates Since March 2026](#11-updates-since-march-2026)
 
 ---
 
@@ -650,14 +651,20 @@ From Red Hat documentation:
 
 #### 8.1.3 FIPS Mode Implications
 
-**PQC is NOT available in FIPS mode on RHEL**. From RHEL security documentation:
+**UPDATE (June 2026):** The situation described below has partially changed. See [Section 11.1.2](#1112-rhel-97-hybrid-ml-kem-in-fips-mode) — RHEL 9.7+ now allows hybrid ML-KEM key exchange in FIPS mode, although ML-DSA signatures remain unavailable.
+
+**Original analysis (March 2026):**
+
+**PQC was NOT available in FIPS mode on RHEL** at the time of initial writing. From RHEL security documentation:
 
 > "Only Generally Available (GA) features in RHEL may be used when operating in FIPS mode with the validated cryptographic module."
 
-This means:
+The original constraints were:
 - If your application requires FIPS 140-3 compliance on RHEL → Cannot use PQC
 - If your application requires PQC on RHEL → Cannot enable FIPS mode
 - No current timeline for PQC integration into RHEL's FIPS-validated OpenSSL module
+
+**Current state (June 2026):** Hybrid ML-KEM key exchange IS now available in FIPS mode on RHEL 9.7+. ML-DSA signatures remain unavailable in FIPS mode.
 
 ### 8.2 Testing PQC on RHEL (Non-FIPS Mode)
 
@@ -753,19 +760,26 @@ From Red Hat OpenShift documentation:
 
 ### 8.4 Recommendations for RHEL Developers
 
-#### 8.4.1 Current State (March 2026)
+#### 8.4.1 Current State (June 2026)
 
-**For production applications:**
+**For production applications on RHEL 9.7+:**
 - ✅ Use FIPS-approved classical algorithms (ECDH, RSA, ECDSA)
 - ✅ Enable FIPS mode if compliance required
-- ❌ Do NOT use PQC in production (Technology Preview only)
-- ✅ Begin architecture planning for PQC migration
+- ✅ Hybrid ML-KEM key exchange IS now available in FIPS mode on RHEL 9.7+
+- ❌ ML-DSA signatures are NOT available in FIPS mode
+- ✅ Begin architecture planning for full PQC migration
+
+**For production applications on RHEL 10.1+:**
+- ✅ PQC key exchange is enabled by DEFAULT in the system crypto policy
+- ✅ Hybrid ML-KEM works in FIPS mode
+- ❌ ML-DSA remains Technology Preview, not for production use
 
 **For development/testing:**
 - ✅ Experiment with OpenSSL 3.5 PQC in lab environments
 - ✅ Test interoperability with FIPS 203/204 compliant implementations
 - ✅ Evaluate performance characteristics of ML-KEM and ML-DSA
-- ❌ Do NOT enable FIPS mode when testing PQC
+- ✅ Test hybrid ML-KEM in FIPS mode on RHEL 9.7+
+- ✅ Evaluate TLS handshake size impact (~1,216 bytes for hybrid PQ keys vs 32 bytes for X25519)
 
 #### 8.4.2 Architecture Planning for Future PQC
 
@@ -1030,6 +1044,187 @@ go version -m ./myapp
 
 ---
 
+## 11. Updates Since March 2026
+
+### 11.1 RHEL PQC Policy Changes
+
+#### 11.1.1 RHEL 10.1: PQC Enabled by Default
+
+RHEL 10.1 changed the system-wide DEFAULT crypto policy to enable and prefer post-quantum cryptography by default. TLS and SSH connections from and to RHEL 10.1 or later automatically use post-quantum key exchange where available, without administrator action.
+
+Reference: Red Hat Blog, "Advancing post-quantum capabilities of SSH in Red Hat Enterprise Linux" (https://www.redhat.com/en/blog/advancing-post-quantum-capabilities-ssh-red-hat-enterprise-linux)
+
+#### 11.1.2 RHEL 9.7: Hybrid ML-KEM in FIPS Mode
+
+**Critical update to Section 8.1.3:** RHEL 9.7 introduced a significant change: hybrid ML-KEM key exchange is now permitted in FIPS mode. FIPS requirements allow the combination of the output of a FIPS-certified algorithm with supplementary data for hybrid key exchange mechanisms. This is crucial to maintain a validated and certified provider while protecting against "harvest now, decrypt later" threats.
+
+This partially resolves the conflict described in Section 8.1.3 — ML-KEM key exchange (but not ML-DSA signatures) can now be used in FIPS mode on RHEL 9.7+ through hybrid key exchange.
+
+Reference: Red Hat Blog, "Prepare for a post-quantum future with RHEL 9.7" (https://www.redhat.com/en/blog/prepare-post-quantum-future-rhel-97)
+
+#### 11.1.3 RHEL 9 ML-DSA vs ML-KEM Availability
+
+On RHEL 9.7 and later RHEL 9 versions with OpenSSL 3.5, ML-KEM is enabled by default but ML-DSA is disabled by default. This reflects a prioritization of key exchange protection (against harvest-now-decrypt-later attacks) over signature protection (which requires a real-time quantum attack).
+
+#### 11.1.4 Red Hat CDN PQC Enablement
+
+Red Hat enabled post-quantum encryption on `subscription.rhsm.redhat.com` and `cdn.redhat.com` in June 2026. Testing confirmed that FIPS-enabled RHEL 9.8 and RHEL 10.2 systems fall back to X25519 key exchange (not ML-KEM) when connecting in FIPS mode. Customers must currently choose between strict FIPS compliance and PQC for these connections.
+
+Reference: Red Hat Article 7139604 (https://access.redhat.com/articles/7139604)
+
+### 11.2 OpenShift PQC Rollout
+
+#### 11.2.1 OpenShift 4.22: ML-KEM Tech Preview
+
+OpenShift 4.22 (GA June 2026) introduced PQC support via Tech Preview feature gates:
+
+- **`TLSCurvePreferences`**: Enables the `groups` field in `tlsSecurityProfile`, allowing specification of key exchange groups including `X25519MLKEM768`
+- **`TLSAdherence`**: Controls whether components enforce the cluster's central TLS profile
+
+The OpenShift ingress router (HAProxy) has `X25519MLKEM768` as the first listed group for non-FIPS clusters in OCP 4.22.
+
+Configuration example:
+
+```yaml
+apiVersion: config.openshift.io/v1
+kind: APIServer
+metadata:
+  name: cluster
+spec:
+  tlsSecurityProfile:
+    type: Custom
+    custom:
+      ciphers:
+      - ECDHE-ECDSA-AES128-GCM-SHA256
+      minTLSVersion: VersionTLS12
+      groups:
+      - X25519MLKEM768
+      - X25519
+```
+
+**Important limitations:**
+- HAProxy/C-based components (ingress router, console, monitoring) rely on OpenSSL and may not yet fully support `X25519MLKEM768` on all OCP versions
+- `X25519MLKEM768` is NOT FIPS-approved on OpenShift. FIPS-enabled clusters will fail if this group is forced
+- FIPS-compatible alternatives (`SecP256r1MLKEM768`, `SecP384r1MLKEM1024`) require Go 1.26+, which is not yet available in OCP
+- A periodic PQC readiness scanner (`periodic-ci-openshift-tls-scanner-main-periodic-pqc-readiness`) runs against OpenShift clusters
+
+#### 11.2.2 OpenShift PQC Roadmap
+
+OpenShift 4.22 is the first release with ML-KEM support via Tech Preview feature gates. PQC support in future OpenShift releases is expected to expand as the feature gates mature toward GA, though specific timelines and scope for future releases have not been publicly confirmed.
+
+### 11.3 Go Ecosystem PQC Progress
+
+#### 11.3.1 stdlib PQC Status
+
+All PQC work in Go lands directly in the `crypto/` standard library tree, not in `golang.org/x/crypto`:
+
+| Algorithm | Package | Go Version | Status |
+|-----------|---------|------------|--------|
+| ML-KEM | `crypto/mlkem` | Go 1.24 | Shipped, FIPS-validated |
+| X25519MLKEM768 | `crypto/tls` | Go 1.24 | Default key exchange |
+| HPKE | `crypto/hpke` | Go 1.26 | Shipped |
+| ML-DSA | `crypto/mldsa` | Go 1.27+ (expected) | Not yet in stdlib |
+
+Packages in `x/crypto` with quantum-vulnerable key exchange (`nacl/box`, `curve25519`, `openpgp`) have no `x/crypto`-level PQC answer and must be replaced with stdlib constructions built around `crypto/mlkem` and `crypto/ecdh`.
+
+The `x/crypto/ssh` package gained ML-KEM hybrid key exchange in v0.38.0 (2025), making SSH connections post-quantum resistant when both endpoints support it.
+
+#### 11.3.2 Google's Position on PQC Certificates
+
+Google (and Go upstream) are pushing for Merkle Tree Certificates (MTC) rather than traditional X.509 certificates with ML-DSA signatures. Chrome has no immediate plan to add X.509 certificates containing PQC to the Chrome Root Store, and will only do so "as a last resort." This has implications for organizations planning PQC certificate deployments, as browser support may lag.
+
+### 11.4 Python Ecosystem PQC Progress
+
+The Python `cryptography` library version 48.0.0 (released May 2026) added support for ML-KEM key encapsulation and ML-DSA signing when using OpenSSL 3.5.0 or later, in addition to existing AWS-LC and BoringSSL support. Post-quantum algorithms are now available to users of the library's pre-built wheels.
+
+This is significant for Python-based AI/ML workloads that need PQC capability — the primary Python cryptography library now supports PQC operations natively.
+
+### 11.5 Rust PQC Progress
+
+The `Krypteia` 0.1 library was released as a pure Rust post-quantum + classical cryptography implementation. It is side-channel hardened but pre-1.0 and unaudited. This represents the early stages of PQC support in the Rust ecosystem.
+
+Reference: https://users.rust-lang.org/t/krypteia-0-1-pure-rust-post-quantum-classical-cryptography-side-channel-hardened-pre-1-0-unaudited/140966
+
+### 11.6 Certificate and PKI Developments
+
+#### 11.6.1 Red Hat Certificate System 11.0
+
+Red Hat Certificate System 11.0 implements ML-DSA signatures (FIPS 204) for post-quantum Public Key Infrastructure. This enables quantum-resistant certificate generation and management.
+
+#### 11.6.2 FreeIPA PQC Integration
+
+The QARC (Quantum-Resistant Cryptography in Practice) project (2026-2028) is focused on enabling FreeIPA to handle post-quantum cryptography, including generating and managing PQC certificates. A first IETF draft for PKINIT-PQC has been published (draft-bokovoy-kitten-pkinit-pqc-00).
+
+Reference: https://www.ietf.org/archive/id/draft-bokovoy-kitten-pkinit-pqc-00.html
+
+#### 11.6.3 Let's Encrypt and Merkle Tree Certificates
+
+Let's Encrypt announced support for Merkle Tree Certificates (MTC) in June 2026, a post-quantum certificate mechanism that uses batch signatures ("landmarks") verified separately from the TLS handshake.
+
+Reference: https://letsencrypt.org/2026/06/03/pq-certs.html
+
+#### 11.6.4 OpenSSH ML-DSA Status
+
+OpenSSH does not yet support ML-DSA for host or user authentication. Multiple competing IETF drafts exist:
+- `draft-rpe-ssh-mldsa` and `draft-sfluhrer-ssh-mldsa`: Pure ML-DSA usage for SSH
+- `draft-sun-ssh-composite-sigs` and `draft-josefsson-ssh-ed25519mldsa65`: Composite ML-DSA + EdDSA signatures
+
+The Open Quantum Safe project maintains an ML-DSA-enabled fork at https://github.com/open-quantum-safe/openssh for early adopters.
+
+### 11.7 Performance Considerations
+
+#### 11.7.1 TLS Handshake Size Impact
+
+Hybrid post-quantum keys (X25519 + ML-KEM-768) are 1,216 bytes — compared to 32 bytes for X25519 alone. This causes the TLS ClientHello to exceed the standard 1,500-byte MTU boundary, forcing network packet fragmentation.
+
+Under heavy load, this fragmentation may cause:
+- Performance drops and latency spikes
+- Dropped packets at firewalls and load balancers that do not properly handle fragmented UDP/TCP
+- Increased handshake time, especially for workloads with many short-lived TLS sessions
+
+The impact is context-dependent:
+- **Control plane traffic**: Tends to use longer-lived connections, so the impact may be less significant
+- **Edge/ingress traffic**: High connection rates may show measurable latency increase
+- **Internal service-to-service**: Impact depends on connection reuse patterns
+
+### 11.8 Regulatory and Compliance Developments
+
+#### 11.8.1 CNSA 2.0 Timeline
+
+The NSA CNSA 2.0 (Commercial National Security Algorithm Suite 2.0) specifies a migration deadline of 2033 for PQC adoption. Key requirements include:
+
+- ML-KEM for key exchange (protection against harvest-now-decrypt-later)
+- ML-DSA for digital signatures (protection against real-time quantum attacks)
+
+Reference: https://media.defense.gov/2025/May/30/2003728741/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS.PDF
+
+#### 11.8.2 FIPS 140-2 End of Life
+
+FIPS 140-2 modules will reach "Historical" status on September 21, 2026. After that date, FIPS 140-2 validated modules will no longer be considered compliant. RHEL 8 will NOT receive FIPS 140-3 or PQC support. Organizations on RHEL 8 must plan migration to RHEL 9+ or RHEL 10 for continued FIPS compliance.
+
+#### 11.8.3 CRQC Timeline Assessment
+
+Industry analysis increasingly suggests the risk of a cryptographically-relevant quantum computer (CRQC) appearing before 2030 is no longer a fringe theory. This has accelerated PQC adoption timelines across the industry.
+
+Reference: Red Hat Blog, "Building the levee: Why Red Hat's post-quantum strategy is already in production" (https://www.redhat.com/en/blog/building-levee-why-red-hats-post-quantum-strategy-already-production)
+
+### 11.9 Red Hat Product PQC Status Summary (June 2026)
+
+| Product | PQC Key Exchange (ML-KEM) | PQC Signatures (ML-DSA) | FIPS + PQC |
+|---------|--------------------------|------------------------|------------|
+| RHEL 10.1+ | Default in TLS/SSH | Technology Preview | Hybrid ML-KEM in FIPS mode |
+| RHEL 9.7+ | Available, enabled by default | Disabled by default | Hybrid ML-KEM in FIPS mode |
+| RHEL 9.6 | Available via OpenSSL 3.5 | Technology Preview | Not available |
+| RHEL 8 | Not available | Not available | Not available |
+| OpenShift 4.22 | Tech Preview (feature gate) | Not yet | Not FIPS-compatible |
+| RHCS 11.0 | N/A | ML-DSA implemented | N/A |
+| FreeIPA | Planned (QARC 2026-2028) | Planned | Planned |
+| Go native FIPS | Validated (ML-KEM) | Pending (Go 1.27+) | Yes (native module only) |
+| golang-fips (OpenSSL) | Not in FIPS mode | Not in FIPS mode | No |
+| Python cryptography 48+ | Via OpenSSL 3.5 | Via OpenSSL 3.5 | Depends on OpenSSL |
+
+---
+
 ## Glossary
 
 **Approved** - FIPS-approved and/or NIST-recommended algorithm or technique
@@ -1056,8 +1251,8 @@ go version -m ./myapp
 
 ---
 
-**Document Version:** 1.0
-**Last Updated:** 2026-03-02
+**Document Version:** 2.0
+**Last Updated:** 2026-06-29
 **Status:** Draft for Review
 
-This document synthesizes information from official NIST FIPS publications and Go programming language documentation. All quoted material is attributed to source documents listed in the References section.
+This document synthesizes information from official NIST FIPS publications, Go programming language documentation, Red Hat product documentation, and industry developments. All quoted material is attributed to source documents listed in the References section.
