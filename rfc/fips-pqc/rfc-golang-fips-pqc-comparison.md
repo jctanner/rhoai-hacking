@@ -616,7 +616,26 @@ Technology Preview features are **NOT** part of RHEL's FIPS 140-3 validated conf
 
 This means that **even though RHEL 10 includes ML-KEM and ML-DSA**, they cannot be used in FIPS mode until they achieve GA status and are integrated into the FIPS-validated OpenSSL module.
 
-#### 7.1.3. RHEL 9.6 OpenSSL 3.5 Availability
+#### 7.1.3. RHEL 10.1: PQC Enabled by Default
+
+RHEL 10.1 changed the system-wide DEFAULT crypto policy to enable and prefer post-quantum cryptography by default. TLS and SSH connections from and to RHEL 10.1 or later automatically use post-quantum key exchange where available, without administrator action.
+
+This is a significant shift from RHEL 10.0, where PQC was available but not enabled by default.
+
+Reference: Red Hat Blog, "Advancing post-quantum capabilities of SSH in Red Hat Enterprise Linux" (https://www.redhat.com/en/blog/advancing-post-quantum-capabilities-ssh-red-hat-enterprise-linux)
+
+#### 7.1.4. RHEL 9.7: Hybrid ML-KEM in FIPS Mode
+
+RHEL 9.7 introduced support for hybrid ML-KEM key exchange in FIPS mode. FIPS requirements allow the combination of the output of a FIPS-certified algorithm with supplementary data for hybrid key exchange mechanisms. This means the OpenSSL FIPS module on RHEL 9.7+ can participate in hybrid ML-KEM key exchange while maintaining FIPS validation.
+
+**Impact on this document's analysis:**
+- The golang-fips Go OpenSSL backend still disables ML-KEM in FIPS mode (`isFIPSCurve()` returns false for hybrid KEMs when `boring.Enabled()`)
+- However, at the **platform level**, RHEL 9.7+ OpenSSL itself can negotiate hybrid ML-KEM in FIPS mode — it is the golang-fips patches that disable this, not a fundamental OpenSSL limitation
+- This gap may narrow as Red Hat migrates from golang-fips to the native Go FIPS module
+
+Reference: https://www.redhat.com/en/blog/prepare-post-quantum-future-rhel-97
+
+#### 7.1.5. RHEL 9.6 OpenSSL 3.5 Availability
 
 RHEL 9.6 also includes OpenSSL 3.5 with PQC support. From [RHEL-OPENSSL35-LAB]:
 
@@ -624,7 +643,7 @@ RHEL 9.6 also includes OpenSSL 3.5 with PQC support. From [RHEL-OPENSSL35-LAB]:
 
 However, the same Technology Preview limitations apply to RHEL 9.6.
 
-#### 7.1.4. Interoperability Considerations
+#### 7.1.6. Interoperability Considerations
 
 From [RHEL10-INTEROP]:
 
@@ -693,6 +712,18 @@ From [OPENSHIFT-QUANTUM-SAFE]:
 
 > "Red Hat recommends that customers begin planning for quantum-safe migration but continue using currently approved cryptographic algorithms for production workloads until PQC achieves General Availability status and FIPS validation."
 
+#### 7.2.2.1. OpenShift 4.22 PQC Tech Preview (June 2026)
+
+OpenShift 4.22 (GA June 2026) introduced PQC support through Tech Preview feature gates:
+
+- **`TLSCurvePreferences`** enables the `groups` field in `tlsSecurityProfile` for specifying `X25519MLKEM768`
+- The ingress router has `X25519MLKEM768` as the first listed group for non-FIPS clusters
+
+**Limitations:**
+- `X25519MLKEM768` is NOT FIPS-approved on OpenShift
+- FIPS-compatible PQC alternatives (`SecP256r1MLKEM768`, `SecP384r1MLKEM1024`) require Go 1.26+, which is not yet available in OCP images
+- PQC support in future OpenShift releases is expected to expand as the feature gates mature toward GA
+
 #### 7.2.3. Migration to Native Go FIPS Module
 
 Red Hat has publicly stated their intention to migrate from golang-fips to the native Go FIPS module. From [GOLANG-FIPS]:
@@ -717,15 +748,15 @@ Red Hat has publicly stated their intention to migrate from golang-fips to the n
 - MUST achieve FIPS 140-3 compliance
 - MUST support post-quantum cryptography
 
-**Result:** Requirements are mutually incompatible with current golang-fips.
+**Result:** Requirements are mutually incompatible with current golang-fips for Go applications. However, the landscape has improved at the platform level — RHEL 9.7+ allows hybrid ML-KEM key exchange in FIPS mode via OpenSSL (see Section 7.1.4). The incompatibility is now specific to golang-fips's `isFIPSCurve()` filter, not a fundamental OpenSSL or RHEL limitation.
 
 **Evidence:** Section 6 demonstrates that ML-KEM is explicitly disabled in golang-fips FIPS mode.
 
 **Possible Resolutions:**
-1. Wait for OpenSSL to integrate PQC into its FIPS module
-2. Wait for Red Hat to migrate to native Go FIPS
-3. Use separate deployment modes (FIPS without PQC, or PQC without FIPS)
-4. Petition Red Hat/OpenSSL for accelerated PQC integration
+1. **Migrate to native Go FIPS module** (Go 1.24+) — provides both ML-KEM and FIPS 140-3 validation; requires acceptance of "In Process" CMVP status
+2. **Use non-Go components for PQC termination** — on RHEL 9.7+, OpenSSL itself can negotiate hybrid ML-KEM in FIPS mode; a reverse proxy or load balancer can handle PQC TLS while Go services use classical FIPS
+3. Wait for Red Hat to migrate from golang-fips to native Go FIPS
+4. Use separate deployment modes (FIPS without PQC, or PQC without FIPS)
 
 #### 8.1.2. Scenario 2: Cross-Platform Deployment with FIPS and PQC
 
@@ -760,9 +791,9 @@ CGO_ENABLED=1 go build
 go build -tags no_openssl
 ```
 
-**Limitation:** Cannot provide both FIPS and PQC simultaneously.
+**Limitation:** Cannot provide both FIPS and PQC simultaneously within the Go process. Note that on RHEL 9.7+, the platform-level OpenSSL *does* support hybrid ML-KEM in FIPS mode (see Section 7.1.4) — the limitation is specific to golang-fips's Go-level filter.
 
-**Option B: Migration to Native Go FIPS**
+**Option B: Migration to Native Go FIPS (Recommended)**
 
 Migrate from golang-fips to native Go 1.24+ FIPS module.
 
@@ -770,6 +801,16 @@ Migrate from golang-fips to native Go 1.24+ FIPS module.
 - Requires validation of native module's CMVP "In Process" status for compliance requirements
 - May require organizational policy changes if golang-fips is mandated
 - Provides path to both FIPS and PQC support
+- ML-KEM is already FIPS-validated in the native module
+
+**Option C: PQC Termination at Platform Layer**
+
+On RHEL 9.7+, use a non-Go TLS termination point (e.g., HAProxy, nginx, Envoy with OpenSSL 3.5) that can negotiate hybrid ML-KEM in FIPS mode. The Go application continues using golang-fips with classical algorithms for internal traffic.
+
+**Considerations:**
+- Adds architectural complexity (TLS re-termination)
+- Does not require changes to Go application code
+- Useful as a bridge strategy while waiting for golang-fips to native Go FIPS migration
 
 ### 8.2. Migration Pathways
 
@@ -1528,16 +1569,14 @@ However, Red Hat explicitly states: "not recommended for production use" while i
 
 ## 13. Updates Since Initial Publication (June 2026)
 
-### 13.1 RHEL 9.7: Hybrid ML-KEM Permitted in FIPS Mode
+### 13.1 RHEL PQC Policy Updates
 
-A significant change since the initial publication: RHEL 9.7 introduced support for hybrid ML-KEM key exchange in FIPS mode. FIPS requirements allow the combination of the output of a FIPS-certified algorithm with supplementary data for hybrid key exchange mechanisms. This means the OpenSSL FIPS module on RHEL 9.7+ can participate in hybrid ML-KEM key exchange while maintaining FIPS validation.
+Two significant RHEL changes since initial publication have been integrated inline:
 
-**Impact on this document's analysis:**
-- Section 5.1.2 Table 1 remains accurate for **golang-fips** specifically — the Go OpenSSL backend still disables ML-KEM in FIPS mode (`isFIPSCurve()` returns false for hybrid KEMs when `boring.Enabled()`)
-- However, at the **platform level**, RHEL 9.7+ OpenSSL itself can negotiate hybrid ML-KEM in FIPS mode — it is the golang-fips patches that disable this, not a fundamental OpenSSL limitation
-- This gap may narrow as Red Hat migrates from golang-fips to the native Go FIPS module
+- **RHEL 10.1: PQC enabled by default** — the DEFAULT crypto policy now enables and prefers post-quantum key exchange automatically. See Section 7.1.3.
+- **RHEL 9.7: Hybrid ML-KEM in FIPS mode** — OpenSSL on RHEL 9.7+ can negotiate hybrid ML-KEM while maintaining FIPS validation. The golang-fips Go layer still disables this, making the incompatibility a golang-fips-specific limitation rather than a platform one. See Section 7.1.4.
 
-Reference: https://www.redhat.com/en/blog/prepare-post-quantum-future-rhel-97
+These changes materially affect the scenario analysis in Section 8.1 (updated inline) and introduce a new resolution path: PQC termination at the platform layer (Section 8.1.3, Option C).
 
 ### 13.2 Go stdlib PQC Expansion
 
@@ -1556,12 +1595,7 @@ ML-DSA (FIPS 204) signatures are expected in Go 1.27+. Until then, signature-dep
 
 ### 13.3 OpenShift PQC Integration
 
-OpenShift 4.22 (GA June 2026) introduced PQC support through Tech Preview feature gates:
-
-- **`TLSCurvePreferences`** enables the `groups` field in `tlsSecurityProfile` for specifying `X25519MLKEM768`
-- The ingress router has `X25519MLKEM768` as the first listed group for non-FIPS clusters
-
-**Important limitation:** `X25519MLKEM768` is NOT FIPS-approved on OpenShift. FIPS-compatible PQC alternatives (`SecP256r1MLKEM768`, `SecP384r1MLKEM1024`) require Go 1.26+, which is not yet available in OCP images. PQC support in future OpenShift releases is expected to expand as the feature gates mature toward GA.
+OpenShift 4.22 PQC Tech Preview details have been integrated into Section 7.2.2.1. Key points: the `TLSCurvePreferences` feature gate enables `X25519MLKEM768` in the ingress router for non-FIPS clusters; FIPS-compatible PQC alternatives require Go 1.26+ which is not yet in OCP images.
 
 ### 13.4 Python cryptography PQC Support
 
@@ -1577,20 +1611,16 @@ FIPS 140-2 modules reach "Historical" status on September 21, 2026. After that d
 
 ### 13.7 Revised Scenario Analysis
 
-**Updated Scenario 1: RHEL-Mandated Deployment with PQC Key Exchange Requirement**
+Scenarios 1 and 3 in Section 8.1 have been updated inline to reflect the improved landscape:
 
-The situation has improved since initial publication:
-- **RHEL 9.7+ platform level**: Hybrid ML-KEM IS available in FIPS mode via OpenSSL
-- **golang-fips**: Still disables ML-KEM in FIPS mode at the Go layer
-- **Native Go FIPS**: ML-KEM fully supported and FIPS-validated
-
-**Practical resolution path**: Use native Go FIPS module (if "In Process" CMVP status is acceptable) for Go applications requiring both FIPS and PQC. For non-Go applications on RHEL 9.7+, hybrid ML-KEM is available at the platform level.
+- **Scenario 1** (Section 8.1.1): No longer "mutually incompatible" at the platform level. RHEL 9.7+ allows hybrid ML-KEM in FIPS mode. The incompatibility is now scoped to golang-fips specifically. Two new resolution paths added: migration to native Go FIPS, and PQC termination at the platform layer.
+- **Scenario 3** (Section 8.1.3): Added Option C (platform-layer PQC termination) as a bridge strategy. Option B (native Go FIPS migration) is now marked as recommended.
 
 ### 13.8 Updated FAQ
 
 #### C.15. Has the RHEL 9.7 hybrid ML-KEM FIPS change affected golang-fips?
 
-No. While RHEL 9.7's OpenSSL itself can negotiate hybrid ML-KEM in FIPS mode, the golang-fips patches continue to disable ML-KEM when `boring.Enabled()` returns true. The `isFIPSCurve()` function still returns false for all hybrid KEMs when using the OpenSSL backend. This is a golang-fips-level restriction, not an OpenSSL-level one.
+No. While RHEL 9.7's OpenSSL itself can negotiate hybrid ML-KEM in FIPS mode (see Section 7.1.4), the golang-fips patches continue to disable ML-KEM when `boring.Enabled()` returns true. The `isFIPSCurve()` function still returns false for all hybrid KEMs when using the OpenSSL backend. This is a golang-fips-level restriction, not an OpenSSL-level one. See Section 8.1.3 Option C for a workaround using platform-layer PQC termination.
 
 #### C.16. When will ML-DSA signatures be available in Go's standard library?
 
